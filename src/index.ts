@@ -18,7 +18,7 @@ const logger = pino({
 // ========================================================================
 // 2. 설정
 // ========================================================================
-const TICKERS = ['TSLA', 'PLTR', 'RCAT']; // 조회할 종목
+const TICKERS = ['TSLA', 'PLTR', 'IONQ']; // 조회할 종목
 const USDKRW_SYMBOL = 'USDKRW=X'; // 원/달러 환율
 const CSV_FILE_NAME = 'stock_data.csv';
 

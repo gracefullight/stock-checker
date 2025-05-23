@@ -6,19 +6,19 @@
     "start:pretty": "tsx src/index.ts | pino-pretty"
   },
   "dependencies": {
-    "luxon": "^3.5.0",
-    "pino": "^9.6.0",
+    "luxon": "^3.6.1",
+    "pino": "^9.7.0",
     "pino-pretty": "^13.0.0",
     "technicalindicators": "^3.1.0",
     "yahoo-finance2": "^2.13.3"
   },
   "devDependencies": {
-    "@types/luxon": "^3.4.2",
-    "@types/node": "^20.17.11",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "@types/luxon": "^3.6.2",
+    "@types/node": "^22.15.21",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
   },
   "engines": {
-    "node": "20"
+    "node": "22"
   }
 }
