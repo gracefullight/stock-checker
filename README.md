@@ -10,7 +10,7 @@ This project fetches daily stock data for multiple tickers using `yahoo-finance2
 - Donchian Channels (20-day)
 - Williams %R (14-day)
 - Fear & Greed Index (alternative.me)
-- Derived BUY/HOLD opinion weighted by indicator reliability and basic pattern detection
+- Derived BUY/HOLD/SELL opinion weighted by indicator reliability and basic pattern detection
 - Basic detection of bullish chart patterns (ascending triangle, bullish flag, double bottom, falling wedge, island reversal)
 
 ## Usage
