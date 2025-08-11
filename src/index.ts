@@ -1,5 +1,5 @@
 import yahooFinance from 'yahoo-finance2';
-import { rsi, stochastic, bollingerbands } from 'technicalindicators';
+import { rsi, stochastic, bollingerbands, williamsr } from 'technicalindicators';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DateTime } from 'luxon';
@@ -20,6 +20,27 @@ const logger = pino({
 const TICKERS = ['TSLA', 'PLTR', 'IONQ', 'GEV', 'RXRX', 'DNA'];
 const CSV_DIR = 'public';
 
+const INDICATOR_WEIGHTS = {
+  rsi: 79,
+  stochastic: 76,
+  bollinger: 78,
+  donchian: 74,
+  williamsR: 72,
+  fearGreed: 50
+};
+
+const PATTERN_WEIGHTS = {
+  ascendingTriangle: 75,
+  bullishFlag: 75,
+  doubleBottom: 70,
+  fallingWedge: 70,
+  islandReversal: 73
+};
+
+// With individual indicators weighted ~70-80 points, a 200 score forces
+// at least three strong signals to align before issuing a BUY. Tune as needed.
+const BUY_THRESHOLD = 200;
+
 interface TickerResult {
   ticker: string;
   date: string;
@@ -29,7 +50,12 @@ interface TickerResult {
   stochasticK: number;
   bbLower: number;
   bbUpper: number;
+  donchLower: number;
+  donchUpper: number;
+  williamsR: number;
   fearGreed: number | null;
+  patterns: string[];
+  score: number;
   opinion: string;
 }
 
@@ -60,18 +86,102 @@ async function getFearGreedIndex(): Promise<number | null> {
   }
 }
 
+function isAscendingTriangle(highs: number[], lows: number[]): boolean {
+  const recentHighs = highs.slice(-5);
+  const recentLows = lows.slice(-5);
+  if (recentHighs.length < 5) return false;
+  const maxHigh = Math.max(...recentHighs);
+  const minHigh = Math.min(...recentHighs);
+  const flatTop = (maxHigh - minHigh) / maxHigh < 0.01;
+  const risingLows = recentLows.every((v, i, arr) => i === 0 || v >= arr[i - 1]);
+  return flatTop && risingLows;
+}
+
+function isBullishFlag(closes: number[]): boolean {
+  const recent = closes.slice(-10);
+  if (recent.length < 10) return false;
+  const first = recent[0];
+  const max = Math.max(...recent);
+  const min = Math.min(...recent);
+  const strongUp = (max - first) / first > 0.05;
+  const tightRange = (max - min) / max < 0.05;
+  return strongUp && tightRange;
+}
+
+function isDoubleBottom(lows: number[]): boolean {
+  const recent = lows.slice(-20);
+  if (recent.length < 20) return false;
+  const firstMin = Math.min(...recent.slice(0, 10));
+  const secondMin = Math.min(...recent.slice(10));
+  const diff = Math.abs(firstMin - secondMin) / ((firstMin + secondMin) / 2);
+  return diff < 0.02;
+}
+
+function isFallingWedge(highs: number[], lows: number[]): boolean {
+  const recentHighs = highs.slice(-6);
+  const recentLows = lows.slice(-6);
+  if (recentHighs.length < 6) return false;
+  const lowerHighs = recentHighs.every((v, i, arr) => i === 0 || v < arr[i - 1]);
+  const lowerLows = recentLows.every((v, i, arr) => i === 0 || v < arr[i - 1]);
+  const highSlope = recentHighs[0] - recentHighs[recentHighs.length - 1];
+  const lowSlope = recentLows[0] - recentLows[recentLows.length - 1];
+  return lowerHighs && lowerLows && highSlope > lowSlope;
+}
+
+function isIslandReversal(closes: number[]): boolean {
+  const recent = closes.slice(-5);
+  if (recent.length < 5) return false;
+  const gapDown = recent[1] < recent[0] * 0.95;
+  const gapUp = recent[3] > recent[2] * 1.05;
+  return gapDown && gapUp;
+}
+
+function detectBullishPatterns(highs: number[], lows: number[], closes: number[]): { score: number; patterns: string[] } {
+  let score = 0;
+  const patterns: string[] = [];
+  if (isAscendingTriangle(highs, lows)) {
+    score += PATTERN_WEIGHTS.ascendingTriangle;
+    patterns.push('AscendingTriangle');
+  }
+  if (isBullishFlag(closes)) {
+    score += PATTERN_WEIGHTS.bullishFlag;
+    patterns.push('BullishFlag');
+  }
+  if (isDoubleBottom(lows)) {
+    score += PATTERN_WEIGHTS.doubleBottom;
+    patterns.push('DoubleBottom');
+  }
+  if (isFallingWedge(highs, lows)) {
+    score += PATTERN_WEIGHTS.fallingWedge;
+    patterns.push('FallingWedge');
+  }
+  if (isIslandReversal(closes)) {
+    score += PATTERN_WEIGHTS.islandReversal;
+    patterns.push('IslandReversal');
+  }
+  return { score, patterns };
+}
+
 function getOpinion(params: {
   rsi: number;
-  stoch: number;
+  stochasticK: number;
+  williamsR: number;
   close: number;
   bbLower: number;
+  donchLower: number;
   fearGreed: number | null;
-}): string {
-  const { rsi, stoch, close, bbLower, fearGreed } = params;
-  if (rsi < 30 && stoch < 20 && close <= bbLower && (fearGreed ?? 0) < 40) {
-    return 'BUY';
-  }
-  return 'HOLD';
+  patternScore: number;
+}): { decision: string; score: number } {
+  const { rsi, stochasticK, williamsR, close, bbLower, donchLower, fearGreed, patternScore } = params;
+  let score = 0;
+  if (rsi < 30) score += INDICATOR_WEIGHTS.rsi;
+  if (stochasticK < 20) score += INDICATOR_WEIGHTS.stochastic;
+  if (close <= bbLower) score += INDICATOR_WEIGHTS.bollinger;
+  if (close <= donchLower) score += INDICATOR_WEIGHTS.donchian;
+  if (williamsR < -80) score += INDICATOR_WEIGHTS.williamsR;
+  if ((fearGreed ?? 0) < 40) score += INDICATOR_WEIGHTS.fearGreed;
+  score += patternScore;
+  return { decision: score >= BUY_THRESHOLD ? 'BUY' : 'HOLD', score };
 }
 
 // =============================================================================
@@ -100,12 +210,25 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
   const bbValues = bollingerbands({ period: 20, values: closes, stdDev: 2 });
   const latestBb = bbValues[bbValues.length - 1];
 
-  const opinion = getOpinion({
+  const williamsValues = williamsr({ high: highs, low: lows, close: closes, period: 14 });
+  const latestWilliams = williamsValues[williamsValues.length - 1];
+
+  const donchPeriod = 20;
+  const recentHighs = highs.slice(-donchPeriod);
+  const recentLows = lows.slice(-donchPeriod);
+  const donchUpper = Math.max(...recentHighs);
+  const donchLower = Math.min(...recentLows);
+  const { score: patternScore, patterns } = detectBullishPatterns(highs, lows, closes);
+
+  const { decision, score } = getOpinion({
     rsi: latestRsi,
-    stoch: latestStoch.k,
+    stochasticK: latestStoch.k,
+    williamsR: latestWilliams,
     close: latest.close,
     bbLower: latestBb.lower,
-    fearGreed
+    donchLower,
+    fearGreed,
+    patternScore
   });
 
   return {
@@ -117,8 +240,13 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
     stochasticK: latestStoch.k,
     bbLower: latestBb.lower,
     bbUpper: latestBb.upper,
+    donchLower,
+    donchUpper,
+    williamsR: latestWilliams,
     fearGreed,
-    opinion
+    patterns,
+    score,
+    opinion: decision
   };
 }
 
@@ -154,7 +282,12 @@ async function writeToCsv(data: TickerResult[]) {
     'StochK',
     'BBLower',
     'BBUpper',
+    'DonchLower',
+    'DonchUpper',
+    'WilliamsR',
     'FearGreed',
+    'Patterns',
+    'Score',
     'Opinion'
   ].join(',');
 
@@ -173,7 +306,12 @@ async function writeToCsv(data: TickerResult[]) {
       item.stochasticK.toFixed(2),
       item.bbLower.toFixed(2),
       item.bbUpper.toFixed(2),
+      item.donchLower.toFixed(2),
+      item.donchUpper.toFixed(2),
+      item.williamsR.toFixed(2),
       item.fearGreed ?? '',
+      item.patterns.join('|'),
+      item.score.toFixed(2),
       item.opinion
     ].join(',');
     csv += row + '\n';
