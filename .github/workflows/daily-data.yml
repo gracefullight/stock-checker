@@ -16,7 +16,7 @@ jobs:
           cache: 'pnpm'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm start --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA
+      - run: pnpm start --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA,BMNR
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: 'chore: daily stock data update'
