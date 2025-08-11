@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      commander:
+        specifier: ^12.0.0
+        version: 12.0.0
       luxon:
         specifier: ^3.6.1
         version: 3.6.1
