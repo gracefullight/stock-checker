@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DateTime } from 'luxon';
 import pino from 'pino';
+import { Command } from 'commander';
 
 // =============================================================================
 // Logger configuration
@@ -17,7 +18,6 @@ const logger = pino({
 // =============================================================================
 // Settings
 // =============================================================================
-const TICKERS = ['TSLA', 'PLTR', 'IONQ', 'GEV', 'RXRX', 'DNA'];
 const CSV_DIR = 'public';
 
 const INDICATOR_WEIGHTS = {
@@ -40,6 +40,25 @@ const PATTERN_WEIGHTS = {
 // With individual indicators weighted ~70-80 points, a 200 score forces
 // at least three strong signals to align before issuing a BUY. Tune as needed.
 const BUY_THRESHOLD = 200;
+
+// =============================================================================
+// Argument parsing
+// =============================================================================
+function parseTickers(): string[] {
+  const program = new Command();
+  program.option('--ticker <list>', 'Comma-separated tickers');
+  program.parse(process.argv);
+
+  const opts = program.opts<{ ticker?: string }>();
+  const raw = process.env.npm_config_ticker ?? opts.ticker;
+
+  if (!raw) {
+    logger.error('Ticker argument is required. Use --ticker=TSLA,PLTR');
+    process.exit(1);
+  }
+
+  return raw.split(',').map((t) => t.trim()).filter(Boolean);
+}
 
 interface TickerResult {
   ticker: string;
@@ -325,6 +344,7 @@ async function writeToCsv(data: TickerResult[]) {
 // Run
 // =============================================================================
 if (require.main === module) {
-  fetchAndWrite(TICKERS).catch((err) => logger.error({ err }, 'Unexpected error'));
+  const tickers = parseTickers();
+  fetchAndWrite(tickers).catch((err) => logger.error({ err }, 'Unexpected error'));
 }
 
