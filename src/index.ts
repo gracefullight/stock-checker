@@ -38,8 +38,9 @@ const PATTERN_WEIGHTS = {
 };
 
 // With individual indicators weighted ~70-80 points, a 200 score forces
-// at least three strong signals to align before issuing a BUY. Tune as needed.
+// at least three strong signals to align before issuing a BUY or SELL. Tune as needed.
 const BUY_THRESHOLD = 200;
+const SELL_THRESHOLD = 200;
 
 // =============================================================================
 // Argument parsing
@@ -187,20 +188,49 @@ function getOpinion(params: {
   williamsR: number;
   close: number;
   bbLower: number;
+  bbUpper: number;
   donchLower: number;
+  donchUpper: number;
   fearGreed: number | null;
   patternScore: number;
 }): { decision: string; score: number } {
-  const { rsi, stochasticK, williamsR, close, bbLower, donchLower, fearGreed, patternScore } = params;
-  let score = 0;
-  if (rsi < 30) score += INDICATOR_WEIGHTS.rsi;
-  if (stochasticK < 20) score += INDICATOR_WEIGHTS.stochastic;
-  if (close <= bbLower) score += INDICATOR_WEIGHTS.bollinger;
-  if (close <= donchLower) score += INDICATOR_WEIGHTS.donchian;
-  if (williamsR < -80) score += INDICATOR_WEIGHTS.williamsR;
-  if ((fearGreed ?? 0) < 40) score += INDICATOR_WEIGHTS.fearGreed;
-  score += patternScore;
-  return { decision: score >= BUY_THRESHOLD ? 'BUY' : 'HOLD', score };
+  const {
+    rsi,
+    stochasticK,
+    williamsR,
+    close,
+    bbLower,
+    bbUpper,
+    donchLower,
+    donchUpper,
+    fearGreed,
+    patternScore
+  } = params;
+
+  let buyScore = 0;
+  if (rsi < 30) buyScore += INDICATOR_WEIGHTS.rsi;
+  if (stochasticK < 20) buyScore += INDICATOR_WEIGHTS.stochastic;
+  if (close <= bbLower) buyScore += INDICATOR_WEIGHTS.bollinger;
+  if (close <= donchLower) buyScore += INDICATOR_WEIGHTS.donchian;
+  if (williamsR < -80) buyScore += INDICATOR_WEIGHTS.williamsR;
+  if ((fearGreed ?? 0) < 40) buyScore += INDICATOR_WEIGHTS.fearGreed;
+  buyScore += patternScore;
+
+  let sellScore = 0;
+  if (rsi > 70) sellScore += INDICATOR_WEIGHTS.rsi;
+  if (stochasticK > 80) sellScore += INDICATOR_WEIGHTS.stochastic;
+  if (close >= bbUpper) sellScore += INDICATOR_WEIGHTS.bollinger;
+  if (close >= donchUpper) sellScore += INDICATOR_WEIGHTS.donchian;
+  if (williamsR > -20) sellScore += INDICATOR_WEIGHTS.williamsR;
+  if ((fearGreed ?? 0) > 60) sellScore += INDICATOR_WEIGHTS.fearGreed;
+
+  if (buyScore >= BUY_THRESHOLD && buyScore >= sellScore) {
+    return { decision: 'BUY', score: buyScore };
+  }
+  if (sellScore >= SELL_THRESHOLD && sellScore > buyScore) {
+    return { decision: 'SELL', score: sellScore };
+  }
+  return { decision: 'HOLD', score: Math.max(buyScore, sellScore) };
 }
 
 // =============================================================================
@@ -245,7 +275,9 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
     williamsR: latestWilliams,
     close: latest.close,
     bbLower: latestBb.lower,
+    bbUpper: latestBb.upper,
     donchLower,
+    donchUpper,
     fearGreed,
     patternScore
   });
