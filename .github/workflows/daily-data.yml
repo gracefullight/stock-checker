@@ -2,7 +2,7 @@ name: Daily stock data
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 23 * * *' # Run ~2 hours after U.S. market close
   workflow_dispatch:
 
 jobs:
