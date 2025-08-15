@@ -2,8 +2,8 @@
   "name": "stock-checker",
   "version": "1.0.0",
   "scripts": {
-    "start": "tsx src/index.ts --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA,BMNR",
-    "start:pretty": "tsx src/index.ts --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA,BMNR | pino-pretty"
+    "start": "tsx src/index.ts --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA,BMNR,INTC,UPST",
+    "start:pretty": "tsx src/index.ts --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA,BMNR,INTC,UPST | pino-pretty"
   },
   "dependencies": {
     "commander": "^14.0.0",
