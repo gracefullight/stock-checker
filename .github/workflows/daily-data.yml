@@ -22,7 +22,7 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm start --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA,BMNR
+      - run: pnpm start --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA,BMNR,INTC,UPST
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: 'chore: daily stock data update'

@@ -364,6 +364,8 @@ async function writeToCsv(data: TickerResult[]) {
     return;
   }
 
+  const sorted = [...data].sort((a, b) => a.ticker.localeCompare(b.ticker));
+
   if (!fs.existsSync(CSV_DIR)) {
     fs.mkdirSync(CSV_DIR, { recursive: true });
   }
@@ -393,7 +395,7 @@ async function writeToCsv(data: TickerResult[]) {
     csv += header + '\n';
   }
 
-  data.forEach((item) => {
+  sorted.forEach((item) => {
     const row = [
       item.date,
       item.ticker,
