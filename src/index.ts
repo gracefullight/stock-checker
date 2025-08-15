@@ -45,20 +45,33 @@ const SELL_THRESHOLD = 200;
 // =============================================================================
 // Argument parsing
 // =============================================================================
-function parseTickers(): string[] {
+interface CliOptions {
+  tickers: string[];
+  slackWebhook?: string;
+}
+
+function parseOptions(): CliOptions {
   const program = new Command();
-  program.option('--ticker <list>', 'Comma-separated tickers');
+  program
+    .option('--ticker <list>', 'Comma-separated tickers')
+    .option('--slack-webhook <url>', 'Slack webhook URL');
   program.parse(process.argv);
 
-  const opts = program.opts<{ ticker?: string }>();
-  const raw = process.env.npm_config_ticker ?? opts.ticker;
+  const opts = program.opts<{ ticker?: string; slackWebhook?: string }>();
+  const rawTickers = process.env.npm_config_ticker ?? opts.ticker;
 
-  if (!raw) {
+  if (!rawTickers) {
     logger.error('Ticker argument is required. Use --ticker=TSLA,PLTR');
     process.exit(1);
   }
 
-  return raw.split(',').map((t) => t.trim()).filter(Boolean);
+  const tickers = rawTickers.split(',').map((t) => t.trim()).filter(Boolean);
+  const slackWebhook =
+    process.env.SLACK_WEBHOOK_URL ??
+    (process.env.npm_config_slack_webhook as string | undefined) ??
+    opts.slackWebhook;
+
+  return { tickers, slackWebhook };
 }
 
 interface TickerResult {
@@ -301,12 +314,45 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
   };
 }
 
-async function fetchAndWrite(tickers: string[]) {
+async function postToSlack(item: TickerResult, webhook: string) {
+  const lines = [
+    `- Close: ${item.close.toFixed(2)}`,
+    `- Volume: ${item.volume}`,
+    `- RSI: ${item.rsi.toFixed(2)}`,
+    `- StochK: ${item.stochasticK.toFixed(2)}`,
+    `- Bollinger Bands: ${item.bbLower.toFixed(2)} - ${item.bbUpper.toFixed(2)}`,
+    `- Donchian Channels: ${item.donchLower.toFixed(2)} - ${item.donchUpper.toFixed(2)}`,
+    `- Williams %R: ${item.williamsR.toFixed(2)}`,
+    `- Fear & Greed: ${item.fearGreed ?? 'N/A'}`,
+    `- Patterns: ${item.patterns.length ? item.patterns.join(', ') : 'None'}`,
+    `- Score: ${item.score.toFixed(2)}`
+  ];
+  const text = `${item.date} ${item.ticker} ${item.opinion}\n${lines.join('\n')}`;
+  try {
+    const res = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    if (!res.ok) {
+      logger.error({ status: res.status, body: await res.text() }, 'Slack webhook failed');
+    }
+  } catch (err) {
+    logger.error({ err }, 'Slack notification error');
+  }
+}
+
+async function fetchAndWrite(tickers: string[], slackWebhook?: string) {
   const fearGreed = await getFearGreedIndex();
   const results = (
     await Promise.all(tickers.map((t) => processTicker(t, fearGreed)))
   ).filter((r): r is TickerResult => r !== null);
   await writeToCsv(results);
+
+  if (slackWebhook) {
+    const actionable = results.filter((r) => r.opinion === 'BUY' || r.opinion === 'SELL');
+    await Promise.all(actionable.map((r) => postToSlack(r, slackWebhook)));
+  }
 }
 
 // =============================================================================
@@ -376,7 +422,9 @@ async function writeToCsv(data: TickerResult[]) {
 // Run
 // =============================================================================
 if (require.main === module) {
-  const tickers = parseTickers();
-  fetchAndWrite(tickers).catch((err) => logger.error({ err }, 'Unexpected error'));
+  const { tickers, slackWebhook } = parseOptions();
+  fetchAndWrite(tickers, slackWebhook).catch((err) =>
+    logger.error({ err }, 'Unexpected error')
+  );
 }
 
