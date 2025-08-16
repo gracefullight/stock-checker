@@ -12,6 +12,7 @@ This project fetches daily stock data for multiple tickers using `yahoo-finance2
 - Fear & Greed Index (alternative.me)
 - Derived BUY/HOLD/SELL opinion weighted by indicator reliability and basic pattern detection
 - Basic detection of bullish chart patterns (ascending triangle, bullish flag, double bottom, falling wedge, island reversal)
+- Volatility-adjusted stop loss, take profit, and trailing stop suggestions (1.5×ATR stop, trailing activates after 0.5×ATR move and never tighter than the initial stop)
 
 ## Usage
 1. **Install & run**

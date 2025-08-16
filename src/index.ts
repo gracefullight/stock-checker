@@ -1,5 +1,5 @@
 import yahooFinance from 'yahoo-finance2';
-import { rsi, stochastic, bollingerbands, williamsr } from 'technicalindicators';
+import { rsi, stochastic, bollingerbands, williamsr, atr } from 'technicalindicators';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DateTime } from 'luxon';
@@ -90,6 +90,11 @@ interface TickerResult {
   patterns: string[];
   score: number;
   opinion: string;
+  atr: number;
+  stopLoss: number;
+  takeProfit: number;
+  trailingStop: number;
+  trailingStart: number;
 }
 
 // =============================================================================
@@ -282,6 +287,9 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
   const donchLower = Math.min(...recentLows);
   const { score: patternScore, patterns } = detectBullishPatterns(highs, lows, closes);
 
+  const atrValues = atr({ high: highs, low: lows, close: closes, period: 14 });
+  const latestAtr = atrValues[atrValues.length - 1];
+
   const { decision, score } = getOpinion({
     rsi: latestRsi,
     stochasticK: latestStoch.k,
@@ -294,6 +302,25 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
     fearGreed,
     patternScore
   });
+
+  const riskMult = 1.5;
+  const rewardMult = 2;
+  const trailingMult = 1.2;
+  const trailingActivationMult = 0.5;
+
+  const risk = latestAtr * riskMult;
+  const reward = risk * rewardMult;
+  const direction = decision === 'SELL' ? -1 : 1;
+  const stopLoss = latest.close - risk * direction;
+  const takeProfit = latest.close + reward * direction;
+
+  const trailingCandidate = latest.close - trailingMult * latestAtr * direction;
+  const trailingStop =
+    direction === 1
+      ? Math.min(stopLoss, trailingCandidate)
+      : Math.max(stopLoss, trailingCandidate);
+  const trailingStart =
+    latest.close + trailingActivationMult * latestAtr * direction;
 
   return {
     ticker,
@@ -310,7 +337,12 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
     fearGreed,
     patterns,
     score,
-    opinion: decision
+    opinion: decision,
+    atr: latestAtr,
+    stopLoss,
+    takeProfit,
+    trailingStop,
+    trailingStart
   };
 }
 
@@ -325,7 +357,12 @@ async function postToSlack(item: TickerResult, webhook: string) {
     `- Williams %R: ${item.williamsR.toFixed(2)}`,
     `- Fear & Greed: ${item.fearGreed ?? 'N/A'}`,
     `- Patterns: ${item.patterns.length ? item.patterns.join(', ') : 'None'}`,
-    `- Score: ${item.score.toFixed(2)}`
+    `- Score: ${item.score.toFixed(2)}`,
+    `- ATR: ${item.atr.toFixed(2)}`,
+    `- Stop Loss: ${item.stopLoss.toFixed(2)}`,
+    `- Take Profit: ${item.takeProfit.toFixed(2)}`,
+    `- Trailing Stop: ${item.trailingStop.toFixed(2)}`,
+    `- Trailing Start: ${item.trailingStart.toFixed(2)}`
   ];
   const text = `${item.date} ${item.ticker} ${item.opinion}\n${lines.join('\n')}`;
   try {
@@ -387,7 +424,12 @@ async function writeToCsv(data: TickerResult[]) {
     'FearGreed',
     'Patterns',
     'Score',
-    'Opinion'
+    'Opinion',
+    'ATR',
+    'StopLoss',
+    'TakeProfit',
+    'TrailingStop',
+    'TrailingStart'
   ].join(',');
 
   let csv = '';
@@ -411,7 +453,12 @@ async function writeToCsv(data: TickerResult[]) {
       item.fearGreed ?? '',
       item.patterns.join('|'),
       item.score.toFixed(2),
-      item.opinion
+      item.opinion,
+      item.atr.toFixed(2),
+      item.stopLoss.toFixed(2),
+      item.takeProfit.toFixed(2),
+      item.trailingStop.toFixed(2),
+      item.trailingStart.toFixed(2)
     ].join(',');
     csv += row + '\n';
   });
