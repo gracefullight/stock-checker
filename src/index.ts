@@ -1,5 +1,5 @@
 import yahooFinance from 'yahoo-finance2';
-import { rsi, stochastic, bollingerbands, williamsr } from 'technicalindicators';
+import { rsi, stochastic, bollingerbands, williamsr, atr } from 'technicalindicators';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DateTime } from 'luxon';
@@ -90,6 +90,8 @@ interface TickerResult {
   patterns: string[];
   score: number;
   opinion: string;
+  stopLoss: number;
+  takeProfit: number;
 }
 
 // =============================================================================
@@ -263,6 +265,9 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
   const highs = dailyPrices.map((d) => d.high);
   const lows = dailyPrices.map((d) => d.low);
 
+  const atrValues = atr({ high: highs, low: lows, close: closes, period: 14 });
+  const latestAtr = atrValues[atrValues.length - 1];
+
   const rsiValues = rsi({ values: closes, period: 14 });
   const latestRsi = rsiValues[rsiValues.length - 1];
 
@@ -295,6 +300,19 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
     patternScore
   });
 
+  const risk = latestAtr ?? 0;
+  let stopLoss = latest.close;
+  let takeProfit = latest.close;
+  if (risk > 0) {
+    if (decision === 'BUY') {
+      stopLoss = latest.close - risk;
+      takeProfit = latest.close + risk * 2;
+    } else if (decision === 'SELL') {
+      stopLoss = latest.close + risk;
+      takeProfit = latest.close - risk * 2;
+    }
+  }
+
   return {
     ticker,
     date: dateStr,
@@ -310,7 +328,9 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
     fearGreed,
     patterns,
     score,
-    opinion: decision
+    opinion: decision,
+    stopLoss,
+    takeProfit
   };
 }
 
@@ -325,7 +345,9 @@ async function postToSlack(item: TickerResult, webhook: string) {
     `- Williams %R: ${item.williamsR.toFixed(2)}`,
     `- Fear & Greed: ${item.fearGreed ?? 'N/A'}`,
     `- Patterns: ${item.patterns.length ? item.patterns.join(', ') : 'None'}`,
-    `- Score: ${item.score.toFixed(2)}`
+    `- Score: ${item.score.toFixed(2)}`,
+    `- Stop Loss: ${item.stopLoss.toFixed(2)}`,
+    `- Take Profit: ${item.takeProfit.toFixed(2)}`
   ];
   const text = `${item.date} ${item.ticker} ${item.opinion}\n${lines.join('\n')}`;
   try {
@@ -387,6 +409,8 @@ async function writeToCsv(data: TickerResult[]) {
     'FearGreed',
     'Patterns',
     'Score',
+    'StopLoss',
+    'TakeProfit',
     'Opinion'
   ].join(',');
 
@@ -411,6 +435,8 @@ async function writeToCsv(data: TickerResult[]) {
       item.fearGreed ?? '',
       item.patterns.join('|'),
       item.score.toFixed(2),
+      item.stopLoss.toFixed(2),
+      item.takeProfit.toFixed(2),
       item.opinion
     ].join(',');
     csv += row + '\n';

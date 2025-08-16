@@ -12,6 +12,7 @@ This project fetches daily stock data for multiple tickers using `yahoo-finance2
 - Fear & Greed Index (alternative.me)
 - Derived BUY/HOLD/SELL opinion weighted by indicator reliability and basic pattern detection
 - Basic detection of bullish chart patterns (ascending triangle, bullish flag, double bottom, falling wedge, island reversal)
+- Suggested stop-loss and take-profit levels based on ATR with a 1:2 risk/reward ratio
 
 ## Usage
 1. **Install & run**
@@ -34,9 +35,9 @@ This project fetches daily stock data for multiple tickers using `yahoo-finance2
    pnpm start --ticker=TSLA,PLTR --slack-webhook=https://hooks.slack.com/services/XXX
    ```
 
-   Each Slack message starts with the date, ticker, and opinion followed by
-   bullet-pointed indicator values.
+  Each Slack message starts with the date, ticker, and opinion followed by
+  bullet-pointed indicator values.
 
-Each run appends data to a file named `public/stock_data_YYYYMMDD.csv`, with tickers written in alphabetical order.
+Each run appends data to a file named `public/stock_data_YYYYMMDD.csv`, with tickers written in alphabetical order. The CSV now includes `StopLoss` and `TakeProfit` columns.
 
 A scheduled GitHub Action (`.github/workflows/daily-data.yml`) executes the script daily and commits new CSV files automatically.
