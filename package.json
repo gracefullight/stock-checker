@@ -2,11 +2,12 @@
   "name": "stock-checker",
   "version": "1.0.0",
   "scripts": {
-    "start": "tsx src/index.ts --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA,BMNR,INTC,UPST",
-    "start:pretty": "tsx src/index.ts --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA,BMNR,INTC,UPST | pino-pretty"
+    "start": "tsx src/index.ts --ticker=BMNR,DNA,GEV,GOOGL,INTC,IONQ,PLTR,RXRX,TSLA,UPST --sort=asc",
+    "start:pretty": "tsx src/index.ts --ticker=BMNR,DNA,GEV,GOOGL,INTC,IONQ,PLTR,RXRX,TSLA,UPST --sort=asc | pino-pretty"
   },
   "dependencies": {
     "commander": "^14.0.0",
+    "es-toolkit": "^1.39.10",
     "luxon": "^3.7.1",
     "pino": "^9.8.0",
     "pino-pretty": "^13.1.1",

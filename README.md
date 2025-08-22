@@ -19,7 +19,7 @@ This project fetches daily stock data for multiple tickers using `yahoo-finance2
 
     ```bash
     pnpm install
-    pnpm start --ticker=TSLA,PLTR,IONQ,GEV,RXRX,DNA,BMNR,INTC,UPST
+    pnpm start --ticker=BMNR,DNA,GEV,GOOGL,INTC,IONQ,PLTR,RXRX,TSLA,UPST --sort=desc
     ```
 
     Pass any comma-separated list of tickers via `--ticker`. If omitted, the script exits with an error message. Argument parsing is handled by [commander](https://github.com/tj/commander.js).
@@ -34,6 +34,6 @@ This project fetches daily stock data for multiple tickers using `yahoo-finance2
 
     Each Slack message starts with the date, ticker, and opinion followed by bullet-pointed indicator values.
 
-Each run appends data to a file named `public/stock_data_YYYYMMDD.csv`, with tickers written in alphabetical order.
+Each run appends data to a file named `public/stock_data_YYYYMMDD.csv`, with tickers written in alphabetical order by default. Use `--sort=desc` to write them in reverse order.
 
 A scheduled GitHub Action (`.github/workflows/daily-data.yml`) executes the script daily and commits new CSV files automatically.

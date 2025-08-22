@@ -5,6 +5,7 @@ import path from 'node:path';
 import { DateTime } from 'luxon';
 import pino from 'pino';
 import { Command } from 'commander';
+import { orderBy } from 'es-toolkit/array';
 
 // =============================================================================
 // Logger configuration
@@ -48,16 +49,22 @@ const SELL_THRESHOLD = 200;
 interface CliOptions {
   tickers: string[];
   slackWebhook?: string;
+  sort: 'asc' | 'desc';
 }
 
 function parseOptions(): CliOptions {
   const program = new Command();
   program
     .option('--ticker <list>', 'Comma-separated tickers')
-    .option('--slack-webhook <url>', 'Slack webhook URL');
+    .option('--slack-webhook <url>', 'Slack webhook URL')
+    .option('--sort <order>', 'Sort order: asc or desc', 'asc');
   program.parse(process.argv);
 
-  const opts = program.opts<{ ticker?: string; slackWebhook?: string }>();
+  const opts = program.opts<{
+    ticker?: string;
+    slackWebhook?: string;
+    sort?: 'asc' | 'desc';
+  }>();
   const rawTickers = process.env.npm_config_ticker ?? opts.ticker;
 
   if (!rawTickers) {
@@ -70,8 +77,15 @@ function parseOptions(): CliOptions {
     process.env.SLACK_WEBHOOK_URL ??
     (process.env.npm_config_slack_webhook as string | undefined) ??
     opts.slackWebhook;
+  const sort =
+    (process.env.npm_config_sort as 'asc' | 'desc' | undefined) ?? opts.sort ?? 'asc';
 
-  return { tickers, slackWebhook };
+  if (sort !== 'asc' && sort !== 'desc') {
+    logger.error("Sort option must be 'asc' or 'desc'");
+    process.exit(1);
+  }
+
+  return { tickers, slackWebhook, sort };
 }
 
 interface TickerResult {
@@ -379,15 +393,22 @@ async function postToSlack(item: TickerResult, webhook: string) {
   }
 }
 
-async function fetchAndWrite(tickers: string[], slackWebhook?: string) {
+async function fetchAndWrite(
+  tickers: string[],
+  sort: 'asc' | 'desc',
+  slackWebhook?: string
+) {
   const fearGreed = await getFearGreedIndex();
   const results = (
     await Promise.all(tickers.map((t) => processTicker(t, fearGreed)))
   ).filter((r): r is TickerResult => r !== null);
-  await writeToCsv(results);
+  const ordered = orderBy(results, ['ticker'], [sort]);
+  await writeToCsv(ordered);
 
   if (slackWebhook) {
-    const actionable = results.filter((r) => r.opinion === 'BUY' || r.opinion === 'SELL');
+    const actionable = ordered.filter(
+      (r) => r.opinion === 'BUY' || r.opinion === 'SELL'
+    );
     await Promise.all(actionable.map((r) => postToSlack(r, slackWebhook)));
   }
 }
@@ -400,8 +421,6 @@ async function writeToCsv(data: TickerResult[]) {
     logger.info('No data to write to CSV');
     return;
   }
-
-  const sorted = [...data].sort((a, b) => a.ticker.localeCompare(b.ticker));
 
   if (!fs.existsSync(CSV_DIR)) {
     fs.mkdirSync(CSV_DIR, { recursive: true });
@@ -437,7 +456,7 @@ async function writeToCsv(data: TickerResult[]) {
     csv += header + '\n';
   }
 
-  sorted.forEach((item) => {
+  data.forEach((item) => {
     const row = [
       item.date,
       item.ticker,
@@ -471,8 +490,8 @@ async function writeToCsv(data: TickerResult[]) {
 // Run
 // =============================================================================
 if (require.main === module) {
-  const { tickers, slackWebhook } = parseOptions();
-  fetchAndWrite(tickers, slackWebhook).catch((err) =>
+  const { tickers, slackWebhook, sort } = parseOptions();
+  fetchAndWrite(tickers, sort, slackWebhook).catch((err) =>
     logger.error({ err }, 'Unexpected error')
   );
 }
