@@ -19,7 +19,7 @@ This project fetches daily stock data for multiple tickers using `yahoo-finance2
 
     ```bash
     pnpm install
-    pnpm start --ticker=BMNR,DNA,GEV,GOOGL,INTC,IONQ,PLTR,RXRX,TSLA,UPST --sort=desc
+    pnpm start --ticker=ABCL,BE,BMNR,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST --sort=desc
     ```
 
     Pass any comma-separated list of tickers via `--ticker`. If omitted, the script exits with an error message. Argument parsing is handled by [commander](https://github.com/tj/commander.js).
