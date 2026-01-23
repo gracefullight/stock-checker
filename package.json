@@ -3,9 +3,14 @@
   "version": "1.0.0",
   "scripts": {
     "start": "tsx src/index.ts --ticker=ABCL,BE,BMNR,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST --sort=asc",
-    "start:pretty": "tsx src/index.ts --ticker=ABCL,BE,BMNR,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST --sort=asc | pino-pretty"
+    "start:pretty": "tsx src/index.ts --ticker=ABCL,BE,BMNR,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST --sort=asc | pino-pretty",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "axios": "^1.13.2",
     "commander": "^14.0.0",
     "es-toolkit": "^1.39.10",
     "luxon": "^3.7.1",
@@ -17,8 +22,11 @@
   "devDependencies": {
     "@types/luxon": "^3.7.1",
     "@types/node": "^22.17.1",
+    "@vitest/ui": "^4.0.18",
+    "msw": "^2.12.7",
     "tsx": "^4.20.3",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.0.18"
   },
   "engines": {
     "node": "22"
