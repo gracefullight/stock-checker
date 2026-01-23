@@ -43,11 +43,11 @@ export async function writeToCsv(data: TickerResult[]): Promise<void> {
     return;
   }
 
-  if (!fs.existsSync(CSV_DIR)) {
+  if (!existsSync(CSV_DIR)) {
     await fs.mkdir(CSV_DIR, { recursive: true });
   }
   const filePath = path.join(CSV_DIR, `stock_data_${DateTime.now().toFormat('yyyyLLdd')}.csv`);
-  const fileExists = await fs.existsSync(filePath);
+  const fileExists = existsSync(filePath);
 
   const header = [
     'Date',
