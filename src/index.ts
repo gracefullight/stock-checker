@@ -13,6 +13,12 @@ import {
   TRAILING_MULTIPLIER,
   TRAILING_ACTIVATION_MULTIPLIER,
 } from './constants';
+import {
+  addAsset,
+  removeAsset,
+  getPortfolio,
+  generatePerformanceReport,
+} from './portfolio/manager';
 import type { TickerResult, CliOptions } from './types';
 
 const logger = pino({
@@ -88,7 +94,48 @@ async function processTicker(ticker: string, fearGreed: number | null): Promise<
 }
 
 async function fetchAndWrite(options: CliOptions): Promise<void> {
-  const { tickers, slackWebhook, sort } = options;
+  const { tickers, slackWebhook, sort, portfolioAction, portfolioTicker, fundamentals, news } = parseOptions();
+  const fearGreed = await getFearGreedIndex();
+
+  // If fundamentals or news option is set, call portfolio functions instead of stock processing
+  if (portfolioAction === 'list') {
+    const portfolio = await getPortfolio();
+    logger.info(JSON.stringify(portfolio, null, 2));
+    process.exit(0);
+  }
+
+  if (portfolioAction === 'add' && portfolioTicker) {
+    await addAsset(portfolioTicker);
+    process.exit(0);
+  }
+
+  if (portfolioAction === 'remove' && portfolioTicker) {
+    await removeAsset(portfolioTicker);
+    process.exit(0);
+  }
+
+  if (portfolioAction === 'report') {
+    const tickersToReport = portfolioTicker ? [portfolioTicker] : tickers;
+    const results = (
+      await Promise.all(tickersToReport.map((t) => processTicker(t, fearGreed)))
+    ).filter((r): r is TickerResult => r !== null);
+    await generatePerformanceReport(tickersToReport, results);
+    process.exit(0);
+  }
+
+  if (fundamentals && portfolioTicker) {
+    const fundamentals = await getFundamentals(portfolioTicker);
+    logger.info('Fundamentals:', fundamentals);
+    process.exit(0);
+  }
+
+  if (news && portfolioTicker) {
+    const newsItems = await getStockNews(portfolioTicker, 5);
+    logger.info(`Recent news for ${portfolioTicker}:`, newsItems);
+    process.exit(0);
+  }
+
+  const { tickers: rawTickers } = options;
   const fearGreed = await getFearGreedIndex();
   const results = (
     await Promise.all(tickers.map((t) => processTicker(t, fearGreed)))
