@@ -49,11 +49,11 @@ program
       }
 
       const tickersArray = rawTickers
-        ? [rawTickers]
-        : rawTickers
+        ? rawTickers
             .split(',')
             .map((t: string) => t.trim())
-            .filter(Boolean);
+            .filter(Boolean)
+        : [];
 
       const slackWebhook =
         process.env.SLACK_WEBHOOK_URL ??

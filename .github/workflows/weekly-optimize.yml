@@ -2,29 +2,23 @@ name: Weekly Stock Prediction Optimization
 
 on:
   schedule:
-    - cron: '0 2 * *' # Every Sunday at 2 AM UTC (Sunday 10 PM KST)
-  workflow_dispatch: inputs
+    - cron: "0 2 * * 0" # Every Sunday at 2 AM UTC
+  workflow_dispatch:
 
 jobs:
   optimize:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
         with:
-          python-version: '3.11'
+          bun-version: latest
 
-      - name: Install Python dependencies
-        run: |
-          cd python
-          pip install -q pandas numpy optuna scikit-learn
+      - run: bun install --frozen-lockfile
 
-      - name: Run optimization pipeline
-        run: |
-          cd /Users/gracefullight/workspace/stock-checker
-          chmod +x scripts/optimize.sh
-          ./scripts/optimize.sh
+      - name: Run optimization
+        run: bun src/index.ts optimize --trials 50
 
       - name: Upload results as artifacts
         if: always()
@@ -32,19 +26,14 @@ jobs:
         with:
           name: optimization-results
           path: |
-            data/config/optimized_weights.json
-            data/accuracy_metrics.json
-            data/calibration_params.json
-            data/matched_predictions.csv
+            data/config/
+            src/constants.ts
           retention-days: 30
 
       - name: Commit optimized weights
-        run: |
-          cd /Users/gracefullight/workspace/stock-checker
-          git add data/config/optimized_weights.json
-          git commit -m "feat: update optimized hyperparameters and calibration [skip ci]"
-          git push
-
-concurrency:
-  group: optimization
-  cancel-in-progress: true
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "feat: update optimized hyperparameters and calibration"
+          file_pattern: |
+            data/config/optimized_weights.json
+            src/constants.ts
