@@ -1,10 +1,11 @@
-import type { TickerResult } from '../types';
+import { promises as fs } from 'node:fs';
 import pino from 'pino';
+import type { TickerResult } from '@/types';
 
 const logger = pino({
   level: 'debug',
   timestamp: pino.stdTimeFunctions.isoTime,
-  transport: { target: 'pino-pretty' }
+  transport: { target: 'pino-pretty' },
 });
 
 interface Portfolio {
@@ -16,10 +17,9 @@ const PORTFOLIO_FILE = '.portfolio.json';
 
 async function loadPortfolio(): Promise<Portfolio> {
   try {
-    const { promises } = await import('node:fs');
-    const data = await promises.readFile(PORTFOLIO_FILE, 'utf-8');
+    const data = await fs.readFile(PORTFOLIO_FILE, 'utf-8');
     return JSON.parse(data);
-  } catch (error) {
+  } catch (_error) {
     logger.info('No existing portfolio found, creating new one');
     return { assets: [], createdAt: new Date().toISOString() };
   }
@@ -27,8 +27,7 @@ async function loadPortfolio(): Promise<Portfolio> {
 
 async function savePortfolio(portfolio: Portfolio): Promise<void> {
   try {
-    const { promises } = await import('node:fs');
-    await promises.writeFile(PORTFOLIO_FILE, JSON.stringify(portfolio, null, 2), 'utf-8');
+    await fs.writeFile(PORTFOLIO_FILE, JSON.stringify(portfolio, null, 2), 'utf-8');
     logger.info(`Portfolio saved: ${portfolio.assets.length} assets`);
   } catch (error) {
     logger.error({ error }, 'Failed to save portfolio');

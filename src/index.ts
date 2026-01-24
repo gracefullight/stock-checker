@@ -1,159 +1,126 @@
+import { Command } from 'commander';
 import pino from 'pino';
-import { orderBy } from 'es-toolkit/array';
-import { parseOptions } from './config';
-import { getHistoricalPrices, getFearGreedIndex } from './services/data-fetcher';
-import { calculateAllIndicators } from './services/indicators';
-import { detectPatterns } from './services/patterns';
-import { getOpinion } from './services/analysis';
-import { writeToCsv } from './utils/csv-writer';
-import { sendSlackNotification } from './utils/slack';
-import {
-  RISK_MULTIPLIER,
-  REWARD_MULTIPLIER,
-  TRAILING_MULTIPLIER,
-  TRAILING_ACTIVATION_MULTIPLIER,
-} from './constants';
-import {
-  addAsset,
-  removeAsset,
-  getPortfolio,
-  generatePerformanceReport,
-} from './portfolio/manager';
-import type { TickerResult, CliOptions } from './types';
+import { learn } from '@/commands/learn';
+import { optimize } from '@/commands/optimize';
+import { predict } from '@/commands/predict';
+import type { CliOptions } from '@/types';
 
 const logger = pino({
-  level: 'debug',
-  timestamp: pino.stdTimeFunctions.isoTime,
-  transport: { target: 'pino-pretty' }
+  level: 'info',
+  transport: { target: 'pino-pretty' },
 });
 
-async function processTicker(ticker: string, fearGreed: number | null): Promise<TickerResult | null> {
-  logger.info({ ticker }, 'Processing ticker');
-  const dailyPrices = await getHistoricalPrices(ticker, 365);
-  if (dailyPrices.length === 0) {
-    logger.warn({ ticker }, 'No price data');
-    return null;
-  }
+const program = new Command();
 
-  const latest = dailyPrices[dailyPrices.length - 1];
-  const dateStr = latest.date.toISOString().split('T')[0];
-  const closes = dailyPrices.map((d) => d.close);
-  const highs = dailyPrices.map((d) => d.high);
-  const lows = dailyPrices.map((d) => d.low);
+program.name('stock-checker').description('Stock analysis and prediction tool').version('1.0.0');
 
-  const indicators = calculateAllIndicators({ closes, highs, lows });
-  const { score: patternScore, patterns } = detectPatterns({ highs, lows, closes });
-  const { decision, score } = getOpinion({
-    rsi: indicators.rsi,
-    stochasticK: indicators.stochasticK,
-    williamsR: indicators.williamsR,
-    close: latest.close,
-    bbLower: indicators.bbLower,
-    bbUpper: indicators.bbUpper,
-    donchLower: indicators.donchLower,
-    donchUpper: indicators.donchUpper,
-    fearGreed,
-    patternScore
+program
+  .command('predict', { isDefault: true })
+  .description('Run stock prediction (default)')
+  .option('--ticker <list>', 'Comma-separated tickers')
+  .option('--slack-webhook <url>', 'Slack webhook URL')
+  .option('--sort <order>', 'Sort order: asc or desc', 'asc')
+  .option('--portfolio-action <action>', 'Portfolio action: add, remove, list, report')
+  .option('--portfolio-ticker <ticker>', 'Portfolio ticker symbol')
+  .option('--fundamentals', 'Show fundamentals for ticker')
+  .option('--news', 'Show recent news for ticker')
+  .option('--options', 'Show options chains for ticker')
+  .option('--dividends', 'Show dividend information for ticker')
+  .option('--earnings', 'Show earnings data for ticker')
+  .option('--format <type>', 'Output format: csv or json', 'csv')
+  .action(async (opts) => {
+    try {
+      // Logic from src/config.ts to resolve defaults and env vars
+      const sort =
+        (process.env.npm_config_sort as 'asc' | 'desc' | undefined) ?? opts.sort ?? 'asc';
+
+      if (sort !== 'asc' && sort !== 'desc') {
+        logger.error("Sort option must be 'asc' or 'desc'");
+        process.exit(1);
+      }
+
+      const rawTickers = process.env.npm_config_ticker ?? opts.ticker ?? '';
+
+      if (!rawTickers && !opts.portfolioAction) {
+        logger.error(
+          'Ticker argument is required. Use --ticker=TSLA,PLTR or --portfolio-action add/remove/list/report'
+        );
+        process.exit(1);
+      }
+
+      const tickersArray = rawTickers
+        ? [rawTickers]
+        : rawTickers
+            .split(',')
+            .map((t: string) => t.trim())
+            .filter(Boolean);
+
+      const slackWebhook =
+        process.env.SLACK_WEBHOOK_URL ??
+        (process.env.npm_config_slack_webhook as string | undefined) ??
+        opts.slackWebhook;
+
+      // If portfolio action is set, use single ticker instead of comma-separated tickers
+      let finalTickers: string[];
+      if (
+        opts.portfolioAction &&
+        opts.portfolioAction !== 'list' &&
+        opts.portfolioAction !== 'report'
+      ) {
+        finalTickers = [opts.portfolioTicker ?? ''];
+      } else {
+        finalTickers = tickersArray;
+      }
+
+      const finalOptions: CliOptions = {
+        tickers: finalTickers,
+        slackWebhook,
+        sort,
+        portfolioAction: opts.portfolioAction,
+        portfolioTicker: opts.portfolioTicker,
+        fundamentals: opts.fundamentals,
+        news: opts.news,
+        options: opts.options,
+        dividends: opts.dividends,
+        earnings: opts.earnings,
+        format: opts.format ?? 'csv',
+      };
+
+      await predict(finalOptions);
+    } catch (error) {
+      logger.error({ err: error }, 'Prediction failed');
+      process.exit(1);
+    }
   });
 
-  const risk = indicators.atr * RISK_MULTIPLIER;
-  const reward = risk * REWARD_MULTIPLIER;
-  const direction = decision === 'SELL' ? -1 : 1;
-  const stopLoss = latest.close - risk * direction;
-  const takeProfit = latest.close + reward * direction;
-  const trailingCandidate = latest.close - TRAILING_MULTIPLIER * indicators.atr * direction;
-  const trailingStop =
-    direction === 1
-      ? Math.min(stopLoss, trailingCandidate)
-      : Math.max(stopLoss, trailingCandidate);
-  const trailingStart =
-    latest.close + TRAILING_ACTIVATION_MULTIPLIER * indicators.atr * direction;
+program
+  .command('learn')
+  .description('Run the learning loop')
+  .action(async () => {
+    try {
+      await learn();
+    } catch (error) {
+      logger.error({ err: error }, 'Learn command failed');
+      process.exit(1);
+    }
+  });
 
-  return {
-    ticker,
-    date: dateStr,
-    close: latest.close,
-    volume: latest.volume,
-    rsi: indicators.rsi,
-    stochasticK: indicators.stochasticK,
-    bbLower: indicators.bbLower,
-    bbUpper: indicators.bbUpper,
-    donchLower: indicators.donchLower,
-    donchUpper: indicators.donchUpper,
-    williamsR: indicators.williamsR,
-    fearGreed,
-    patterns,
-    score,
-    opinion: decision,
-    atr: indicators.atr,
-    stopLoss,
-    takeProfit,
-    trailingStop,
-    trailingStart,
-  };
-}
-
-async function fetchAndWrite(options: CliOptions): Promise<void> {
-  const { tickers, slackWebhook, sort, portfolioAction, portfolioTicker, fundamentals, news } = parseOptions();
-  const fearGreed = await getFearGreedIndex();
-
-  // If fundamentals or news option is set, call portfolio functions instead of stock processing
-  if (portfolioAction === 'list') {
-    const portfolio = await getPortfolio();
-    logger.info(JSON.stringify(portfolio, null, 2));
-    process.exit(0);
-  }
-
-  if (portfolioAction === 'add' && portfolioTicker) {
-    await addAsset(portfolioTicker);
-    process.exit(0);
-  }
-
-  if (portfolioAction === 'remove' && portfolioTicker) {
-    await removeAsset(portfolioTicker);
-    process.exit(0);
-  }
-
-  if (portfolioAction === 'report') {
-    const tickersToReport = portfolioTicker ? [portfolioTicker] : tickers;
-    const results = (
-      await Promise.all(tickersToReport.map((t) => processTicker(t, fearGreed)))
-    ).filter((r): r is TickerResult => r !== null);
-    await generatePerformanceReport(tickersToReport, results);
-    process.exit(0);
-  }
-
-  if (fundamentals && portfolioTicker) {
-    const fundamentals = await getFundamentals(portfolioTicker);
-    logger.info('Fundamentals:', fundamentals);
-    process.exit(0);
-  }
-
-  if (news && portfolioTicker) {
-    const newsItems = await getStockNews(portfolioTicker, 5);
-    logger.info(`Recent news for ${portfolioTicker}:`, newsItems);
-    process.exit(0);
-  }
-
-  const { tickers: rawTickers } = options;
-  const fearGreed = await getFearGreedIndex();
-  const results = (
-    await Promise.all(tickers.map((t) => processTicker(t, fearGreed)))
-  ).filter((r): r is TickerResult => r !== null);
-  const ordered = orderBy(results, ['ticker'], [sort]);
-  await writeToCsv(ordered);
-
-  if (slackWebhook) {
-    const actionable = ordered.filter(
-      (r) => r.opinion === 'BUY' || r.opinion === 'SELL'
-    );
-    await Promise.all(actionable.map((r) => sendSlackNotification(r, slackWebhook)));
-  }
-}
+program
+  .command('optimize [symbol]')
+  .description('Optimize parameters for a symbol (default: TSLA)')
+  .option('--trials <number>', 'Number of trials', '50')
+  .action(async (symbol, options) => {
+    try {
+      await optimize(symbol, options);
+    } catch (error) {
+      logger.error({ err: error }, 'Optimize command failed');
+      process.exit(1);
+    }
+  });
 
 if (require.main === module) {
-  const options = parseOptions();
-  fetchAndWrite(options).catch((err) =>
-    logger.error({ err }, 'Unexpected error')
-  );
+  program.parseAsync(process.argv).catch((err) => {
+    logger.error({ err }, 'Unexpected error');
+    process.exit(1);
+  });
 }

@@ -7,10 +7,10 @@
 - `tsconfig.json`: TypeScript config (strict mode, ESNext target, CommonJS).
 
 ## Build, Test, and Development Commands
-- `pnpm install`: Install dependencies (Node `22` required).
-- `pnpm start --ticker=TSLA,PLTR --sort=asc`: Run locally via `tsx` (no build step). Writes/updates `public/stock_data_YYYYMMDD.csv`.
-- `pnpm start:pretty`: Same as above, pretty log output via `pino-pretty`.
-- Slack alerts: `SLACK_WEBHOOK_URL=... pnpm start --ticker=AAPL --sort=desc` or `--slack-webhook=...`.
+- `bun install`: Install dependencies (Bun `1` required).
+- `bun start --ticker=TSLA,PLTR --sort=asc`: Run locally via `bun` (no build step). Writes/updates `public/stock_data_YYYYMMDD.csv`.
+- `bun start:pretty`: Same as above, pretty log output via `pino-pretty`.
+- Slack alerts: `SLACK_WEBHOOK_URL=... bun start --ticker=AAPL --sort=desc` or `--slack-webhook=...`.
 
 ## Coding Style & Naming Conventions
 - Language: TypeScript with `strict: true`, `esModuleInterop: true`.

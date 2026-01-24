@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { getOpinion } from './analysis';
+import { describe, expect, it } from 'vitest';
+import { getOpinion } from '@/services/analysis';
 
 describe('analysis', () => {
   it('should return BUY when buy score exceeds threshold', () => {
@@ -13,7 +13,7 @@ describe('analysis', () => {
       donchLower: 98,
       donchUpper: 105,
       fearGreed: 35,
-      patternScore: 80
+      patternScore: 80,
     });
 
     expect(result.decision).toBe('BUY');
@@ -31,7 +31,7 @@ describe('analysis', () => {
       donchLower: 90,
       donchUpper: 110,
       fearGreed: 50,
-      patternScore: 0
+      patternScore: 0,
     });
 
     expect(result.decision).toBe('HOLD');

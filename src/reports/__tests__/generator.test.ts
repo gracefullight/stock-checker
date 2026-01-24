@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { generateMarkdownReportFull, generateMarkdownReport, type ReportSection } from './generator';
-import type { TickerResult } from '../types';
+import { describe, expect, it } from 'vitest';
+import { generateMarkdownReport, type ReportSection } from '@/reports/generator';
+import type { TickerResult } from '@/types';
 
 describe('report generator', () => {
   describe('generateMarkdownReport', () => {
@@ -26,6 +26,11 @@ describe('report generator', () => {
         takeProfit: 205,
         trailingStop: 195,
         trailingStart: 202.5,
+        macd: 0,
+        macdSignal: 0,
+        macdHistogram: 0,
+        sma20: 200,
+        ema20: 200,
       };
 
       const sections = generateMarkdownReport('TSLA', result);
@@ -59,7 +64,7 @@ describe('report generator', () => {
         { title: '## Details', content: 'Test content' },
       ];
 
-      const full = sections.map(s => `${s.title}\n${s.content}`).join('\n\n');
+      const full = sections.map((s) => `${s.title}\n${s.content}`).join('\n\n');
 
       expect(full).toBe('## Overview\nTest\n\n## Details\nTest content');
     });
@@ -88,5 +93,10 @@ function getBaseResult(): TickerResult {
     takeProfit: 205,
     trailingStop: 195,
     trailingStart: 202.5,
+    macd: 0,
+    macdSignal: 0,
+    macdHistogram: 0,
+    sma20: 200,
+    ema20: 200,
   };
 }

@@ -2,7 +2,7 @@ name: Daily stock data
 
 on:
   schedule:
-    - cron: '0 23 * * *' # Run ~2 hours after U.S. market close
+    - cron: "0 23 * * *" # Run ~2 hours after U.S. market close
   workflow_dispatch:
 
 jobs:
@@ -12,19 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 10
-          run_install: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: 'pnpm'
-          cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm start --ticker=ABCL,BE,BMNR,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST --sort=asc
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun start --ticker=ABCL,BE,BMNR,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST --sort=asc
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: 'chore: daily stock data update'
+          commit_message: "chore: daily stock data update"
           file_pattern: public/*.csv
-

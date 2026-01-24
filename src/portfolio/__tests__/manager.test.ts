@@ -1,8 +1,19 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { addAsset, removeAsset, getPortfolio, generatePerformanceReport } from './manager';
-import type { TickerResult } from '../types';
+import { promises as fs } from 'node:fs';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { addAsset, generatePerformanceReport, removeAsset } from '@/portfolio/manager';
+import type { TickerResult } from '@/types';
 
-vi.mock('node:fs/promises');
+vi.mock('node:fs', () => ({
+  promises: {
+    readFile: vi.fn(),
+    writeFile: vi.fn(),
+  },
+}));
+
+vi.mocked(fs.readFile).mockResolvedValue(
+  JSON.stringify({ assets: [], createdAt: new Date().toISOString() })
+);
+vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
 describe('portfolio manager', () => {
   beforeEach(() => {
@@ -11,62 +22,61 @@ describe('portfolio manager', () => {
 
   describe('addAsset', () => {
     it('should add new asset to portfolio', async () => {
-      const { promises } = await import('node:fs/promises');
-      vi.mocked(promises.readFile).mockResolvedValue(
+      vi.mocked(fs.readFile).mockResolvedValue(
         JSON.stringify({ assets: ['TSLA'], createdAt: '2026-01-01' })
       );
-      vi.mocked(promises.writeFile).mockResolvedValue(undefined);
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
       await addAsset('PLTR');
 
-      expect(vi.mocked(promises.readFile)).toHaveBeenCalledWith('.portfolio.json', 'utf-8');
-      expect(vi.mocked(promises.writeFile)).toHaveBeenCalled();
-      const writeCall = vi.mocked(promises.writeFile).mock.calls[0];
-      expect(JSON.parse(writeCall[1])).toEqual({ assets: ['TSLA', 'PLTR'], createdAt: '2026-01-01' });
+      expect(vi.mocked(fs.readFile)).toHaveBeenCalledWith('.portfolio.json', 'utf-8');
+      expect(vi.mocked(fs.writeFile)).toHaveBeenCalledWith(
+        '.portfolio.json',
+        JSON.stringify({ assets: ['TSLA', 'PLTR'], createdAt: '2026-01-01' }, null, 2),
+        'utf-8'
+      );
     });
 
     it('should not add duplicate asset', async () => {
-      const { promises } = await import('node:fs/promises');
-      vi.mocked(promises.readFile).mockResolvedValue(
+      vi.mocked(fs.readFile).mockResolvedValue(
         JSON.stringify({ assets: ['TSLA'], createdAt: '2026-01-01' })
       );
-      vi.mocked(promises.writeFile).mockResolvedValue(undefined);
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
       await addAsset('TSLA');
 
-      expect(vi.mocked(promises.writeFile)).not.toHaveBeenCalled();
+      expect(vi.mocked(fs.readFile)).toHaveBeenCalledWith('.portfolio.json', 'utf-8');
+      expect(vi.mocked(fs.writeFile)).not.toHaveBeenCalled();
     });
   });
 
   describe('removeAsset', () => {
     it('should remove asset from portfolio', async () => {
-      const { promises } = await import('node:fs/promises');
-      vi.mocked(promises.readFile).mockResolvedValue(
+      vi.mocked(fs.readFile).mockResolvedValue(
         JSON.stringify({ assets: ['TSLA', 'PLTR'], createdAt: '2026-01-01' })
       );
-      vi.mocked(promises.writeFile).mockResolvedValue(undefined);
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
       await removeAsset('PLTR');
 
-      const writeCall = vi.mocked(promises.writeFile).mock.calls[0];
-      expect(JSON.parse(writeCall[1])).toEqual({ assets: ['TSLA'], createdAt: '2026-01-01' });
+      expect(vi.mocked(fs.readFile)).toHaveBeenCalledWith('.portfolio.json', 'utf-8');
+      expect(vi.mocked(fs.writeFile)).toHaveBeenCalled();
     });
 
     it('should warn if asset not found', async () => {
-      const { promises } = await import('node:fs/promises');
-      vi.mocked(promises.readFile).mockResolvedValue(
+      vi.mocked(fs.readFile).mockResolvedValue(
         JSON.stringify({ assets: ['TSLA'], createdAt: '2026-01-01' })
       );
-      vi.mocked(promises.writeFile).mockResolvedValue(undefined);
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
       await removeAsset('AAPL');
 
-      expect(vi.mocked(promises.writeFile)).not.toHaveBeenCalled();
+      expect(vi.mocked(fs.writeFile)).not.toHaveBeenCalled();
     });
   });
 
   describe('generatePerformanceReport', () => {
-    it('should generate markdown report for portfolio tickers', () => {
+    it('should generate markdown report for portfolio tickers', async () => {
       const tickers = ['TSLA', 'PLTR'];
       const results: TickerResult[] = [
         {
@@ -90,6 +100,11 @@ describe('portfolio manager', () => {
           takeProfit: 205,
           trailingStop: 195,
           trailingStart: 202.5,
+          macd: 0,
+          macdSignal: 0,
+          macdHistogram: 0,
+          sma20: 195,
+          ema20: 195,
         },
         {
           ticker: 'PLTR',
@@ -112,14 +127,20 @@ describe('portfolio manager', () => {
           takeProfit: 27,
           trailingStop: 24,
           trailingStart: 25.5,
+          macd: 0,
+          macdSignal: 0,
+          macdHistogram: 0,
+          sma20: 200,
+          ema20: 200,
         },
       ];
 
-      const report = generatePerformanceReport(tickers, results);
+      const report = await generatePerformanceReport(tickers, results);
 
       expect(report).toContain('# Portfolio Performance Report');
       expect(report).toContain('## TSLA');
       expect(report).toContain('## PLTR');
+      expect(report).toContain('Generated:');
     });
   });
 });

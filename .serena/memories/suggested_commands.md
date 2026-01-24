@@ -1,71 +1,37 @@
 # Suggested Commands
 
-## Development Commands
-```bash
-# Install dependencies
-pnpm install
+## Development
+- **Run the project**:
+  ```bash
+  bun start --ticker=TSLA,AAPL --sort=desc
+  ```
+- **Run with specific options**:
+  ```bash
+  bun start --ticker=GOOGL --slack-webhook=https://...
+  ```
 
-# Run CLI with default tickers
-pnpm start
+## Testing & Quality
+- **Run tests**:
+  ```bash
+  bun test
+  ```
+- **Watch tests**:
+  ```bash
+  bun test:watch
+  ```
+- **Lint code**:
+  ```bash
+  bun lint
+  ```
+- **Format code**:
+  ```bash
+  bun format
+  ```
+- **Check code (Lint + Format)**:
+  ```bash
+  bun check
+  ```
 
-# Run with custom tickers
-pnpm start --ticker=TSLA,PLTR --sort=desc
-
-# Run with pretty logs
-pnpm start:pretty
-
-# Run with Slack webhook
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX pnpm start --ticker=AAPL
-
-# Or pass webhook via option
-pnpm start --ticker=AAPL --slack-webhook=https://hooks.slack.com/services/XXX
-```
-
-## Project Structure Commands
-```bash
-# List project files
-ls -la
-
-# View src directory
-ls src/
-
-# View public outputs
-ls public/
-```
-
-## Git Commands
-```bash
-# Check status
-git status
-
-# Add and commit changes
-git add .
-git commit -m "feat: description"
-
-# View recent commits
-git log --oneline
-
-# Create and checkout new branch
-git checkout -b feature/branch-name
-```
-
-## Testing (Recommended Setup)
-```bash
-# Install vitest (not yet installed)
-pnpm add -D vitest @vitest/ui
-
-# Run tests (once configured)
-pnpm test
-
-# Run tests in watch mode
-pnpm test:watch
-
-# Run tests with coverage
-pnpm test:coverage
-```
-
-## Linting/Formatting (Not Yet Configured)
-Consider adding:
-- `eslint` with TypeScript rules
-- `prettier` for code formatting
-- `husky` for pre-commit hooks
+## Helper Scripts
+- **Optimize**: `bun run optimize`
+- **Learn**: `bun run learn` (from scripts/learn.ts)

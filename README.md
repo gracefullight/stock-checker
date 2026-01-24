@@ -18,8 +18,8 @@ This project fetches daily stock data for multiple tickers using `yahoo-finance2
 1. **Install & run**
 
     ```bash
-    pnpm install
-    pnpm start --ticker=ABCL,BE,BMNR,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST --sort=desc
+    bun install
+    bun start --ticker=ABCL,BE,BMNR,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST --sort=desc
     ```
 
     Pass any comma-separated list of tickers via `--ticker`. If omitted, the script exits with an error message. Argument parsing is handled by [commander](https://github.com/tj/commander.js).
@@ -27,9 +27,9 @@ This project fetches daily stock data for multiple tickers using `yahoo-finance2
     To send Slack notifications for tickers that return a **BUY** or **SELL** opinion, provide a webhook URL either via the `--slack-webhook` option or the `SLACK_WEBHOOK_URL` environment variable:
 
     ```bash
-    SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX pnpm start --ticker=TSLA,PLTR
+    SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX bun start --ticker=TSLA,PLTR
     # or
-    pnpm start --ticker=TSLA,PLTR --slack-webhook=https://hooks.slack.com/services/XXX
+    bun start --ticker=TSLA,PLTR --slack-webhook=https://hooks.slack.com/services/XXX
     ```
 
     Each Slack message starts with the date, ticker, and opinion followed by bullet-pointed indicator values.

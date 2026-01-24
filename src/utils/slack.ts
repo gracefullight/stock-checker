@@ -1,11 +1,11 @@
 import axios from 'axios';
 import pino from 'pino';
-import type { TickerResult } from '../types';
+import type { TickerResult } from '@/types';
 
 const logger = pino({
   level: 'debug',
   timestamp: pino.stdTimeFunctions.isoTime,
-  transport: { target: 'pino-pretty' }
+  transport: { target: 'pino-pretty' },
 });
 
 export async function sendSlackNotification(item: TickerResult, webhook: string): Promise<void> {
@@ -24,7 +24,7 @@ export async function sendSlackNotification(item: TickerResult, webhook: string)
     `- Stop Loss: ${item.stopLoss.toFixed(2)}`,
     `- Take Profit: ${item.takeProfit.toFixed(2)}`,
     `- Trailing Stop: ${item.trailingStop.toFixed(2)}`,
-    `- Trailing Start: ${item.trailingStart.toFixed(2)}`
+    `- Trailing Start: ${item.trailingStart.toFixed(2)}`,
   ];
   const text = `${item.date} ${item.ticker} ${item.opinion}\n${lines.join('\n')}`;
 

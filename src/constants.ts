@@ -7,6 +7,9 @@ export const INDICATOR_WEIGHTS = {
   donchian: 74,
   williamsR: 72,
   fearGreed: 50,
+  macd: 75,
+  sma: 60,
+  ema: 65,
 } as const;
 
 export const PATTERN_WEIGHTS = {

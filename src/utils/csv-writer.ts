@@ -1,14 +1,14 @@
-import { promises as fs, existsSync } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { DateTime } from 'luxon';
 import pino from 'pino';
-import { CSV_DIR } from '../constants';
-import type { TickerResult } from '../types';
+import { CSV_DIR } from '@/constants';
+import type { TickerResult } from '@/types';
 
 const logger = pino({
   level: 'debug',
   timestamp: pino.stdTimeFunctions.isoTime,
-  transport: { target: 'pino-pretty' }
+  transport: { target: 'pino-pretty' },
 });
 
 async function formatCsvRow(item: TickerResult): Promise<string> {
@@ -32,9 +32,15 @@ async function formatCsvRow(item: TickerResult): Promise<string> {
     item.stopLoss.toFixed(2),
     item.takeProfit.toFixed(2),
     item.trailingStop.toFixed(2),
-    item.trailingStart.toFixed(2)
+    item.trailingStart.toFixed(2),
+    item.macd?.toFixed(2) ?? '',
+    item.macdSignal?.toFixed(2) ?? '',
+    item.macdHistogram?.toFixed(2) ?? '',
+    item.sma20?.toFixed(2) ?? '',
+    item.ema20?.toFixed(2) ?? '',
   ].join(',');
-  return row + '\n';
+
+  return `${row}\n`;
 }
 
 export async function writeToCsv(data: TickerResult[]): Promise<void> {
@@ -69,12 +75,17 @@ export async function writeToCsv(data: TickerResult[]): Promise<void> {
     'StopLoss',
     'TakeProfit',
     'TrailingStop',
-    'TrailingStart'
+    'TrailingStart',
+    'MACD',
+    'MACDSignal',
+    'MACDHistogram',
+    'SMA20',
+    'EMA20',
   ].join(',');
 
   let csv = '';
   if (!fileExists) {
-    csv += header + '\n';
+    csv += `${header}\n`;
   }
 
   for (const item of data) {

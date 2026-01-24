@@ -1,4 +1,4 @@
-import type { TickerResult } from '../types';
+import type { TickerResult } from '@/types';
 
 export interface ReportSection {
   title: string;
@@ -31,9 +31,7 @@ export function generateMarkdownReport(ticker: string, result: TickerResult): Re
   });
 
   if (result.patterns.length > 0) {
-    const patternsSection = result.patterns
-      .map(p => `- ${p}`)
-      .join('\n');
+    const patternsSection = result.patterns.map((p) => `- ${p}`).join('\n');
 
     sections.push({
       title: '## Detected Patterns',
@@ -41,7 +39,12 @@ export function generateMarkdownReport(ticker: string, result: TickerResult): Re
     });
   }
 
-  const sentiment = result.opinion === 'BUY' ? '🐂 Bullish' : result.opinion === 'SELL' ? '🐻 Bearish' : '😐 Neutral';
+  const sentiment =
+    result.opinion === 'BUY'
+      ? '🐂 Bullish'
+      : result.opinion === 'SELL'
+        ? '🐻 Bearish'
+        : '😐 Neutral';
 
   sections.push({
     title: '## Market Sentiment',
@@ -53,5 +56,5 @@ export function generateMarkdownReport(ticker: string, result: TickerResult): Re
 
 export function generateMarkdownReportFull(ticker: string, result: TickerResult): string {
   const sections = generateMarkdownReport(ticker, result);
-  return sections.map(s => `${s.title}\n${s.content}`).join('\n\n');
+  return sections.map((s) => `${s.title}\n${s.content}`).join('\n\n');
 }

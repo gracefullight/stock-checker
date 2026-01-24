@@ -1,6 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { detectPatterns } from './patterns';
-import type { PatternResult } from '../types';
+import { describe, expect, it } from 'vitest';
+import { detectPatterns } from '@/services/patterns';
 
 describe('patterns', () => {
   it('should detect ascending triangle pattern', () => {

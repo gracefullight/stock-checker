@@ -1,5 +1,5 @@
-import { PATTERN_WEIGHTS } from '../constants';
-import type { PatternResult } from '../types';
+import { PATTERN_WEIGHTS } from '@/constants';
+import type { PatternResult } from '@/types';
 
 function isAscendingTriangle(highs: number[], lows: number[]): boolean {
   const recentHighs = highs.slice(-5);
@@ -51,33 +51,37 @@ function isIslandReversal(closes: number[]): boolean {
   return gapDown && gapUp;
 }
 
-export function detectPatterns(data: {
-  highs: number[];
-  lows: number[];
-  closes: number[];
-}): PatternResult {
+export function detectPatterns(
+  data: {
+    highs: number[];
+    lows: number[];
+    closes: number[];
+  },
+  customWeights?: Record<string, number>
+): PatternResult {
   const { highs, lows, closes } = data;
+  const weights = { ...PATTERN_WEIGHTS, ...customWeights };
   let score = 0;
   const patterns: string[] = [];
 
   if (isAscendingTriangle(highs, lows)) {
-    score += PATTERN_WEIGHTS.ascendingTriangle;
+    score += weights.ascendingTriangle;
     patterns.push('AscendingTriangle');
   }
   if (isBullishFlag(closes)) {
-    score += PATTERN_WEIGHTS.bullishFlag;
+    score += weights.bullishFlag;
     patterns.push('BullishFlag');
   }
   if (isDoubleBottom(lows)) {
-    score += PATTERN_WEIGHTS.doubleBottom;
+    score += weights.doubleBottom;
     patterns.push('DoubleBottom');
   }
   if (isFallingWedge(highs, lows)) {
-    score += PATTERN_WEIGHTS.fallingWedge;
+    score += weights.fallingWedge;
     patterns.push('FallingWedge');
   }
   if (isIslandReversal(closes)) {
-    score += PATTERN_WEIGHTS.islandReversal;
+    score += weights.islandReversal;
     patterns.push('IslandReversal');
   }
 

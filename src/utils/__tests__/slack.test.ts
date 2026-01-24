@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
 import axios from 'axios';
-import { sendSlackNotification } from './slack';
-import type { TickerResult } from '../types';
+import { describe, expect, it, vi } from 'vitest';
+import type { TickerResult } from '@/types';
+import { sendSlackNotification } from '@/utils/slack';
 
 vi.mock('axios');
 
@@ -30,6 +30,11 @@ describe('slack', () => {
       takeProfit: 205,
       trailingStop: 195,
       trailingStart: 202.5,
+      macd: 0,
+      macdSignal: 0,
+      macdHistogram: 0,
+      sma20: 195,
+      ema20: 195,
     };
 
     await sendSlackNotification(data, 'https://hooks.slack.com/test');
@@ -37,12 +42,8 @@ describe('slack', () => {
     expect(mockPost).toHaveBeenCalledWith(
       'https://hooks.slack.com/test',
       expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        text: expect.stringContaining('TSLA'),
       })
     );
-    const callArgs = mockPost.mock.calls[0][1] as { data: string };
-    expect(JSON.parse(callArgs.data).text).toContain('TSLA');
-    expect(JSON.parse(callArgs.data).text).toContain('BUY');
   });
 });

@@ -1,0 +1,50 @@
+name: Weekly Stock Prediction Optimization
+
+on:
+  schedule:
+    - cron: '0 2 * *' # Every Sunday at 2 AM UTC (Sunday 10 PM KST)
+  workflow_dispatch: inputs
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          cd python
+          pip install -q pandas numpy optuna scikit-learn
+
+      - name: Run optimization pipeline
+        run: |
+          cd /Users/gracefullight/workspace/stock-checker
+          chmod +x scripts/optimize.sh
+          ./scripts/optimize.sh
+
+      - name: Upload results as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimization-results
+          path: |
+            data/config/optimized_weights.json
+            data/accuracy_metrics.json
+            data/calibration_params.json
+            data/matched_predictions.csv
+          retention-days: 30
+
+      - name: Commit optimized weights
+        run: |
+          cd /Users/gracefullight/workspace/stock-checker
+          git add data/config/optimized_weights.json
+          git commit -m "feat: update optimized hyperparameters and calibration [skip ci]"
+          git push
+
+concurrency:
+  group: optimization
+  cancel-in-progress: true

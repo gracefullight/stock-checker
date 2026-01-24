@@ -1,0 +1,9 @@
+.opencode
+.agent
+.serena
+.vscode
+.git
+.github
+node_modules
+dist
+scripts

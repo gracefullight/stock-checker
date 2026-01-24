@@ -1,7 +1,19 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getStockNews } from './news';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getStockNews } from '@/services/news';
 
-vi.mock('axios');
+const mocks = vi.hoisted(() => {
+  const get = vi.fn();
+  const create = vi.fn(() => ({
+    get,
+  }));
+  return { get, create };
+});
+
+vi.mock('axios', () => ({
+  default: {
+    create: mocks.create,
+  },
+}));
 
 describe('news service', () => {
   beforeEach(() => {
@@ -19,18 +31,18 @@ describe('news service', () => {
         </item></channel></rss>
       `;
 
-      vi.mocked(axios.get).mockResolvedValue({ data: mockData });
+      mocks.get.mockResolvedValue({ data: mockData });
 
       const result = await getStockNews('TSLA', 5);
 
       expect(result).toHaveLength(1);
       expect(result[0].title).toBe('TSLA beats estimates');
       expect(result[0].url).toBe('https://example.com/article');
-      expect(result[0].summary).toBe('Strong earnings report drives stock');
+      expect(result[0].summary).toBe('Strong earnings report drives stock higher');
     });
 
     it('should return empty array on error', async () => {
-      vi.mocked(axios.get).mockRejectedValue(new Error('Network error'));
+      mocks.get.mockRejectedValue(new Error('Network error'));
 
       const result = await getStockNews('TSLA', 5);
 

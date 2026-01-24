@@ -1,6 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { calculateAllIndicators } from './indicators';
-import type { IndicatorValues } from '../types';
+import { describe, expect, it } from 'vitest';
+import { calculateAllIndicators } from '@/services/indicators';
 
 describe('indicators', () => {
   it('should calculate all indicators from price data', () => {

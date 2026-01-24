@@ -1,11 +1,12 @@
-import axios, { AxiosRequestConfig } from 'axios';
-import yahooFinance from 'yahoo-finance2';
+import axios, { type AxiosRequestConfig, isAxiosError } from 'axios';
+import { DateTime } from 'luxon';
 import pino from 'pino';
+import yahooFinance from '@/services/yahoo-finance';
 
 const logger = pino({
   level: 'debug',
   timestamp: pino.stdTimeFunctions.isoTime,
-  transport: { target: 'pino-pretty' }
+  transport: { target: 'pino-pretty' },
 });
 
 const axiosInstance = axios.create({
@@ -19,22 +20,21 @@ axiosInstance.interceptors.response.use(undefined, async (error) => {
 
   if (config.__retryCount < 3 && shouldRetry(error)) {
     config.__retryCount++;
-    const delay = 1000 * Math.pow(2, config.__retryCount - 1);
-    await new Promise(r => setTimeout(r, delay));
+    const delay = 1000 * 2 ** (config.__retryCount - 1);
+    await new Promise((r) => setTimeout(r, delay));
     return axiosInstance(config);
   }
   return Promise.reject(error);
 });
 
-function shouldRetry(error: any): boolean {
-  return !error.response ||
-    error.response.status >= 500 ||
-    error.code === 'ECONNRESET' ||
-    error.code === 'ETIMEDOUT';
+function shouldRetry(error: unknown): boolean {
+  if (isAxiosError(error)) {
+    return !error.response || (error.response.status >= 500 && error.response.status < 600);
+  }
+  return false;
 }
 
 export async function getHistoricalPrices(symbol: string, daysAgo = 365) {
-  const { DateTime } = await import('luxon');
   const end = DateTime.now();
   const start = end.minus({ days: daysAgo });
 
@@ -44,7 +44,7 @@ export async function getHistoricalPrices(symbol: string, daysAgo = 365) {
       period2: end.toJSDate(),
       interval: '1d',
       events: 'history',
-      includeAdjustedClose: true
+      includeAdjustedClose: true,
     });
   } catch (error) {
     logger.error({ error, symbol }, 'Failed to fetch historical prices');
