@@ -21,3 +21,4 @@ jobs:
         with:
           commit_message: "chore: daily stock data update"
           file_pattern: public/*.csv
+          github_token: ${{ secrets.GITHUB_TOKEN }}
