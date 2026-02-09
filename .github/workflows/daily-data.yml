@@ -1,5 +1,8 @@
 name: Daily stock data
 
+permissions:
+  contents: write
+
 on:
   schedule:
     - cron: "0 23 * * *" # Run ~2 hours after U.S. market close
@@ -7,8 +10,6 @@ on:
 
 jobs:
   update:
-    permissions:
-      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
