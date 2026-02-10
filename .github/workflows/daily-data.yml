@@ -18,6 +18,8 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bun src/index.ts predict --ticker="ABCL,BE,BMNR,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST" --sort=asc
+      - name: Pull latest changes before commit
+        run: git pull --rebase origin main
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore: daily stock data update"
