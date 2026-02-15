@@ -1,0 +1,42 @@
+{
+  "strategy": "stock_checker_score",
+  "symbol": "TSLA",
+  "bestValue": 4.184273788250631,
+  "bestParams": {
+    "indicatorWeights": {
+      "rsi": 53.42122400275075,
+      "stochastic": 78.95485284438725,
+      "bollinger": 60.95496687427058,
+      "donchian": 93.65289010939256,
+      "williamsR": 60.04143978361765,
+      "fearGreed": 79.77419106570551,
+      "macd": 86.91859710572609,
+      "sma": 56.18529708451481,
+      "ema": 54.802685675136956
+    },
+    "patternWeights": {
+      "ascendingTriangle": 81.33492861096431,
+      "bullishFlag": 66.46145991417679,
+      "doubleBottom": 92.74622191891854,
+      "fallingWedge": 79.8816424931779,
+      "islandReversal": 78.63121331583422
+    },
+    "thresholds": {
+      "buy": 215,
+      "sell": 208
+    },
+    "calibration": {
+      "slope": 0.006432156945648731,
+      "intercept": -1.6330484221596446
+    }
+  },
+  "nTrials": 50,
+  "metrics": {
+    "sharpeRatio": 6.066325429669466,
+    "maxDrawdown": 20.718004172664937,
+    "winRate": 71.42857142857143,
+    "totalTrades": 7,
+    "profitFactor": 0,
+    "return": 0.32101680742512656
+  }
+}
