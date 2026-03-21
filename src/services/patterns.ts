@@ -67,9 +67,11 @@ function isBearishFlag(closes: number[]): boolean {
   if (recent.length < 10) return false;
   const first = recent[0];
   const min = Math.min(...recent);
-  const max = Math.max(...recent);
   const strongDown = (first - min) / first > 0.05;
-  const tightRange = (max - min) / max < 0.05;
+  const consolidation = recent.slice(1);
+  const conMax = Math.max(...consolidation);
+  const conMin = Math.min(...consolidation);
+  const tightRange = (conMax - conMin) / conMax < 0.05;
   return strongDown && tightRange;
 }
 
