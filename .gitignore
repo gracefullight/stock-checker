@@ -2,7 +2,7 @@ node_modules
 dist
 .DS_Store
 
-.opencode/mimic/
+.opencode/
 
 # Optimization config (generated at runtime)
 data/config/
