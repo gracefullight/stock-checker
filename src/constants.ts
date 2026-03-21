@@ -18,6 +18,11 @@ export const PATTERN_WEIGHTS = {
   doubleBottom: 70,
   fallingWedge: 70,
   islandReversal: 73,
+  descendingTriangle: -75,
+  bearishFlag: -75,
+  doubleTop: -70,
+  risingWedge: -70,
+  headAndShoulders: -73,
 } as const;
 
 export const BUY_THRESHOLD = 200;

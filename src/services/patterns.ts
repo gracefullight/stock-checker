@@ -51,6 +51,58 @@ function isIslandReversal(closes: number[]): boolean {
   return gapDown && gapUp;
 }
 
+function isDescendingTriangle(highs: number[], lows: number[]): boolean {
+  const recentHighs = highs.slice(-5);
+  const recentLows = lows.slice(-5);
+  if (recentLows.length < 5) return false;
+  const maxLow = Math.max(...recentLows);
+  const minLow = Math.min(...recentLows);
+  const flatBottom = (maxLow - minLow) / maxLow < 0.01;
+  const fallingHighs = recentHighs.every((v, i, arr) => i === 0 || v <= arr[i - 1]);
+  return flatBottom && fallingHighs;
+}
+
+function isBearishFlag(closes: number[]): boolean {
+  const recent = closes.slice(-10);
+  if (recent.length < 10) return false;
+  const first = recent[0];
+  const min = Math.min(...recent);
+  const max = Math.max(...recent);
+  const strongDown = (first - min) / first > 0.05;
+  const tightRange = (max - min) / max < 0.05;
+  return strongDown && tightRange;
+}
+
+function isDoubleTop(highs: number[]): boolean {
+  const recent = highs.slice(-20);
+  if (recent.length < 20) return false;
+  const firstMax = Math.max(...recent.slice(0, 10));
+  const secondMax = Math.max(...recent.slice(10));
+  const diff = Math.abs(firstMax - secondMax) / ((firstMax + secondMax) / 2);
+  return diff < 0.02;
+}
+
+function isRisingWedge(highs: number[], lows: number[]): boolean {
+  const recentHighs = highs.slice(-6);
+  const recentLows = lows.slice(-6);
+  if (recentHighs.length < 6) return false;
+  const higherHighs = recentHighs.every((v, i, arr) => i === 0 || v > arr[i - 1]);
+  const higherLows = recentLows.every((v, i, arr) => i === 0 || v > arr[i - 1]);
+  const highSlope = recentHighs[recentHighs.length - 1] - recentHighs[0];
+  const lowSlope = recentLows[recentLows.length - 1] - recentLows[0];
+  return higherHighs && higherLows && lowSlope > highSlope;
+}
+
+function isHeadAndShoulders(highs: number[]): boolean {
+  const recent = highs.slice(-15);
+  if (recent.length < 15) return false;
+  const leftShoulder = Math.max(...recent.slice(0, 5));
+  const head = Math.max(...recent.slice(5, 10));
+  const rightShoulder = Math.max(...recent.slice(10));
+  const shoulderDiff = Math.abs(leftShoulder - rightShoulder) / ((leftShoulder + rightShoulder) / 2);
+  return head > leftShoulder && head > rightShoulder && shoulderDiff < 0.03;
+}
+
 export function detectPatterns(
   data: {
     highs: number[];
@@ -83,6 +135,26 @@ export function detectPatterns(
   if (isIslandReversal(closes)) {
     score += weights.islandReversal;
     patterns.push('IslandReversal');
+  }
+  if (isDescendingTriangle(highs, lows)) {
+    score += weights.descendingTriangle;
+    patterns.push('DescendingTriangle');
+  }
+  if (isBearishFlag(closes)) {
+    score += weights.bearishFlag;
+    patterns.push('BearishFlag');
+  }
+  if (isDoubleTop(highs)) {
+    score += weights.doubleTop;
+    patterns.push('DoubleTop');
+  }
+  if (isRisingWedge(highs, lows)) {
+    score += weights.risingWedge;
+    patterns.push('RisingWedge');
+  }
+  if (isHeadAndShoulders(highs)) {
+    score += weights.headAndShoulders;
+    patterns.push('HeadAndShoulders');
   }
 
   return { score, patterns };

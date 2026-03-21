@@ -93,7 +93,6 @@ export class Backtester {
 
     for (let i = 50; i < closes.length; i++) {
       const currentClose = closes[i];
-      const _prevClose = closes[i - 1]; // logic check
 
       // Get values matching current index 'i'
       // Note: `technicalindicators` results often start after 'period' elements.
@@ -127,10 +126,6 @@ export class Backtester {
       if (currentClose > smaVal) buyScore += w.sma;
       if (currentClose > emaVal) buyScore += w.ema;
 
-      // FearGreed mocked
-      const fearGreed = 50;
-      if (fearGreed < 40) buyScore += w.fearGreed;
-
       // Sell Logic
       if (rsiVal > 70) sellScore += w.rsi;
       if (stochVal.k > 80) sellScore += w.stochastic;
@@ -140,7 +135,6 @@ export class Backtester {
       if (macdVal.histogram && macdVal.histogram < 0) sellScore += w.macd;
       if (currentClose < smaVal) sellScore += w.sma;
       if (currentClose < emaVal) sellScore += w.ema;
-      if (fearGreed > 60) sellScore += w.fearGreed;
 
       const t = params.thresholds;
 
@@ -205,53 +199,80 @@ export class Backtester {
   }
 
   private calculateMetrics(trades: Trade[], initialCapital: number): BacktestMetrics {
-    const _balance = initialCapital;
-    const _maxBalance = initialCapital;
-    const _drawdown = 0;
+    // Build daily equity curve for proper Sharpe calculation
+    const closes = this.data.map((d) => d.close);
+    const dailyEquity: number[] = new Array(closes.length).fill(initialCapital);
+    let currentBalance = initialCapital;
+    let inPosition = false;
+    let entryPrice = 0;
 
-    // Simplistic daily return simulation using trades
-    // To calculate Sharpe correctly, we need daily returns even when not trading?
-    // Or trade-based Sharpe. I'll use trade-based statistics for simplicity,
-    // or reconstruct equity curve.
+    // Reconstruct daily equity from trades
+    let tradeIdx = 0;
+    for (let i = 0; i < closes.length; i++) {
+      if (tradeIdx < trades.length && !inPosition) {
+        const trade = trades[tradeIdx];
+        if (this.data[i].date.getTime() === trade.entryDate.getTime()) {
+          inPosition = true;
+          entryPrice = trade.entryPrice;
+        }
+      }
 
-    // Let's reconstruct equity curve
-    // Note: This is an approximation since we jump between trades.
-    // For rigorous Sharpe, we need daily mark-to-market.
+      if (inPosition) {
+        const unrealizedPct = (closes[i] - entryPrice) / entryPrice;
+        dailyEquity[i] = currentBalance * (1 + unrealizedPct);
 
-    // Simplified: Just use trade returns.
-    const returns = trades.map((t) => t.profitPercent / 100);
-    const meanReturn = returns.reduce((a, b) => a + b, 0) / (returns.length || 1);
+        if (tradeIdx < trades.length) {
+          const trade = trades[tradeIdx];
+          if (this.data[i].date.getTime() === trade.exitDate.getTime()) {
+            currentBalance *= 1 + trade.profitPercent / 100;
+            inPosition = false;
+            tradeIdx++;
+          }
+        }
+      } else {
+        dailyEquity[i] = currentBalance;
+      }
+    }
+
+    // Daily returns from equity curve
+    const dailyReturns: number[] = [];
+    for (let i = 1; i < dailyEquity.length; i++) {
+      dailyReturns.push((dailyEquity[i] - dailyEquity[i - 1]) / dailyEquity[i - 1]);
+    }
+
+    const meanReturn = dailyReturns.reduce((a, b) => a + b, 0) / (dailyReturns.length || 1);
     const stdReturn = Math.sqrt(
-      returns.map((x) => (x - meanReturn) ** 2).reduce((a, b) => a + b, 0) / (returns.length || 1)
+      dailyReturns.map((x) => (x - meanReturn) ** 2).reduce((a, b) => a + b, 0) /
+        (dailyReturns.length || 1)
     );
-    const sharpe = stdReturn === 0 ? 0 : (meanReturn / stdReturn) * Math.sqrt(252); // Annualized? Trade-based is different.
+    const sharpe = stdReturn === 0 ? 0 : (meanReturn / stdReturn) * Math.sqrt(252);
 
-    // For max drawdown
+    // Max drawdown from equity curve
     let peak = initialCapital;
     let maxDD = 0;
-    let currentBalance = initialCapital;
-
-    for (const trade of trades) {
-      // Assuming 100% equity usage per trade for simplicity (or fixed position size)
-      // Python code: initial_capital=10000.
-      // Let's assume full compounding.
-      currentBalance *= 1 + trade.profitPercent / 100;
-      if (currentBalance > peak) peak = currentBalance;
-      const dd = (peak - currentBalance) / peak;
+    for (const equity of dailyEquity) {
+      if (equity > peak) peak = equity;
+      const dd = (peak - equity) / peak;
       if (dd > maxDD) maxDD = dd;
     }
 
     const winTrades = trades.filter((t) => t.profit > 0);
+    const loseTrades = trades.filter((t) => t.profit <= 0);
     const winRate = trades.length > 0 ? (winTrades.length / trades.length) * 100 : 0;
 
-    const totalReturn = (currentBalance - initialCapital) / initialCapital;
+    const grossProfit = winTrades.reduce((sum, t) => sum + t.profit, 0);
+    const grossLoss = Math.abs(loseTrades.reduce((sum, t) => sum + t.profit, 0));
+    const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? Infinity : 0) : grossProfit / grossLoss;
+
+    const finalBalance = dailyEquity[dailyEquity.length - 1] ?? initialCapital;
+    const totalReturn = (finalBalance - initialCapital) / initialCapital;
 
     return {
       sharpeRatio: sharpe,
       maxDrawdown: maxDD * 100,
-      winRate: winRate,
+      winRate,
       totalTrades: trades.length,
-      profitFactor: 0, // TODO
+      profitFactor,
       return: totalReturn,
     };
   }

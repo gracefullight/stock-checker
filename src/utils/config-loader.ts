@@ -6,7 +6,13 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import pino from 'pino';
 import { BUY_THRESHOLD, INDICATOR_WEIGHTS, PATTERN_WEIGHTS, SELL_THRESHOLD } from '@/constants';
+
+const logger = pino({
+  level: 'info',
+  transport: { target: 'pino-pretty' },
+});
 
 const CONFIG_PATH = join(process.cwd(), 'data', 'config', 'optimized_weights.json');
 
@@ -40,7 +46,7 @@ export async function loadOptimizedConfig(): Promise<OptimizedWeights> {
     const config = JSON.parse(data) as ConfigFile;
 
     if (config.version !== '1.0.0') {
-      console.warn(`Config version mismatch: ${config.version}, using defaults`);
+      logger.warn(`Config version mismatch: ${config.version}, using defaults`);
       return getDefaultConfig();
     }
 
@@ -54,7 +60,7 @@ export async function loadOptimizedConfig(): Promise<OptimizedWeights> {
       calibration: config.calibration ?? { slope: 0.01, intercept: -1.0 },
     };
   } catch (_error) {
-    console.debug('No optimized config found, using defaults');
+    logger.debug('No optimized config found, using defaults');
     return getDefaultConfig();
   }
 }
@@ -87,9 +93,9 @@ export async function saveOptimizedConfig(config: OptimizedWeights): Promise<voi
     };
 
     await writeFile(CONFIG_PATH, JSON.stringify(configData, null, 2), 'utf-8');
-    console.info(`Optimized config saved to ${CONFIG_PATH}`);
+    logger.info(`Optimized config saved to ${CONFIG_PATH}`);
   } catch (error) {
-    console.error('Failed to save optimized config', error);
+    logger.error({ error }, 'Failed to save optimized config');
     throw error;
   }
 }

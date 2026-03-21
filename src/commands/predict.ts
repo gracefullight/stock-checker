@@ -60,7 +60,7 @@ async function processTicker(
     optimizedConfig.patternWeights
   );
 
-  const { decision, score } = getOpinion({
+  const { decision, score, buyScore, sellScore } = getOpinion({
     rsi: indicators.rsi,
     stochasticK: indicators.stochasticK,
     williamsR: indicators.williamsR,
@@ -75,7 +75,7 @@ async function processTicker(
     sellThreshold: optimizedConfig.thresholds.sell,
   });
 
-  const probs = calculateProbabilities(score, score, optimizedConfig.calibration);
+  const probs = calculateProbabilities(buyScore, sellScore, optimizedConfig.calibration);
 
   const risk = indicators.atr * RISK_MULTIPLIER;
   const reward = risk * REWARD_MULTIPLIER;

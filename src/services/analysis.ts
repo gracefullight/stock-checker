@@ -18,7 +18,7 @@ export function getOpinion(params: {
   ema20?: number;
   buyThreshold?: number;
   sellThreshold?: number;
-}): { decision: string; score: number } {
+}): { decision: string; score: number; buyScore: number; sellScore: number } {
   const {
     rsi,
     stochasticK,
@@ -64,10 +64,10 @@ export function getOpinion(params: {
   const effectiveSellThreshold = sellThreshold ?? SELL_THRESHOLD;
 
   if (buyScore >= effectiveBuyThreshold && buyScore >= sellScore) {
-    return { decision: 'BUY', score: buyScore };
+    return { decision: 'BUY', score: buyScore, buyScore, sellScore };
   }
   if (sellScore >= effectiveSellThreshold && sellScore > buyScore) {
-    return { decision: 'SELL', score: sellScore };
+    return { decision: 'SELL', score: sellScore, buyScore, sellScore };
   }
-  return { decision: 'HOLD', score: Math.max(buyScore, sellScore) };
+  return { decision: 'HOLD', score: Math.max(buyScore, sellScore), buyScore, sellScore };
 }

@@ -99,10 +99,20 @@ export function calculateMetrics(matchedPredictions: MatchedPrediction[]): Accur
   const correct = matchedPredictions.filter((p) => p.isCorrect).length;
   const hitRate = (correct / total) * 100;
 
-  // Calculate binary classification metrics (Target: Correct Prediction)
-  // This is a simplified view compared to full confusion matrix per class
-  const precision = hitRate / 100;
-  const recall = hitRate / 100;
+  // Per-class precision and recall (BUY as positive class)
+  const buyPredictions = matchedPredictions.filter((p) => p.Opinion === 'BUY');
+  const truePositives = buyPredictions.filter((p) => p.isCorrect).length;
+  const falsePositives = buyPredictions.filter((p) => !p.isCorrect).length;
+
+  const sellPredictions = matchedPredictions.filter((p) => p.Opinion === 'SELL');
+  const falseNegatives = sellPredictions.filter((p) => !p.isCorrect).length;
+
+  const precision = truePositives + falsePositives > 0
+    ? truePositives / (truePositives + falsePositives)
+    : 0;
+  const recall = truePositives + falseNegatives > 0
+    ? truePositives / (truePositives + falseNegatives)
+    : 0;
   const f1Score = precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall);
 
   return {

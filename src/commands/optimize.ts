@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import pino from 'pino';
 import { Optimizer } from '@/optimization/optimizer';
@@ -21,17 +21,11 @@ export async function optimize(symbol: string, options: { trials: string }) {
 
     // Save to JSON
     const outputDir = path.join(process.cwd(), 'data/config');
-    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+    if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    fs.writeFileSync(
+    writeFileSync(
       path.join(outputDir, `optimization_${targetSymbol}_${timestamp}.json`),
-      JSON.stringify(result, null, 2)
-    );
-
-    // Also save 'latest'
-    fs.writeFileSync(
-      path.join(outputDir, 'optimized_weights.json'),
       JSON.stringify(result, null, 2)
     );
 
@@ -39,47 +33,15 @@ export async function optimize(symbol: string, options: { trials: string }) {
     logger.info(`Best Value: ${result.bestValue.toFixed(4)}`);
     // logger.info('Best Parameters:', JSON.stringify(result.bestParams, null, 2));
 
-    logger.info('Updating constants.ts...');
-
-    // Read constants.ts
-    const constantsPath = path.join(process.cwd(), 'src/constants.ts');
-    if (fs.existsSync(constantsPath)) {
-      let content = fs.readFileSync(constantsPath, 'utf-8');
-
-      // Regex replace for weights
-      const w = result.bestParams.indicatorWeights;
-      const t = result.bestParams.thresholds;
-
-      const replaceVal = (key: string, val: number) => {
-        const regex = new RegExp(`${key}: \\d+`, 'g');
-        content = content.replace(regex, `${key}: ${Math.round(val)}`);
-      };
-
-      replaceVal('rsi', w.rsi);
-      replaceVal('stochastic', w.stochastic);
-      replaceVal('bollinger', w.bollinger);
-      replaceVal('donchian', w.donchian);
-      replaceVal('williamsR', w.williamsR);
-      replaceVal('fearGreed', w.fearGreed);
-      replaceVal('macd', w.macd);
-      replaceVal('sma', w.sma);
-      replaceVal('ema', w.ema);
-
-      // Thresholds
-      content = content.replace(
-        /export const BUY_THRESHOLD = \d+;/,
-        `export const BUY_THRESHOLD = ${Math.round(t.buy)};`
-      );
-      content = content.replace(
-        /export const SELL_THRESHOLD = \d+;/,
-        `export const SELL_THRESHOLD = ${Math.round(t.sell)};`
-      );
-
-      fs.writeFileSync(constantsPath, content);
-      logger.info('Successfully updated src/constants.ts');
-    } else {
-      logger.warn('src/constants.ts not found, skipping update.');
-    }
+    // Save as optimized config JSON (loaded at runtime by config-loader)
+    const { saveOptimizedConfig } = await import('@/utils/config-loader');
+    await saveOptimizedConfig({
+      weights: result.bestParams.indicatorWeights,
+      thresholds: result.bestParams.thresholds,
+      patternWeights: result.bestParams.patternWeights,
+      calibration: result.bestParams.calibration,
+    });
+    logger.info('Optimized config saved to data/config/optimized_weights.json');
   } catch (error) {
     logger.error({ err: error }, 'Optimization failed');
     process.exit(1);

@@ -146,48 +146,43 @@ export async function learn() {
     // 5. Optimize
     logger.info('Step 5: Optimize hyperparameters...');
     const optimizer = new Optimizer();
-    // Optimize for TSLA as valid proxy
-    const optResult = await optimizer.optimize('TSLA', 50); // 50 trials
+    // Optimize across multiple representative tickers
+    const optimizationTickers = ['TSLA', 'GOOGL', 'AAPL'];
+    let bestOverallResult = null;
+    let bestOverallValue = -Infinity;
 
-    // Save
+    for (const sym of optimizationTickers) {
+      try {
+        const result = await optimizer.optimize(sym, 200);
+        logger.info({ symbol: sym, value: result.bestValue }, 'Optimization result');
+        if (result.bestValue > bestOverallValue) {
+          bestOverallValue = result.bestValue;
+          bestOverallResult = result;
+        }
+      } catch (err) {
+        logger.warn({ symbol: sym, err }, 'Optimization failed for symbol, skipping');
+      }
+    }
+
+    if (!bestOverallResult) {
+      throw new Error('All optimizations failed');
+    }
+
+    const optResult = bestOverallResult;
     const timestamp = DateTime.now().toFormat('yyyyMMdd_HHmmss');
     fs.writeFileSync(
-      path.join(CONFIG_DIR, `optimization_TSLA_${timestamp}.json`),
+      path.join(CONFIG_DIR, `optimization_${optResult.symbol}_${timestamp}.json`),
       JSON.stringify(optResult, null, 2)
     );
 
-    fs.writeFileSync(
-      path.join(CONFIG_DIR, 'optimized_weights.json'),
-      JSON.stringify(optResult, null, 2)
-    );
-
-    logger.info('Update constants.ts...');
-    const constantsPath = path.join(PROJECT_ROOT, 'src/constants.ts');
-    if (fs.existsSync(constantsPath)) {
-      let content = fs.readFileSync(constantsPath, 'utf-8');
-      const w = optResult.bestParams.indicatorWeights;
-      const t = optResult.bestParams.thresholds;
-
-      const replaceVal = (key: string, val: number) => {
-        const regex = new RegExp(`${key}: \\d+`, 'g');
-        content = content.replace(regex, `${key}: ${Math.round(val)}`);
-      };
-
-      for (const [k, v] of Object.entries(w)) {
-        replaceVal(k, v as number);
-      }
-
-      content = content.replace(
-        /export const BUY_THRESHOLD = \d+;/,
-        `export const BUY_THRESHOLD = ${Math.round(t.buy)};`
-      );
-      content = content.replace(
-        /export const SELL_THRESHOLD = \d+;/,
-        `export const SELL_THRESHOLD = ${Math.round(t.sell)};`
-      );
-
-      fs.writeFileSync(constantsPath, content);
-    }
+    // Save as optimized config JSON (loaded at runtime by config-loader)
+    const { saveOptimizedConfig } = await import('@/utils/config-loader');
+    await saveOptimizedConfig({
+      weights: optResult.bestParams.indicatorWeights,
+      thresholds: optResult.bestParams.thresholds,
+      patternWeights: optResult.bestParams.patternWeights,
+      calibration: optResult.bestParams.calibration,
+    });
 
     logger.info('=== Learning Loop Complete ===');
   } catch (e) {
