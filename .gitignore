@@ -3,3 +3,6 @@ dist
 .DS_Store
 
 .opencode/mimic/
+
+# Optimization config (generated at runtime)
+data/config/

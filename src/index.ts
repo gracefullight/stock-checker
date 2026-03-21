@@ -108,7 +108,7 @@ program
 program
   .command('optimize [symbol]')
   .description('Optimize parameters for a symbol (default: TSLA)')
-  .option('--trials <number>', 'Number of trials', '50')
+  .option('--trials <number>', 'Number of trials', '200')
   .action(async (symbol, options) => {
     try {
       await optimize(symbol, options);

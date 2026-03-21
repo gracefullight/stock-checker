@@ -1,6 +1,12 @@
 import fs from 'node:fs';
 import { parse } from 'csv-parse/sync';
+import pino from 'pino';
 import yahooFinance from '@/services/yahoo-finance';
+
+const logger = pino({
+  level: 'info',
+  transport: { target: 'pino-pretty' },
+});
 
 export interface Candle {
   date: Date;
@@ -36,7 +42,7 @@ export const DataLoader = {
         adjClose: q.adjClose,
       }));
     } catch (e) {
-      console.error(`Failed to load data for ${symbol}`, e);
+      logger.error({ symbol, err: e }, 'Failed to load data');
       return [];
     }
   },
