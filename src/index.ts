@@ -4,6 +4,16 @@ import { learn } from '@/commands/learn';
 import { optimize } from '@/commands/optimize';
 import { predict } from '@/commands/predict';
 import type { CliOptions } from '@/types';
+import {
+  promptExtraOptions,
+  promptOptimize,
+  promptOutputFormat,
+  promptPortfolioAction,
+  promptSortOrder,
+  promptTickers,
+  p,
+  pc,
+} from '@/ui/prompts';
 
 const logger = pino({
   level: 'info',
@@ -30,7 +40,6 @@ program
   .option('--format <type>', 'Output format: csv or json', 'csv')
   .action(async (opts) => {
     try {
-      // Logic from src/config.ts to resolve defaults and env vars
       const sort =
         (process.env.npm_config_sort as 'asc' | 'desc' | undefined) ?? opts.sort ?? 'asc';
 
@@ -40,12 +49,54 @@ program
       }
 
       const rawTickers = process.env.npm_config_ticker ?? opts.ticker ?? '';
+      const isInteractive = !rawTickers && !opts.portfolioAction;
 
-      if (!rawTickers && !opts.portfolioAction) {
-        logger.error(
-          'Ticker argument is required. Use --ticker=TSLA,PLTR or --portfolio-action add/remove/list/report'
-        );
-        process.exit(1);
+      if (isInteractive) {
+        p.intro(pc.bgCyan(pc.black(' stock-checker ')));
+
+        const mode = await p.select({
+          message: 'What would you like to do?',
+          options: [
+            { value: 'predict', label: 'Run stock prediction' },
+            { value: 'portfolio', label: 'Manage portfolio' },
+          ],
+        });
+
+        if (p.isCancel(mode)) {
+          p.cancel('Operation cancelled.');
+          process.exit(0);
+        }
+
+        if (mode === 'portfolio') {
+          const { action, ticker } = await promptPortfolioAction();
+          const finalOptions: CliOptions = {
+            tickers: [],
+            sort,
+            portfolioAction: action,
+            portfolioTicker: ticker,
+            format: 'csv',
+          };
+          await predict(finalOptions);
+          p.outro(pc.green('Done!'));
+          return;
+        }
+
+        const tickers = await promptTickers();
+        const sortOrder = await promptSortOrder();
+        const format = await promptOutputFormat();
+        const extras = await promptExtraOptions();
+
+        const finalOptions: CliOptions = {
+          tickers,
+          sort: sortOrder,
+          format,
+          ...extras,
+          slackWebhook: process.env.SLACK_WEBHOOK_URL,
+        };
+
+        await predict(finalOptions);
+        p.outro(pc.green('Done!'));
+        return;
       }
 
       const tickersArray = rawTickers
@@ -60,7 +111,6 @@ program
         (process.env.npm_config_slack_webhook as string | undefined) ??
         opts.slackWebhook;
 
-      // If portfolio action is set, use single ticker instead of comma-separated tickers
       let finalTickers: string[];
       if (
         opts.portfolioAction &&
@@ -111,6 +161,13 @@ program
   .option('--trials <number>', 'Number of trials', '200')
   .action(async (symbol, options) => {
     try {
+      if (!symbol) {
+        p.intro(pc.bgCyan(pc.black(' stock-checker optimize ')));
+        const prompted = await promptOptimize();
+        await optimize(prompted.symbol, { trials: String(prompted.trials) });
+        p.outro(pc.green('Optimization complete!'));
+        return;
+      }
       await optimize(symbol, options);
     } catch (error) {
       logger.error({ err: error }, 'Optimize command failed');

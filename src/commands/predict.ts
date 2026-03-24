@@ -25,6 +25,7 @@ import { formatOptionsData, getOptionsChain } from '@/services/options';
 import { detectPatterns } from '@/services/patterns';
 import { calculateProbabilities } from '@/services/probability';
 import type { CliOptions, PredictionRecord, TickerResult } from '@/types';
+import { printSummaryTable } from '@/ui/summary';
 import { loadOptimizedConfig } from '@/utils/config-loader';
 import { writeToCsv } from '@/utils/csv-writer';
 import { exportToJson } from '@/utils/json-exporter';
@@ -242,6 +243,8 @@ export async function predict(options: CliOptions): Promise<void> {
   } else {
     await writeToCsv(ordered);
   }
+
+  printSummaryTable(ordered);
 
   if (slackWebhook) {
     const actionable = ordered.filter((r) => r.opinion === 'BUY' || r.opinion === 'SELL');

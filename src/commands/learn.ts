@@ -6,6 +6,7 @@ import pino from 'pino';
 import { fitPlattScaling } from '@/optimization/calibrator';
 import { calculateMetrics, matchPredictions, type PredictionInput } from '@/optimization/evaluator';
 import { Optimizer } from '@/optimization/optimizer';
+import { p, pc } from '@/ui/prompts';
 
 const logger = pino({
   level: 'info',
@@ -31,25 +32,25 @@ async function runCommand(cmd: string, args: string[]) {
 
 export async function learn() {
   try {
-    logger.info('=== Stock Prediction Learning Loop (TypeScript Port) ===');
+    p.intro(pc.bgCyan(pc.black(' stock-checker learn ')));
 
     // 1. Run Predictions
-    logger.info('Step 1: Run TypeScript predictions...');
-    // We assume the main CLI entry point supports 'predict' command
-    // or we can call the 'start' script if it is updated to point to the right place.
-    // For safety, let's call the script directly via bun to ensure we use the new structure.
+    const s1 = p.spinner();
+    s1.start('Running predictions...');
     await runCommand('bun', [
       'src/index.ts',
       'predict',
       '--ticker=TSLA,PLTR,AAPL,MSFT,GOOGL,NVDA,AMD,INTC,AMD',
       '--sort=asc',
     ]);
+    s1.stop('Predictions complete');
 
     // 2. Match Predictions
-    logger.info('Step 2: Match predictions with historical data...');
-    // Load All Predictions
+    const s2 = p.spinner();
+    s2.start('Matching predictions with historical data...');
+
     if (!fs.existsSync(FEEDBACK_DIR)) {
-      logger.error('No feedback directory found.');
+      s2.stop(pc.red('No feedback directory found'));
       process.exit(1);
     }
 
@@ -100,7 +101,7 @@ export async function learn() {
         if (parts.length < header.length) continue;
         const date = parts[dateIdx];
         const close = parseFloat(parts[closeIdx]);
-        const rowTicker = parts[tickerIdx]; // Assuming Ticker is in CSV
+        const rowTicker = parts[tickerIdx];
 
         if (!rowTicker) continue;
 
@@ -110,10 +111,11 @@ export async function learn() {
     }
 
     const matched = matchPredictions(allPredictions, priceHistory);
-    logger.info(`Matched ${matched.length} predictions.`);
+    s2.stop(`Matched ${pc.bold(String(matched.length))} predictions`);
 
     // 3. Evaluate
-    logger.info('Step 3: Evaluate accuracy...');
+    const s3 = p.spinner();
+    s3.start('Evaluating accuracy...');
     const metrics = calculateMetrics(matched);
     logger.info({ metrics }, 'Metrics Calculated');
 
@@ -122,9 +124,11 @@ export async function learn() {
     }
     const metricsPath = path.join(CONFIG_DIR, 'accuracy_metrics.json');
     fs.writeFileSync(metricsPath, JSON.stringify(metrics, null, 2));
+    s3.stop(`Hit rate: ${pc.bold(`${metrics.hitRate.toFixed(1)}%`)}`);
 
     // 4. Calibrate
-    logger.info('Step 4: Calibrate probabilities...');
+    const s4 = p.spinner();
+    s4.start('Calibrating probabilities...');
     const calibrationData = matched
       .map((m) => ({
         score: m.Score,
@@ -142,17 +146,19 @@ export async function learn() {
       path.join(CONFIG_DIR, 'calibration_params.json'),
       JSON.stringify(calibrationResult, null, 2)
     );
+    s4.stop('Calibration complete');
 
     // 5. Optimize
-    logger.info('Step 5: Optimize hyperparameters...');
+    const s5 = p.spinner();
+    s5.start('Optimizing hyperparameters...');
     const optimizer = new Optimizer();
-    // Optimize across multiple representative tickers
     const optimizationTickers = ['TSLA', 'GOOGL', 'AAPL'];
     let bestOverallResult = null;
     let bestOverallValue = -Infinity;
 
     for (const sym of optimizationTickers) {
       try {
+        s5.message(`Optimizing ${pc.bold(sym)}...`);
         const result = await optimizer.optimize(sym, 200);
         logger.info({ symbol: sym, value: result.bestValue }, 'Optimization result');
         if (result.bestValue > bestOverallValue) {
@@ -165,6 +171,7 @@ export async function learn() {
     }
 
     if (!bestOverallResult) {
+      s5.stop(pc.red('All optimizations failed'));
       throw new Error('All optimizations failed');
     }
 
@@ -175,7 +182,6 @@ export async function learn() {
       JSON.stringify(optResult, null, 2)
     );
 
-    // Save as optimized config JSON (loaded at runtime by config-loader)
     const { saveOptimizedConfig } = await import('@/utils/config-loader');
     await saveOptimizedConfig({
       weights: optResult.bestParams.indicatorWeights,
@@ -184,7 +190,9 @@ export async function learn() {
       calibration: optResult.bestParams.calibration,
     });
 
-    logger.info('=== Learning Loop Complete ===');
+    s5.stop(`Best: ${pc.bold(optResult.symbol)} (${pc.green(bestOverallValue.toFixed(4))})`);
+
+    p.outro(pc.green('Learning loop complete!'));
   } catch (e) {
     logger.error({ err: e }, 'Learning loop failed');
     process.exit(1);
