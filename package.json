@@ -40,7 +40,7 @@
     "@vitest/ui": "^4.0.18",
     "msw": "^2.12.7",
     "tsx": "^4.21.0",
-    "typescript": "^5",
+    "typescript": "^6",
     "vitest": "^4.0.18"
   }
 }
