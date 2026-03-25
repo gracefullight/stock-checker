@@ -35,7 +35,11 @@ function makeCandle(open: number, close: number): CandleData {
   };
 }
 
-const config: PipelineConfig = { ...DEFAULT_PIPELINE_CONFIG };
+const config: PipelineConfig = {
+  ...DEFAULT_PIPELINE_CONFIG,
+  regimeFilter: { enabled: false, blockUptrend: false },
+  clusterFilter: { enabled: false, minGapDays: 5 },
+};
 
 describe('evaluateSignal', () => {
   it('should return BUY when all gates pass (deeply oversold + uptrend + confirmation)', () => {

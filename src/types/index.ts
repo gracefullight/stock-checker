@@ -167,6 +167,19 @@ export interface PipelineConfig {
   gradientRanges: GradientRanges;
   confluence: ConfluenceConfig;
   reversalConfirm: ReversalConfig;
+  confidenceGate: {
+    enabled: boolean;
+    threshold: number;
+    weights: { trend: number; score: number; confluence: number; reversal: number };
+  };
+  regimeFilter: {
+    enabled: boolean;
+    blockUptrend: boolean;
+  };
+  clusterFilter: {
+    enabled: boolean;
+    minGapDays: number;
+  };
 }
 
 export interface PipelineResult {

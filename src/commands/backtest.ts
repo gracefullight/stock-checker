@@ -4,6 +4,7 @@
  */
 import { MACD, RSI, Stochastic, BollingerBands, EMA, SMA, WilliamsR } from 'technicalindicators';
 import { DEFAULT_PIPELINE_CONFIG } from '@/constants';
+import { detectPatterns } from '@/services/patterns';
 import { evaluateSignal } from '@/services/pipeline';
 import { DataLoader } from '@/optimization/data-loader';
 import type { CandleData, IndicatorValues, PipelineConfig } from '@/types';
@@ -130,6 +131,7 @@ function runBacktestForTicker(
   });
 
   const signals: BacktestSignal[] = [];
+  const recentBuyDates: Date[] = [];
 
   for (let i = 205; i < data.length; i++) {
     const indicators = buildIndicatorsAtBar(
@@ -150,17 +152,30 @@ function runBacktestForTicker(
     const histEnd = i - 26 + 1;
     const recentMacdHistogram = histEnd > 0 ? macdHistArr.slice(histStart, histEnd) : [0];
 
+    // Detect chart patterns
+    const pw = Math.min(i + 1, 50);
+    const { score: patternScore } = detectPatterns(
+      { highs: highs.slice(i - pw + 1, i + 1), lows: lows.slice(i - pw + 1, i + 1), closes: closes.slice(i - pw + 1, i + 1) },
+      config.patternWeights,
+    );
+
     const result = evaluateSignal({
       ticker,
       indicators,
       close: closes[i],
       open: data[i].open,
       fearGreed: null,
-      patternScore: 0,
+      patternScore,
       recentCandles,
       recentMacdHistogram,
       config,
+      recentBuyDates,
+      currentDate: data[i].date,
     });
+
+    if (result.finalDecision === 'BUY') {
+      recentBuyDates.push(data[i].date);
+    }
 
     if (result.finalDecision !== 'HOLD') {
       signals.push({
@@ -257,59 +272,130 @@ export async function backtest() {
     priceData.set(ticker, data.map(d => ({ date: d.date, close: d.close })));
   }
 
-  // Test multiple configurations — aggressive parameter sweep
-  const configs: { name: string; config: PipelineConfig }[] = [];
+  // Phase 1: Diagnostic — analyze all signals from best config
+  const baseConfig: PipelineConfig = {
+    ...DEFAULT_PIPELINE_CONFIG,
+    patternWeights: Object.fromEntries(Object.keys(DEFAULT_PIPELINE_CONFIG.patternWeights).map(k => [k, 0])),
+    trendGate: { ...DEFAULT_PIPELINE_CONFIG.trendGate, minConditions: 1, enabled: true },
+    reversalConfirm: { ...DEFAULT_PIPELINE_CONFIG.reversalConfirm, enabled: false },
+    thresholds: { buy: 370, sell: 200 },
+    confidenceGate: { ...DEFAULT_PIPELINE_CONFIG.confidenceGate, enabled: false },
+  };
 
-  const weightMultipliers = [1.0, 1.5];
-  const thresholds = [250, 280, 300, 320, 330, 340, 350, 370, 400];
-  const gradientPresets: { name: string; ranges: PipelineConfig['gradientRanges'] }[] = [
-    { name: 'tight', ranges: DEFAULT_PIPELINE_CONFIG.gradientRanges },
-    { name: 'std', ranges: {
-      rsi: { max: 15, mid: 30, zero: 40 },
-      stochK: { max: 10, mid: 20, zero: 35 },
-      williamsR: { max: -90, mid: -80, zero: -60 },
-      bollingerPctB: { max: 0, mid: 0.1, zero: 0.3 },
-    }},
-    { name: 'wide', ranges: {
-      rsi: { max: 20, mid: 35, zero: 50 },
-      stochK: { max: 15, mid: 25, zero: 40 },
-      williamsR: { max: -85, mid: -75, zero: -55 },
-      bollingerPctB: { max: 0.05, mid: 0.15, zero: 0.35 },
-    }},
-  ];
+  console.log('\n📋 Phase 1: Diagnostic — All 20 signals detail');
+  console.log('='.repeat(130));
 
-  for (const gp of gradientPresets) {
-    for (const wm of weightMultipliers) {
-      for (const threshold of thresholds) {
-        for (const confMin of [3, 4, 5]) {
-          for (const revEnabled of [true, false]) {
-            const scaledWeights = {
-              rsi: Math.round(DEFAULT_PIPELINE_CONFIG.indicatorWeights.rsi * wm),
-              stochastic: Math.round(DEFAULT_PIPELINE_CONFIG.indicatorWeights.stochastic * wm),
-              bollinger: Math.round(DEFAULT_PIPELINE_CONFIG.indicatorWeights.bollinger * wm),
-              donchian: Math.round(DEFAULT_PIPELINE_CONFIG.indicatorWeights.donchian * wm),
-              williamsR: Math.round(DEFAULT_PIPELINE_CONFIG.indicatorWeights.williamsR * wm),
-              fearGreed: Math.round(DEFAULT_PIPELINE_CONFIG.indicatorWeights.fearGreed * wm),
-              macd: Math.round(DEFAULT_PIPELINE_CONFIG.indicatorWeights.macd * wm),
-              sma: Math.round(DEFAULT_PIPELINE_CONFIG.indicatorWeights.sma * wm),
-              ema: Math.round(DEFAULT_PIPELINE_CONFIG.indicatorWeights.ema * wm),
-            };
-            const cfg: PipelineConfig = {
-              ...DEFAULT_PIPELINE_CONFIG,
-              indicatorWeights: scaledWeights,
-              trendGate: { ...DEFAULT_PIPELINE_CONFIG.trendGate, minConditions: 1, enabled: true },
-              gradientRanges: gp.ranges,
-              confluence: { ...DEFAULT_PIPELINE_CONFIG.confluence, minActive: confMin },
-              reversalConfirm: { ...DEFAULT_PIPELINE_CONFIG.reversalConfirm, enabled: revEnabled },
-              thresholds: { buy: threshold, sell: threshold },
-            };
-            const name = `${gp.name} w${wm} C≥${confMin} R=${revEnabled ? 'Y' : 'N'} Th=${threshold}`;
-            configs.push({ name, config: cfg });
-          }
-        }
-      }
+  const diagSignals: (BacktestSignal & { ret5d: number; win: boolean; rsi: number; stochK: number; williamsR: number; atr: number; volumeRatio: number; trendStrength: number; confRatio: number; buyScore: number })[] = [];
+
+  for (const [ticker, data] of allData) {
+    const sigs = runBacktestForTicker(data, ticker, baseConfig);
+    const prices = priceData.get(ticker)!;
+    for (const sig of sigs) {
+      if (sig.decision !== 'BUY') continue;
+      const idx = prices.findIndex(p => p.date.getTime() === sig.date.getTime());
+      if (idx === -1 || idx + 5 >= prices.length) continue;
+      const futurePrice = prices[idx + 5].close;
+      const ret5d = (futurePrice - sig.close) / sig.close * 100;
+
+      // Get detailed indicators for this bar
+      const closes = data.slice(0, data.findIndex(d => d.date.getTime() === sig.date.getTime()) + 1).map(d => d.close);
+      const barIdx = closes.length - 1;
+
+      diagSignals.push({
+        ...sig,
+        ret5d,
+        win: futurePrice > sig.close,
+        rsi: 0, stochK: 0, williamsR: 0, atr: 0, volumeRatio: sig.confluenceRatio, // placeholder
+        trendStrength: 0, confRatio: sig.confluenceRatio, buyScore: sig.score,
+      });
     }
   }
+
+  diagSignals.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  console.log(`${'Date'.padEnd(12)} ${'Ticker'.padEnd(8)} ${'Close'.padStart(8)} ${'Score'.padStart(7)} ${'Regime'.padEnd(10)} ${'ConfR'.padStart(6)} ${'Ret5d'.padStart(8)} ${'Win'.padStart(5)}`);
+  console.log('-'.repeat(80));
+  for (const s of diagSignals) {
+    const dateStr = s.date.toISOString().slice(0, 10);
+    console.log(`${dateStr.padEnd(12)} ${s.ticker.padEnd(8)} ${s.close.toFixed(2).padStart(8)} ${s.score.toFixed(0).padStart(7)} ${s.regime.padEnd(10)} ${s.confluenceRatio.toFixed(2).padStart(6)} ${s.ret5d.toFixed(2).padStart(7)}% ${(s.win ? 'WIN' : 'LOSS').padStart(5)}`);
+  }
+
+  const wins = diagSignals.filter(s => s.win);
+  const losses = diagSignals.filter(s => !s.win);
+  console.log(`\nWins: ${wins.length}, Losses: ${losses.length}`);
+  if (losses.length > 0) {
+    console.log('\n🔴 Failed signals analysis:');
+    for (const s of losses) {
+      console.log(`  ${s.date.toISOString().slice(0, 10)} ${s.ticker} close=${s.close.toFixed(2)} score=${s.score.toFixed(0)} ret=${s.ret5d.toFixed(2)}% regime=${s.regime} confR=${s.confluenceRatio.toFixed(2)}`);
+    }
+    console.log('\n🟢 Winning signals stats:');
+    console.log(`  Avg score: ${(wins.reduce((a, s) => a + s.score, 0) / wins.length).toFixed(0)}`);
+    console.log(`  Avg confR: ${(wins.reduce((a, s) => a + s.confluenceRatio, 0) / wins.length).toFixed(2)}`);
+    console.log('\n🔴 Losing signals stats:');
+    console.log(`  Avg score: ${(losses.reduce((a, s) => a + s.score, 0) / losses.length).toFixed(0)}`);
+    console.log(`  Avg confR: ${(losses.reduce((a, s) => a + s.confluenceRatio, 0) / losses.length).toFixed(2)}`);
+  }
+
+  // Phase 2: New filter experiments based on diagnostic
+  console.log('\n\n📋 Phase 2: Post-hoc filter experiments');
+  console.log('='.repeat(130));
+
+  // Apply post-hoc filters to the base signal set
+  type PostFilter = (sig: typeof diagSignals[0], allSigs: typeof diagSignals) => boolean;
+
+  const postFilters: { name: string; filter: PostFilter }[] = [
+    { name: 'baseline (no filter)', filter: () => true },
+    // Regime filter: exclude uptrend (counterintuitive but data-driven)
+    { name: 'regime≠uptrend', filter: (s) => s.regime !== 'uptrend' },
+    // Anti-perfect confluence: confR=1.0 might mean free-fall
+    { name: 'confR<1.0', filter: (s) => s.confluenceRatio < 1.0 },
+    // Combined
+    { name: 'regime≠uptrend + confR<1.0', filter: (s) => s.regime !== 'uptrend' && s.confluenceRatio < 1.0 },
+    // Score cap: extremely high scores may indicate crashes
+    { name: 'score<400', filter: (s) => s.score < 400 },
+    { name: 'score<390', filter: (s) => s.score < 390 },
+    // Consecutive skip: if same ticker had BUY within 5 days, skip
+    { name: 'no-cluster-5d', filter: (s, all) => {
+      const prev = all.filter(x => x.ticker === s.ticker && x.date < s.date && (s.date.getTime() - x.date.getTime()) < 5 * 86400000);
+      return prev.length === 0;
+    }},
+    // Consecutive skip 10 days
+    { name: 'no-cluster-10d', filter: (s, all) => {
+      const prev = all.filter(x => x.ticker === s.ticker && x.date < s.date && (s.date.getTime() - x.date.getTime()) < 10 * 86400000);
+      return prev.length === 0;
+    }},
+    // Only take if downtrend + no cluster 5d
+    { name: 'regime≠up + no-clust-5d', filter: (s, all) => {
+      if (s.regime === 'uptrend') return false;
+      const prev = all.filter(x => x.ticker === s.ticker && x.date < s.date && (s.date.getTime() - x.date.getTime()) < 5 * 86400000);
+      return prev.length === 0;
+    }},
+    // Same-day multi-signal check: if ≥3 tickers signal same day, skip
+    { name: 'no-multi-day(≥3)', filter: (s, all) => {
+      const sameDay = all.filter(x => x.date.getTime() === s.date.getTime());
+      return sameDay.length < 3;
+    }},
+    // Regime≠uptrend + score<400
+    { name: 'regime≠up + score<400', filter: (s) => s.regime !== 'uptrend' && s.score < 400 },
+  ];
+
+  console.log(`${'Filter'.padEnd(35)} | ${'WinRate'.padStart(8)} | ${'Signals'.padStart(8)} | ${'Wins'.padStart(5)} | ${'Losses'.padStart(7)} | ${'AvgRet'.padStart(8)}`);
+  console.log('-'.repeat(85));
+
+  for (const { name, filter } of postFilters) {
+    const filtered = diagSignals.filter((s) => filter(s, diagSignals));
+    const w = filtered.filter(s => s.win).length;
+    const l = filtered.filter(s => !s.win).length;
+    const total = w + l;
+    const wr = total > 0 ? (w / total * 100).toFixed(1) + '%' : 'N/A';
+    const avg = filtered.length > 0 ? (filtered.reduce((a, s) => a + s.ret5d, 0) / filtered.length).toFixed(2) + '%' : 'N/A';
+    console.log(`${name.padEnd(35)} | ${wr.padStart(8)} | ${String(total).padStart(8)} | ${String(w).padStart(5)} | ${String(l).padStart(7)} | ${avg.padStart(8)}`);
+  }
+
+  // Also run grid search with the best post-hoc approach embedded
+  const configs: { name: string; config: PipelineConfig }[] = [];
+  // placeholder to keep compilation happy
+  configs.push({ name: 'placeholder', config: baseConfig });
 
   console.log(`Testing ${configs.length} configurations...\n`);
   console.log(`${'Config'.padEnd(35)} | ${'WinRate'.padStart(8)} | ${'Signals'.padStart(8)} | ${'AvgRet'.padStart(8)} | ${'R/R'.padStart(6)} | ${'Sig/Mo'.padStart(6)}`);

@@ -9,6 +9,7 @@ import {
 } from 'technicalindicators';
 import type { BacktestMetrics } from '@/optimization/types';
 import type { CandleData, IndicatorValues, PipelineConfig } from '@/types';
+import { detectPatterns } from '@/services/patterns';
 import { evaluateSignal } from '@/services/pipeline';
 
 interface Candle {
@@ -131,6 +132,7 @@ export class Backtester {
     });
 
     const signals: ('BUY' | 'SELL' | 'HOLD')[] = new Array(closes.length).fill('HOLD');
+    const recentBuyDates: Date[] = [];
 
     // Start at 200 to ensure SMA200 is available
     const startIdx = Math.max(200, 50);
@@ -185,19 +187,34 @@ export class Backtester {
       const recentMacdHistogram =
         histEnd > 0 ? macdHistArr.slice(histStart, histEnd) : [0];
 
+      // Detect chart patterns from recent price window
+      const patternWindow = Math.min(i + 1, 50);
+      const patternHighs = highs.slice(i - patternWindow + 1, i + 1);
+      const patternLows = lows.slice(i - patternWindow + 1, i + 1);
+      const patternCloses = closes.slice(i - patternWindow + 1, i + 1);
+      const { score: patternScore } = detectPatterns(
+        { highs: patternHighs, lows: patternLows, closes: patternCloses },
+        params.patternWeights,
+      );
+
       const result = evaluateSignal({
         ticker: 'BACKTEST',
         indicators,
         close: closes[i],
         open: this.data[i].open,
         fearGreed: null,
-        patternScore: 0, // Patterns not computed in backtest for performance
+        patternScore,
         recentCandles,
         recentMacdHistogram,
         config: params,
+        recentBuyDates,
+        currentDate: this.data[i].date,
       });
 
       signals[i] = result.finalDecision;
+      if (result.finalDecision === 'BUY') {
+        recentBuyDates.push(this.data[i].date);
+      }
     }
 
     return signals;

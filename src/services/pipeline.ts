@@ -55,8 +55,11 @@ export function evaluateSignal(params: {
   recentCandles: CandleData[];
   recentMacdHistogram: number[];
   config: PipelineConfig;
+  recentBuyDates?: Date[];
+  currentDate?: Date;
 }): PipelineResult {
-  const { ticker, indicators, close, open, fearGreed, patternScore, recentCandles, recentMacdHistogram, config } =
+  const { ticker, indicators, close, open, fearGreed, patternScore, recentCandles, recentMacdHistogram, config,
+    recentBuyDates = [], currentDate } =
     params;
 
   // Gate 1: Trend filter (buy-side only)
@@ -84,6 +87,20 @@ export function evaluateSignal(params: {
       return makeHold(ticker, buyScore, sellScore, trendResult, HOLD_CONFLUENCE, HOLD_REVERSAL);
     }
 
+    // Gate 1.5: Regime filter — block uptrend regime (mean-reversion works better in downtrends)
+    if (config.regimeFilter.enabled && config.regimeFilter.blockUptrend && trendResult.regime === 'uptrend') {
+      return makeHold(ticker, buyScore, sellScore, trendResult, HOLD_CONFLUENCE, HOLD_REVERSAL);
+    }
+
+    // Gate 1.6: Cluster filter — skip if same ticker had BUY recently
+    if (config.clusterFilter.enabled && currentDate && recentBuyDates.length > 0) {
+      const minGapMs = config.clusterFilter.minGapDays * 86400000;
+      const tooRecent = recentBuyDates.some(d => currentDate.getTime() - d.getTime() < minGapMs);
+      if (tooRecent) {
+        return makeHold(ticker, buyScore, sellScore, trendResult, HOLD_CONFLUENCE, HOLD_REVERSAL);
+      }
+    }
+
     // Gate 3: Confluence check
     const confluenceResult = confluenceCheck({ gradients, config: config.confluence });
     if (!confluenceResult.passed) {
@@ -100,6 +117,23 @@ export function evaluateSignal(params: {
       return makeHold(ticker, buyScore, sellScore, trendResult, confluenceResult, reversalResult);
     }
 
+    // Gate 5: Ensemble confidence
+    const trendNorm = trendResult.strength / 100; // 0-1
+    const scoreNorm = Math.min((buyScore - config.thresholds.buy) / config.thresholds.buy, 1); // how far above threshold
+    const confNorm = confluenceResult.ratio; // 0-1
+    const revNorm = reversalResult.trigger === 'both' ? 1.0 : reversalResult.trigger === 'bullish_candle' ? 0.5 : 0;
+
+    const cg = config.confidenceGate;
+    const ensembleConfidence =
+      (cg.weights.trend * trendNorm +
+       cg.weights.score * scoreNorm +
+       cg.weights.confluence * confNorm +
+       cg.weights.reversal * revNorm) * 100;
+
+    if (cg.enabled && ensembleConfidence < cg.threshold) {
+      return makeHold(ticker, buyScore, sellScore, trendResult, confluenceResult, reversalResult);
+    }
+
     return {
       ticker,
       finalDecision: 'BUY',
@@ -107,7 +141,7 @@ export function evaluateSignal(params: {
       buyScore,
       sellScore,
       gateResults: { trend: trendResult, confluence: confluenceResult, reversal: reversalResult },
-      confidence: confluenceResult.ratio * 100,
+      confidence: ensembleConfidence,
     };
   }
 

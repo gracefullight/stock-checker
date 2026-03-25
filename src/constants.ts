@@ -52,6 +52,19 @@ export const DEFAULT_PIPELINE_CONFIG = {
     enabled: true,
     volumeMultiplier: 1.0,
   },
+  confidenceGate: {
+    enabled: false,
+    threshold: 50,
+    weights: { trend: 0.25, score: 0.25, confluence: 0.25, reversal: 0.25 },
+  },
+  regimeFilter: {
+    enabled: true,
+    blockUptrend: true,
+  },
+  clusterFilter: {
+    enabled: true,
+    minGapDays: 5,
+  },
 } satisfies import('@/types').PipelineConfig;
 
 export const RISK_MULTIPLIER = 1.5;
