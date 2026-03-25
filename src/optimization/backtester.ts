@@ -1,5 +1,15 @@
-import { BollingerBands, EMA, MACD, RSI, SMA, Stochastic, WilliamsR } from 'technicalindicators';
-import type { BacktestMetrics, OptimizationParams } from '@/optimization/types';
+import {
+  BollingerBands,
+  EMA,
+  MACD,
+  RSI,
+  SMA,
+  Stochastic,
+  WilliamsR,
+} from 'technicalindicators';
+import type { BacktestMetrics } from '@/optimization/types';
+import type { CandleData, IndicatorValues, PipelineConfig } from '@/types';
+import { evaluateSignal } from '@/services/pipeline';
 
 interface Candle {
   date: Date;
@@ -28,121 +38,166 @@ export class Backtester {
     this.data = data;
   }
 
-  public run(params: OptimizationParams, initialCapital = 10000): BacktestMetrics {
+  public run(params: PipelineConfig, initialCapital = 10000): BacktestMetrics {
     const signals = this.generateSignals(params);
     const trades = this.simulateTrades(signals);
     return this.calculateMetrics(trades, initialCapital);
   }
 
-  private generateSignals(params: OptimizationParams): ('BUY' | 'SELL' | 'HOLD')[] {
+  private generateSignals(params: PipelineConfig): ('BUY' | 'SELL' | 'HOLD')[] {
     const closes = this.data.map((d) => d.close);
     const highs = this.data.map((d) => d.high);
     const lows = this.data.map((d) => d.low);
+    const volumes = this.data.map((d) => d.volume);
 
-    // Calculate Indicators
-    const rsi = RSI.calculate({ values: closes, period: 14 });
-    const stoch = Stochastic.calculate({
+    // Pre-compute all indicator arrays once
+    const rsiArr = RSI.calculate({ values: closes, period: 14 });
+    const stochArr = Stochastic.calculate({
       high: highs,
       low: lows,
       close: closes,
       period: 14,
       signalPeriod: 3,
     });
-    const bb = BollingerBands.calculate({
-      values: closes,
-      period: 20,
-      stdDev: 2,
-    });
-    const macd = MACD.calculate({
+    const bbArr = BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 });
+    const macdArr = MACD.calculate({
       values: closes,
       fastPeriod: 12,
       slowPeriod: 26,
       signalPeriod: 9,
-      SimpleMAOscillator: false,
-      SimpleMASignal: false,
+      SimpleMAOscillator: true,
+      SimpleMASignal: true,
     });
-    const sma20 = SMA.calculate({ values: closes, period: 20 });
-    const ema20 = EMA.calculate({ values: closes, period: 20 });
-    const williams = WilliamsR.calculate({
+    const sma20Arr = SMA.calculate({ values: closes, period: 20 });
+    const ema20Arr = EMA.calculate({ values: closes, period: 20 });
+    const sma50Arr = SMA.calculate({ values: closes, period: 50 });
+    const sma200Arr = SMA.calculate({ values: closes, period: 200 });
+    const williamsArr = WilliamsR.calculate({
       high: highs,
       low: lows,
       close: closes,
       period: 14,
     });
 
-    // Donchian Channels (Manual implementation as it might be missing or different)
-    const donchianLower = [];
-    const donchianUpper = [];
+    // Pre-compute ATR
+    const atrPeriod = 14;
+    const atrArr: number[] = [];
     for (let i = 0; i < closes.length; i++) {
-      if (i < 20) {
-        donchianLower.push(lows[i]);
-        donchianUpper.push(highs[i]);
+      if (i < atrPeriod) {
+        atrArr.push(0);
         continue;
       }
-      const sliceLow = lows.slice(i - 20, i);
-      const sliceHigh = highs.slice(i - 20, i);
-      donchianLower.push(Math.min(...sliceLow));
-      donchianUpper.push(Math.max(...sliceHigh));
+      let sum = 0;
+      for (let j = i - atrPeriod + 1; j <= i; j++) {
+        const tr = Math.max(
+          highs[j] - lows[j],
+          Math.abs(highs[j] - closes[j - 1]),
+          Math.abs(lows[j] - closes[j - 1]),
+        );
+        sum += tr;
+      }
+      atrArr.push(sum / atrPeriod);
     }
+
+    // Pre-compute Donchian channels
+    const donchPeriod = 20;
+    const donchLowerArr: number[] = [];
+    const donchUpperArr: number[] = [];
+    for (let i = 0; i < closes.length; i++) {
+      if (i < donchPeriod) {
+        donchLowerArr.push(lows[i]);
+        donchUpperArr.push(highs[i]);
+        continue;
+      }
+      donchLowerArr.push(Math.min(...lows.slice(i - donchPeriod, i)));
+      donchUpperArr.push(Math.max(...highs.slice(i - donchPeriod, i)));
+    }
+
+    // Pre-compute volume moving average
+    const volMaArr: number[] = [];
+    for (let i = 0; i < volumes.length; i++) {
+      if (i < 20) {
+        volMaArr.push(volumes[i] || 1);
+        continue;
+      }
+      volMaArr.push(volumes.slice(i - 20, i).reduce((a, b) => a + b, 0) / 20);
+    }
+
+    // Extract MACD histogram array
+    const macdHistArr = macdArr.map((m) => {
+      const macdVal = (m as { MACD?: number }).MACD ?? 0;
+      const sigVal = (m as { signal?: number }).signal ?? 0;
+      return macdVal - sigVal;
+    });
 
     const signals: ('BUY' | 'SELL' | 'HOLD')[] = new Array(closes.length).fill('HOLD');
 
-    // Align arrays (indicators have separate lengths due to lookback)
-    // We iterate backwards or carefully handle indices.
-    // Simplest is to map by index, handling undefined.
+    // Start at 200 to ensure SMA200 is available
+    const startIdx = Math.max(200, 50);
+    for (let i = startIdx; i < closes.length; i++) {
+      const rsiVal = rsiArr[i - 14];
+      const stochVal = stochArr[i - 14];
+      const bbVal = bbArr[i - 20];
+      const sma20Val = sma20Arr[i - 20];
+      const ema20Val = ema20Arr[i - 20];
+      const sma50Val = sma50Arr[i - 50];
+      const sma200Val = sma200Arr[i - 200];
+      const williamsVal = williamsArr[i - 14];
 
-    for (let i = 50; i < closes.length; i++) {
-      const currentClose = closes[i];
-
-      // Get values matching current index 'i'
-      // Note: `technicalindicators` results often start after 'period' elements.
-      // E.g. RSI(14) result[0] corresponds to input[14].
-      // We need to shift indices correctly.
-
-      const rsiVal = rsi[i - 14];
-      const stochVal = stoch[i - 14]; // {k, d}
-      const bbVal = bb[i - 20]; // {lower, middle, upper}
-      const macdVal = macd[i - 26]; // {MACD, signal, histogram}
-      const smaVal = sma20[i - 20];
-      const emaVal = ema20[i - 20];
-      const williamsVal = williams[i - 14];
-      const donchLowerVal = donchianLower[i];
-      const donchUpperVal = donchianUpper[i];
-
-      if (!rsiVal || !stochVal || !bbVal || !macdVal || !smaVal || !emaVal || !williamsVal)
+      if (rsiVal == null || stochVal == null || bbVal == null || sma20Val == null || ema20Val == null) {
         continue;
-
-      let buyScore = 0;
-      let sellScore = 0;
-      const w = params.indicatorWeights;
-
-      // Buy Logic
-      if (rsiVal < 30) buyScore += w.rsi;
-      if (stochVal.k < 20) buyScore += w.stochastic;
-      if (currentClose <= bbVal.lower) buyScore += w.bollinger;
-      if (currentClose <= donchLowerVal) buyScore += w.donchian;
-      if (williamsVal < -80) buyScore += w.williamsR;
-      if (macdVal.histogram && macdVal.histogram > 0) buyScore += w.macd;
-      if (currentClose > smaVal) buyScore += w.sma;
-      if (currentClose > emaVal) buyScore += w.ema;
-
-      // Sell Logic
-      if (rsiVal > 70) sellScore += w.rsi;
-      if (stochVal.k > 80) sellScore += w.stochastic;
-      if (currentClose >= bbVal.upper) sellScore += w.bollinger;
-      if (currentClose >= donchUpperVal) sellScore += w.donchian;
-      if (williamsVal > -20) sellScore += w.williamsR;
-      if (macdVal.histogram && macdVal.histogram < 0) sellScore += w.macd;
-      if (currentClose < smaVal) sellScore += w.sma;
-      if (currentClose < emaVal) sellScore += w.ema;
-
-      const t = params.thresholds;
-
-      if (buyScore >= t.buy && buyScore >= sellScore) {
-        signals[i] = 'BUY';
-      } else if (sellScore >= t.sell && sellScore > buyScore) {
-        signals[i] = 'SELL';
       }
+
+      const indicators: IndicatorValues = {
+        rsi: rsiVal,
+        stochasticK: stochVal.k,
+        bbLower: bbVal.lower,
+        bbUpper: bbVal.upper,
+        donchLower: donchLowerArr[i],
+        donchUpper: donchUpperArr[i],
+        williamsR: williamsVal ?? -50,
+        atr: atrArr[i],
+        macd: 0,
+        macdSignal: 0,
+        macdHistogram: macdHistArr[i - 26] ?? 0,
+        sma20: sma20Val,
+        ema20: ema20Val,
+        sma50: sma50Val ?? NaN,
+        sma200: sma200Val ?? NaN,
+        volumeRatio: volMaArr[i] > 0 ? volumes[i] / volMaArr[i] : 1.0,
+      };
+
+      // Recent candles for reversal confirmation
+      const recentCandles: CandleData[] = [];
+      for (let j = Math.max(0, i - 2); j <= i; j++) {
+        recentCandles.push({
+          open: this.data[j].open,
+          close: this.data[j].close,
+          high: this.data[j].high,
+          low: this.data[j].low,
+          volume: this.data[j].volume,
+        });
+      }
+
+      // Recent MACD histogram for crossover detection
+      const histStart = Math.max(0, (i - 26) - 4);
+      const histEnd = i - 26 + 1;
+      const recentMacdHistogram =
+        histEnd > 0 ? macdHistArr.slice(histStart, histEnd) : [0];
+
+      const result = evaluateSignal({
+        ticker: 'BACKTEST',
+        indicators,
+        close: closes[i],
+        open: this.data[i].open,
+        fearGreed: null,
+        patternScore: 0, // Patterns not computed in backtest for performance
+        recentCandles,
+        recentMacdHistogram,
+        config: params,
+      });
+
+      signals[i] = result.finalDecision;
     }
 
     return signals;
@@ -160,7 +215,7 @@ export class Backtester {
       const date = dates[i];
 
       if (position && signal === 'SELL') {
-        const profit = price - position.price; // Long only for now
+        const profit = price - position.price;
         const profitPercent = (profit / position.price) * 100;
         trades.push({
           entryDate: position.date,
@@ -168,8 +223,8 @@ export class Backtester {
           entryPrice: position.price,
           exitPrice: price,
           direction: 'long',
-          profit: profit,
-          profitPercent: profitPercent,
+          profit,
+          profitPercent,
         });
         position = null;
       } else if (!position && signal === 'BUY') {
@@ -190,8 +245,8 @@ export class Backtester {
         entryPrice: position.price,
         exitPrice: price,
         direction: 'long',
-        profit: profit,
-        profitPercent: profitPercent,
+        profit,
+        profitPercent,
       });
     }
 
@@ -199,14 +254,12 @@ export class Backtester {
   }
 
   private calculateMetrics(trades: Trade[], initialCapital: number): BacktestMetrics {
-    // Build daily equity curve for proper Sharpe calculation
     const closes = this.data.map((d) => d.close);
     const dailyEquity: number[] = new Array(closes.length).fill(initialCapital);
     let currentBalance = initialCapital;
     let inPosition = false;
     let entryPrice = 0;
 
-    // Reconstruct daily equity from trades
     let tradeIdx = 0;
     for (let i = 0; i < closes.length; i++) {
       if (tradeIdx < trades.length && !inPosition) {
@@ -234,7 +287,6 @@ export class Backtester {
       }
     }
 
-    // Daily returns from equity curve
     const dailyReturns: number[] = [];
     for (let i = 1; i < dailyEquity.length; i++) {
       dailyReturns.push((dailyEquity[i] - dailyEquity[i - 1]) / dailyEquity[i - 1]);
@@ -243,11 +295,10 @@ export class Backtester {
     const meanReturn = dailyReturns.reduce((a, b) => a + b, 0) / (dailyReturns.length || 1);
     const stdReturn = Math.sqrt(
       dailyReturns.map((x) => (x - meanReturn) ** 2).reduce((a, b) => a + b, 0) /
-        (dailyReturns.length || 1)
+        (dailyReturns.length || 1),
     );
     const sharpe = stdReturn === 0 ? 0 : (meanReturn / stdReturn) * Math.sqrt(252);
 
-    // Max drawdown from equity curve
     let peak = initialCapital;
     let maxDD = 0;
     for (const equity of dailyEquity) {
@@ -262,7 +313,8 @@ export class Backtester {
 
     const grossProfit = winTrades.reduce((sum, t) => sum + t.profit, 0);
     const grossLoss = Math.abs(loseTrades.reduce((sum, t) => sum + t.profit, 0));
-    const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? Infinity : 0) : grossProfit / grossLoss;
+    const profitFactor =
+      grossLoss === 0 ? (grossProfit > 0 ? Infinity : 0) : grossProfit / grossLoss;
 
     const finalBalance = dailyEquity[dailyEquity.length - 1] ?? initialCapital;
     const totalReturn = (finalBalance - initialCapital) / initialCapital;

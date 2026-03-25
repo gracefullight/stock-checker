@@ -11,8 +11,9 @@ export function calculateAllIndicators(data: {
   closes: number[];
   highs: number[];
   lows: number[];
+  volumes?: number[];
 }): IndicatorValues {
-  const { closes, highs, lows } = data;
+  const { closes, highs, lows, volumes = [] } = data;
 
   const rsiValues = rsi({ values: closes, period: 14 });
   const latestRsi = rsiValues[rsiValues.length - 1];
@@ -69,6 +70,24 @@ export function calculateAllIndicators(data: {
   const macdSignalValue = latestMacd?.signal ?? 0;
   const macdHistogramValue = macdValue - macdSignalValue;
 
+  // Calculate SMA50
+  const sma50 =
+    closes.length >= 50
+      ? closes.slice(-50).reduce((sum, price) => sum + price, 0) / 50
+      : NaN;
+
+  // Calculate SMA200
+  const sma200 =
+    closes.length >= 200
+      ? closes.slice(-200).reduce((sum, price) => sum + price, 0) / 200
+      : NaN;
+
+  // Calculate volume ratio (today / 20-day average)
+  const volumeRatio =
+    volumes.length >= 20
+      ? volumes[volumes.length - 1] / (volumes.slice(-20).reduce((sum, v) => sum + v, 0) / 20)
+      : 1.0;
+
   return {
     rsi: latestRsi ?? 50,
     stochasticK: latestStoch?.k ?? 50,
@@ -83,5 +102,8 @@ export function calculateAllIndicators(data: {
     macdHistogram: macdHistogramValue,
     sma20: Number.isNaN(sma20) ? 0 : sma20,
     ema20: Number.isNaN(ema20) ? 0 : ema20,
+    sma50: Number.isNaN(sma50) ? NaN : sma50,
+    sma200: Number.isNaN(sma200) ? NaN : sma200,
+    volumeRatio: Number.isNaN(volumeRatio) ? 1.0 : volumeRatio,
   };
 }

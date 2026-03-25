@@ -38,6 +38,11 @@ async function formatCsvRow(item: TickerResult): Promise<string> {
     item.macdHistogram?.toFixed(2) ?? '',
     item.sma20?.toFixed(2) ?? '',
     item.ema20?.toFixed(2) ?? '',
+    item.sma50 != null && Number.isFinite(item.sma50) ? item.sma50.toFixed(2) : '',
+    item.sma200 != null && Number.isFinite(item.sma200) ? item.sma200.toFixed(2) : '',
+    item.volumeRatio?.toFixed(2) ?? '',
+    item.trendRegime ?? '',
+    item.confluenceRatio?.toFixed(2) ?? '',
   ].join(',');
 
   return `${row}\n`;
@@ -81,6 +86,11 @@ export async function writeToCsv(data: TickerResult[]): Promise<void> {
     'MACDHistogram',
     'SMA20',
     'EMA20',
+    'SMA50',
+    'SMA200',
+    'VolumeRatio',
+    'TrendRegime',
+    'ConfluenceRatio',
   ].join(',');
 
   let csv = '';

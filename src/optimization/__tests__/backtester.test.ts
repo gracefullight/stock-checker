@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Backtester } from '@/optimization/backtester';
-import type { OptimizationParams } from '@/optimization/types';
+import { DEFAULT_PIPELINE_CONFIG } from '@/constants';
+import type { PipelineConfig } from '@/types';
 
 interface Candle {
   date: Date;
@@ -17,48 +18,30 @@ function generateCandles(count: number, startPrice = 100): Candle[] {
   let price = startPrice;
   const baseDate = new Date('2024-01-01');
   for (let i = 0; i < count; i++) {
-    const change = (Math.sin(i / 10) * 2) + 0.1;
+    const change = Math.sin(i / 10) * 2 + 0.1;
     price += change;
     const date = new Date(baseDate);
     date.setDate(baseDate.getDate() + i);
     candles.push({
-      date, open: price - 0.5, high: price + 2, low: price - 2, close: price, volume: 1000000,
+      date,
+      open: price - 0.5,
+      high: price + 2,
+      low: price - 2,
+      close: price,
+      volume: 1000000,
     });
   }
   return candles;
 }
 
-const defaultParams: OptimizationParams = {
-  indicatorWeights: {
-    rsi: 1,
-    stochastic: 1,
-    bollinger: 1,
-    donchian: 1,
-    williamsR: 1,
-    fearGreed: 1,
-    macd: 1,
-    sma: 1,
-    ema: 1,
-  },
-  patternWeights: {
-    ascendingTriangle: 1,
-    bullishFlag: 1,
-    doubleBottom: 1,
-    fallingWedge: 1,
-    islandReversal: 1,
-  },
-  thresholds: {
-    buy: 2,
-    sell: 2,
-  },
-  calibration: {
-    slope: 1,
-    intercept: 0,
-  },
+const defaultParams: PipelineConfig = {
+  ...DEFAULT_PIPELINE_CONFIG,
+  thresholds: { buy: 2, sell: 2 },
 };
 
 describe('Backtester', () => {
-  const candles = generateCandles(150);
+  // Need 250+ candles for SMA200 lookback
+  const candles = generateCandles(260);
   const backtester = new Backtester(candles);
 
   it('should run without errors on synthetic uptrend data', () => {
@@ -89,7 +72,7 @@ describe('Backtester', () => {
   });
 
   it('should produce no trades with extremely high thresholds', () => {
-    const highThresholdParams: OptimizationParams = {
+    const highThresholdParams: PipelineConfig = {
       ...defaultParams,
       thresholds: { buy: 9999, sell: 9999 },
     };

@@ -2,7 +2,9 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { orderBy } from 'es-toolkit/array';
 import pino from 'pino';
+import { MACD } from 'technicalindicators';
 import {
+  DEFAULT_PIPELINE_CONFIG,
   REWARD_MULTIPLIER,
   RISK_MULTIPLIER,
   TRAILING_ACTIVATION_MULTIPLIER,
@@ -14,7 +16,6 @@ import {
   getPortfolio,
   removeAsset,
 } from '@/portfolio/manager';
-import { getOpinion } from '@/services/analysis';
 import { getFearGreedIndex, getHistoricalPrices } from '@/services/data-fetcher';
 import { formatDividendInfo, getDividendInfo } from '@/services/dividends';
 import { formatEarningsData, getEarningsData } from '@/services/earnings';
@@ -23,8 +24,9 @@ import { calculateAllIndicators } from '@/services/indicators';
 import { getStockNews } from '@/services/news';
 import { formatOptionsData, getOptionsChain } from '@/services/options';
 import { detectPatterns } from '@/services/patterns';
+import { evaluateSignal } from '@/services/pipeline';
 import { calculateProbabilities } from '@/services/probability';
-import type { CliOptions, PredictionRecord, TickerResult } from '@/types';
+import type { CandleData, CliOptions, PipelineConfig, PredictionRecord, TickerResult } from '@/types';
 import { printSummaryTable } from '@/ui/summary';
 import { loadOptimizedConfig } from '@/utils/config-loader';
 import { writeToCsv } from '@/utils/csv-writer';
@@ -53,29 +55,65 @@ async function processTicker(
   const closes = dailyPrices.map((d) => d.close);
   const highs = dailyPrices.map((d) => d.high);
   const lows = dailyPrices.map((d) => d.low);
+  const volumes = dailyPrices.map((d) => d.volume);
 
-  const indicators = calculateAllIndicators({ closes, highs, lows });
+  const indicators = calculateAllIndicators({ closes, highs, lows, volumes });
   const optimizedConfig = await loadOptimizedConfig();
   const { score: patternScore, patterns } = detectPatterns(
     { highs, lows, closes },
     optimizedConfig.patternWeights
   );
 
-  const { decision, score, buyScore, sellScore } = getOpinion({
-    rsi: indicators.rsi,
-    stochasticK: indicators.stochasticK,
-    williamsR: indicators.williamsR,
-    close: latest.close,
-    bbLower: indicators.bbLower,
-    bbUpper: indicators.bbUpper,
-    donchLower: indicators.donchLower,
-    donchUpper: indicators.donchUpper,
-    fearGreed,
-    patternScore,
-    buyThreshold: optimizedConfig.thresholds.buy,
-    sellThreshold: optimizedConfig.thresholds.sell,
+  // Build pipeline config from optimized + defaults
+  const pipelineConfig: PipelineConfig = {
+    ...DEFAULT_PIPELINE_CONFIG,
+    indicatorWeights: optimizedConfig.weights as PipelineConfig['indicatorWeights'],
+    thresholds: optimizedConfig.thresholds,
+    patternWeights: optimizedConfig.patternWeights,
+    calibration: optimizedConfig.calibration,
+    ...(optimizedConfig.trendGate && { trendGate: optimizedConfig.trendGate }),
+    ...(optimizedConfig.gradientRanges && { gradientRanges: optimizedConfig.gradientRanges }),
+    ...(optimizedConfig.confluence && { confluence: optimizedConfig.confluence }),
+    ...(optimizedConfig.reversalConfirm && { reversalConfirm: optimizedConfig.reversalConfirm }),
+  };
+
+  // Prepare recent candles for reversal confirmation
+  const recentCandles: CandleData[] = dailyPrices.slice(-3).map((d) => ({
+    open: d.open,
+    close: d.close,
+    high: d.high,
+    low: d.low,
+    volume: d.volume,
+  }));
+
+  // Compute recent MACD histogram for crossover detection
+  const macdValues = MACD.calculate({
+    values: closes,
+    fastPeriod: 12,
+    slowPeriod: 26,
+    signalPeriod: 9,
+    SimpleMAOscillator: true,
+    SimpleMASignal: true,
+  });
+  const recentMacdHistogram = macdValues.slice(-5).map((m) => {
+    const macdVal = (m as { MACD?: number }).MACD ?? 0;
+    const sigVal = (m as { signal?: number }).signal ?? 0;
+    return macdVal - sigVal;
   });
 
+  const pipelineResult = evaluateSignal({
+    ticker,
+    indicators,
+    close: latest.close,
+    open: latest.open,
+    fearGreed,
+    patternScore,
+    recentCandles,
+    recentMacdHistogram,
+    config: pipelineConfig,
+  });
+
+  const { finalDecision: decision, score, buyScore, sellScore } = pipelineResult;
   const probs = calculateProbabilities(buyScore, sellScore, optimizedConfig.calibration);
 
   const risk = indicators.atr * RISK_MULTIPLIER;
@@ -118,6 +156,11 @@ async function processTicker(
     sellProbability: probs.sellProbability,
     holdProbability: probs.holdProbability,
     confidence: probs.confidence,
+    sma50: indicators.sma50,
+    sma200: indicators.sma200,
+    volumeRatio: indicators.volumeRatio,
+    trendRegime: pipelineResult.gateResults.trend.regime,
+    confluenceRatio: pipelineResult.gateResults.confluence.ratio,
   };
 
   return result;

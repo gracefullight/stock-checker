@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import pino from 'pino';
+import { backtest } from '@/commands/backtest';
 import { learn } from '@/commands/learn';
 import { optimize } from '@/commands/optimize';
 import { predict } from '@/commands/predict';
@@ -171,6 +172,18 @@ program
       await optimize(symbol, options);
     } catch (error) {
       logger.error({ err: error }, 'Optimize command failed');
+      process.exit(1);
+    }
+  });
+
+program
+  .command('backtest')
+  .description('Run backtest with Pipeline V2 against historical data')
+  .action(async () => {
+    try {
+      await backtest();
+    } catch (error) {
+      logger.error({ err: error }, 'Backtest failed');
       process.exit(1);
     }
   });

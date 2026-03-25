@@ -188,6 +188,10 @@ export async function learn() {
       thresholds: optResult.bestParams.thresholds,
       patternWeights: optResult.bestParams.patternWeights,
       calibration: optResult.bestParams.calibration,
+      trendGate: optResult.bestParams.trendGate,
+      gradientRanges: optResult.bestParams.gradientRanges,
+      confluence: optResult.bestParams.confluence,
+      reversalConfirm: optResult.bestParams.reversalConfirm,
     });
 
     s5.stop(`Best: ${pc.bold(optResult.symbol)} (${pc.green(bestOverallValue.toFixed(4))})`);

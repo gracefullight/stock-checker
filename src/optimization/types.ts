@@ -1,37 +1,13 @@
-export interface OptimizationParams {
-  indicatorWeights: {
-    rsi: number;
-    stochastic: number;
-    bollinger: number;
-    donchian: number;
-    williamsR: number;
-    fearGreed: number;
-    macd: number;
-    sma: number;
-    ema: number;
-  };
-  patternWeights: {
-    ascendingTriangle: number;
-    bullishFlag: number;
-    doubleBottom: number;
-    fallingWedge: number;
-    islandReversal: number;
-  };
-  thresholds: {
-    buy: number;
-    sell: number;
-  };
-  calibration: {
-    slope: number;
-    intercept: number;
-  };
-}
+import type { PipelineConfig } from '@/types';
+
+/** @deprecated Use PipelineConfig instead */
+export type OptimizationParams = PipelineConfig;
 
 export interface OptimizationResult {
   strategy: string;
   symbol: string;
   bestValue: number;
-  bestParams: OptimizationParams;
+  bestParams: PipelineConfig;
   nTrials: number;
   metrics: BacktestMetrics;
 }

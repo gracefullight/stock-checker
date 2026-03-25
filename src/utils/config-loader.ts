@@ -7,7 +7,19 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import pino from 'pino';
-import { BUY_THRESHOLD, INDICATOR_WEIGHTS, PATTERN_WEIGHTS, SELL_THRESHOLD } from '@/constants';
+import {
+  BUY_THRESHOLD,
+  DEFAULT_PIPELINE_CONFIG,
+  INDICATOR_WEIGHTS,
+  PATTERN_WEIGHTS,
+  SELL_THRESHOLD,
+} from '@/constants';
+import type {
+  ConfluenceConfig,
+  GradientRanges,
+  ReversalConfig,
+  TrendGateConfig,
+} from '@/types';
 
 const logger = pino({
   level: 'info',
@@ -29,6 +41,11 @@ export interface OptimizedWeights {
   };
   patternWeights: Record<string, number>;
   calibration: CalibrationParams;
+  // V2 pipeline fields (optional for backward compat with v1 configs)
+  trendGate?: TrendGateConfig;
+  gradientRanges?: GradientRanges;
+  confluence?: ConfluenceConfig;
+  reversalConfirm?: ReversalConfig;
 }
 
 export interface ConfigFile extends OptimizedWeights {
@@ -39,13 +56,14 @@ export interface ConfigFile extends OptimizedWeights {
 /**
  * Load optimized configuration from JSON
  * Falls back to default constants if file doesn't exist
+ * Accepts both v1.0.0 and v2.0.0 configs
  */
 export async function loadOptimizedConfig(): Promise<OptimizedWeights> {
   try {
     const data = await readFile(CONFIG_PATH, 'utf-8');
     const config = JSON.parse(data) as ConfigFile;
 
-    if (config.version !== '1.0.0') {
+    if (config.version !== '1.0.0' && config.version !== '2.0.0') {
       logger.warn(`Config version mismatch: ${config.version}, using defaults`);
       return getDefaultConfig();
     }
@@ -58,6 +76,10 @@ export async function loadOptimizedConfig(): Promise<OptimizedWeights> {
       },
       patternWeights: { ...PATTERN_WEIGHTS, ...config.patternWeights },
       calibration: config.calibration ?? { slope: 0.01, intercept: -1.0 },
+      trendGate: config.trendGate ?? DEFAULT_PIPELINE_CONFIG.trendGate,
+      gradientRanges: config.gradientRanges ?? DEFAULT_PIPELINE_CONFIG.gradientRanges,
+      confluence: config.confluence ?? DEFAULT_PIPELINE_CONFIG.confluence,
+      reversalConfirm: config.reversalConfirm ?? DEFAULT_PIPELINE_CONFIG.reversalConfirm,
     };
   } catch (_error) {
     logger.debug('No optimized config found, using defaults');
@@ -77,17 +99,20 @@ function getDefaultConfig(): OptimizedWeights {
     },
     patternWeights: { ...PATTERN_WEIGHTS },
     calibration: { slope: 0.01, intercept: -1.0 },
+    trendGate: DEFAULT_PIPELINE_CONFIG.trendGate,
+    gradientRanges: DEFAULT_PIPELINE_CONFIG.gradientRanges,
+    confluence: DEFAULT_PIPELINE_CONFIG.confluence,
+    reversalConfirm: DEFAULT_PIPELINE_CONFIG.reversalConfirm,
   };
 }
 
 /**
  * Save optimized configuration to JSON
- * Called by Python optimizer
  */
 export async function saveOptimizedConfig(config: OptimizedWeights): Promise<void> {
   try {
     const configData: ConfigFile = {
-      version: '1.0.0',
+      version: '2.0.0',
       updatedAt: new Date().toISOString(),
       ...config,
     };

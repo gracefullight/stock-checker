@@ -1,7 +1,8 @@
 import pino from 'pino';
 import { Backtester } from '@/optimization/backtester';
 import { DataLoader } from '@/optimization/data-loader';
-import type { OptimizationParams, OptimizationResult } from '@/optimization/types';
+import type { OptimizationResult } from '@/optimization/types';
+import type { PipelineConfig } from '@/types';
 
 const logger = pino({
   level: 'info',
@@ -18,7 +19,7 @@ export class Optimizer {
   public async optimize(
     symbol: string,
     nTrials: number = 200,
-    _dataDir?: string
+    _dataDir?: string,
   ): Promise<OptimizationResult> {
     logger.info(`Starting optimization for ${this.strategyName} on ${symbol}...`);
 
@@ -29,7 +30,7 @@ export class Optimizer {
 
     const backtester = new Backtester(data);
     let bestValue = -Infinity;
-    let bestParams: OptimizationParams | null = null;
+    let bestParams: PipelineConfig | null = null;
     let bestMetrics = null;
 
     for (let i = 0; i < nTrials; i++) {
@@ -50,7 +51,7 @@ export class Optimizer {
         bestParams = params;
         bestMetrics = metrics;
         logger.info(
-          `New Best Trial ${i}: Value=${value.toFixed(4)}, Sharpe=${metrics.sharpeRatio.toFixed(2)}, DD=${metrics.maxDrawdown.toFixed(2)}%`
+          `New Best Trial ${i}: Value=${value.toFixed(4)}, Sharpe=${metrics.sharpeRatio.toFixed(2)}, DD=${metrics.maxDrawdown.toFixed(2)}%`,
         );
       }
 
@@ -70,9 +71,10 @@ export class Optimizer {
     };
   }
 
-  private generateRandomParams(): OptimizationParams {
+  private generateRandomParams(): PipelineConfig {
     const r = (min: number, max: number) => Math.random() * (max - min) + min;
-    const ri = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+    const ri = (min: number, max: number) =>
+      Math.floor(Math.random() * (max - min + 1)) + min;
 
     return {
       indicatorWeights: {
@@ -100,6 +102,25 @@ export class Optimizer {
       calibration: {
         slope: r(0.005, 0.02),
         intercept: r(-2.0, 0.0),
+      },
+      trendGate: {
+        enabled: true,
+        minConditions: ri(1, 3),
+        sidewaysThreshold: r(1, 5),
+      },
+      gradientRanges: {
+        rsi: { max: r(10, 20), mid: r(25, 35), zero: r(35, 50) },
+        stochK: { max: r(5, 15), mid: r(15, 25), zero: r(30, 45) },
+        williamsR: { max: r(-95, -85), mid: r(-85, -75), zero: r(-70, -50) },
+        bollingerPctB: { max: r(-0.1, 0.05), mid: r(0.05, 0.15), zero: r(0.2, 0.4) },
+      },
+      confluence: {
+        minActive: ri(3, 6),
+        activationThreshold: r(0.2, 0.5),
+      },
+      reversalConfirm: {
+        enabled: true,
+        volumeMultiplier: r(0.8, 1.5),
       },
     };
   }
