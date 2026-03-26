@@ -180,6 +180,10 @@ export interface PipelineConfig {
     enabled: boolean;
     minGapDays: number;
   };
+  volumeSpike: {
+    enabled: boolean;
+    maxVolumeRatio: number;
+  };
 }
 
 export interface PipelineResult {

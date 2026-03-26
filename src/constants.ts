@@ -65,6 +65,10 @@ export const DEFAULT_PIPELINE_CONFIG = {
     enabled: true,
     minGapDays: 5,
   },
+  volumeSpike: {
+    enabled: false,
+    maxVolumeRatio: 2.5,
+  },
 } satisfies import('@/types').PipelineConfig;
 
 export const RISK_MULTIPLIER = 1.5;

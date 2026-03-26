@@ -92,7 +92,12 @@ export function evaluateSignal(params: {
       return makeHold(ticker, buyScore, sellScore, trendResult, HOLD_CONFLUENCE, HOLD_REVERSAL);
     }
 
-    // Gate 1.6: Cluster filter — skip if same ticker had BUY recently
+    // Gate 1.6: Volume spike filter — abnormally high volume often signals panic selling
+    if (config.volumeSpike.enabled && indicators.volumeRatio > config.volumeSpike.maxVolumeRatio) {
+      return makeHold(ticker, buyScore, sellScore, trendResult, HOLD_CONFLUENCE, HOLD_REVERSAL);
+    }
+
+    // Gate 1.7: Cluster filter — skip if same ticker had BUY recently
     if (config.clusterFilter.enabled && currentDate && recentBuyDates.length > 0) {
       const minGapMs = config.clusterFilter.minGapDays * 86400000;
       const tooRecent = recentBuyDates.some(d => currentDate.getTime() - d.getTime() < minGapMs);

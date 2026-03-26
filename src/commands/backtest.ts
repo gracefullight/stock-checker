@@ -17,6 +17,20 @@ interface BacktestSignal {
   score: number;
   regime: string;
   confluenceRatio: number;
+  rsi: number;
+  stochK: number;
+  williamsR: number;
+  atr: number;
+  volumeRatio: number;
+  trendStrength: number;
+  sma50dist: number;
+  sma200dist: number;
+  rsiDelta: number;
+  priceDelta: number;
+  ibs: number;
+  rsi2cumul: number;
+  atrDistance: number;
+  consecutiveOversold: number;
 }
 
 interface WinRateResult {
@@ -86,6 +100,7 @@ function runBacktestForTicker(
   const volumes = data.map(d => d.volume);
 
   // Pre-compute indicators
+  const rsi2Arr = RSI.calculate({ values: closes, period: 2 });
   const rsiArr = RSI.calculate({ values: closes, period: 14 });
   const stochArr = Stochastic.calculate({ high: highs, low: lows, close: closes, period: 14, signalPeriod: 3 });
   const bbArr = BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 });
@@ -186,6 +201,34 @@ function runBacktestForTicker(
         score: result.score,
         regime: result.gateResults.trend.regime,
         confluenceRatio: result.gateResults.confluence.ratio,
+        rsi: indicators.rsi,
+        stochK: indicators.stochasticK,
+        williamsR: indicators.williamsR,
+        atr: indicators.atr,
+        volumeRatio: indicators.volumeRatio,
+        trendStrength: result.gateResults.trend.strength,
+        sma50dist: indicators.sma50 ? (closes[i] - indicators.sma50) / indicators.sma50 * 100 : 0,
+        sma200dist: indicators.sma200 ? (closes[i] - indicators.sma200) / indicators.sma200 * 100 : 0,
+        rsiDelta: i >= 3 && rsiArr[i - 14] != null && rsiArr[i - 14 - 3] != null ? rsiArr[i - 14] - rsiArr[i - 14 - 3] : 0,
+        priceDelta: i >= 3 ? (closes[i] - closes[i - 3]) / closes[i - 3] * 100 : 0,
+        ibs: (highs[i] - lows[i]) > 0 ? (closes[i] - lows[i]) / (highs[i] - lows[i]) : 0.5,
+        rsi2cumul: (() => {
+          const r2idx = i - 2;
+          if (r2idx >= 1 && rsi2Arr[r2idx] != null && rsi2Arr[r2idx - 1] != null) {
+            return rsi2Arr[r2idx] + rsi2Arr[r2idx - 1];
+          }
+          return 999;
+        })(),
+        atrDistance: indicators.atr > 0 ? (indicators.sma20 - closes[i]) / indicators.atr : 0,
+        consecutiveOversold: (() => {
+          let count = 0;
+          for (let k = i; k >= Math.max(0, i - 10); k--) {
+            const r2idx = k - 2;
+            if (r2idx >= 0 && rsi2Arr[r2idx] != null && rsi2Arr[r2idx] < 10) count++;
+            else break;
+          }
+          return count;
+        })(),
       });
     }
   }
@@ -247,7 +290,24 @@ function measure5DayWinRate(
 }
 
 export async function backtest() {
-  const tickers = ['TSLA', 'PLTR', 'GOOGL', 'INTC', 'IONQ', 'UPST', 'BMNR', 'GEV', 'BE', 'OPEN', 'DLO', 'DNA', 'GLW', 'POET', 'ABCL', 'CIEN', 'RXRX'];
+  const tickers = [
+    // Original
+    'TSLA', 'PLTR', 'GOOGL', 'INTC', 'IONQ', 'UPST', 'GEV', 'BE', 'OPEN', 'DLO', 'DNA', 'GLW', 'POET', 'ABCL', 'CIEN', 'RXRX', 'AVGO', 'HOOD',
+    // Mega cap
+    'AAPL', 'MSFT', 'AMZN', 'NVDA', 'META', 'NFLX',
+    // Semiconductor
+    'AMD', 'QCOM', 'MU', 'MRVL', 'SMCI', 'ARM',
+    // Software/Cloud
+    'CRM', 'SNOW', 'DDOG', 'NET', 'CRWD', 'ZS', 'PANW',
+    // EV/Energy
+    'RIVN', 'LCID', 'ENPH', 'SEDG', 'FSLR',
+    // Biotech/Health
+    'MRNA', 'CRSP', 'NVAX',
+    // Fintech
+    'SQ', 'COIN', 'SOFI', 'AFRM',
+    // Others
+    'SHOP', 'ROKU', 'SNAP', 'PINS', 'U', 'RBLX', 'UBER', 'ABNB', 'DASH',
+  ];
 
   console.log('Loading historical data for', tickers.length, 'tickers...');
   const allData = new Map<string, { date: Date; open: number; high: number; low: number; close: number; volume: number }[]>();
@@ -285,7 +345,7 @@ export async function backtest() {
   console.log('\n📋 Phase 1: Diagnostic — All 20 signals detail');
   console.log('='.repeat(130));
 
-  const diagSignals: (BacktestSignal & { ret5d: number; win: boolean; rsi: number; stochK: number; williamsR: number; atr: number; volumeRatio: number; trendStrength: number; confRatio: number; buyScore: number })[] = [];
+  const diagSignals: (BacktestSignal & { ret5d: number; win: boolean })[] = [];
 
   for (const [ticker, data] of allData) {
     const sigs = runBacktestForTicker(data, ticker, baseConfig);
@@ -305,19 +365,17 @@ export async function backtest() {
         ...sig,
         ret5d,
         win: futurePrice > sig.close,
-        rsi: 0, stochK: 0, williamsR: 0, atr: 0, volumeRatio: sig.confluenceRatio, // placeholder
-        trendStrength: 0, confRatio: sig.confluenceRatio, buyScore: sig.score,
       });
     }
   }
 
   diagSignals.sort((a, b) => a.date.getTime() - b.date.getTime());
 
-  console.log(`${'Date'.padEnd(12)} ${'Ticker'.padEnd(8)} ${'Close'.padStart(8)} ${'Score'.padStart(7)} ${'Regime'.padEnd(10)} ${'ConfR'.padStart(6)} ${'Ret5d'.padStart(8)} ${'Win'.padStart(5)}`);
-  console.log('-'.repeat(80));
+  console.log(`${'Date'.padEnd(12)} ${'Ticker'.padEnd(6)} ${'Scr'.padStart(4)} ${'IBS'.padStart(5)} ${'R2c'.padStart(5)} ${'ATRd'.padStart(5)} ${'COs'.padStart(4)} ${'VolR'.padStart(5)} ${'Ret5d'.padStart(7)} ${'W'.padStart(2)}`);
+  console.log('-'.repeat(65));
   for (const s of diagSignals) {
     const dateStr = s.date.toISOString().slice(0, 10);
-    console.log(`${dateStr.padEnd(12)} ${s.ticker.padEnd(8)} ${s.close.toFixed(2).padStart(8)} ${s.score.toFixed(0).padStart(7)} ${s.regime.padEnd(10)} ${s.confluenceRatio.toFixed(2).padStart(6)} ${s.ret5d.toFixed(2).padStart(7)}% ${(s.win ? 'WIN' : 'LOSS').padStart(5)}`);
+    console.log(`${dateStr.padEnd(12)} ${s.ticker.padEnd(6)} ${s.score.toFixed(0).padStart(4)} ${s.ibs.toFixed(2).padStart(5)} ${s.rsi2cumul.toFixed(0).padStart(5)} ${s.atrDistance.toFixed(1).padStart(5)} ${String(s.consecutiveOversold).padStart(4)} ${s.volumeRatio.toFixed(1).padStart(5)} ${s.ret5d.toFixed(2).padStart(6)}% ${(s.win ? 'W' : 'L').padStart(2)}`);
   }
 
   const wins = diagSignals.filter(s => s.win);
@@ -377,7 +435,107 @@ export async function backtest() {
     }},
     // Regime≠uptrend + score<400
     { name: 'regime≠up + score<400', filter: (s) => s.regime !== 'uptrend' && s.score < 400 },
+    // ATR-based volatility filter: skip high-volatility (ATR > X% of price)
+    { name: 'atr<4%', filter: (s) => (s.atr / s.close * 100) < 4 },
+    { name: 'atr<3.5%', filter: (s) => (s.atr / s.close * 100) < 3.5 },
+    { name: 'atr<3%', filter: (s) => (s.atr / s.close * 100) < 3 },
+    // Volume ratio filter
+    { name: 'volR<1.5', filter: (s) => s.volumeRatio < 1.5 },
+    { name: 'volR>0.8', filter: (s) => s.volumeRatio > 0.8 },
+    // SMA distance: how far below SMA50
+    { name: 'sma50dist<-5%', filter: (s) => s.sma50dist < -5 },
+    { name: 'sma50dist<-8%', filter: (s) => s.sma50dist < -8 },
+    { name: 'sma50dist<-10%', filter: (s) => s.sma50dist < -10 },
+    // SMA200 distance
+    { name: 'sma200dist>-15%', filter: (s) => s.sma200dist > -15 },
+    { name: 'sma200dist>-20%', filter: (s) => s.sma200dist > -20 },
+    // RSI filter
+    { name: 'rsi<25', filter: (s) => s.rsi < 25 },
+    { name: 'rsi<30', filter: (s) => s.rsi < 30 },
+    // Score margin above threshold
+    { name: 'score≥375', filter: (s) => s.score >= 375 },
+    { name: 'score≥378', filter: (s) => s.score >= 378 },
+    // --- New strategy filters ---
+    // IBS (Internal Bar Strength)
+    { name: 'ibs<0.30', filter: (s) => s.ibs < 0.30 },
+    { name: 'ibs<0.25', filter: (s) => s.ibs < 0.25 },
+    { name: 'ibs<0.20', filter: (s) => s.ibs < 0.20 },
+    { name: 'ibs<0.15', filter: (s) => s.ibs < 0.15 },
+    // RSI(2) cumulative
+    { name: 'rsi2c<20', filter: (s) => s.rsi2cumul < 20 },
+    { name: 'rsi2c<15', filter: (s) => s.rsi2cumul < 15 },
+    { name: 'rsi2c<10', filter: (s) => s.rsi2cumul < 10 },
+    { name: 'rsi2c<5', filter: (s) => s.rsi2cumul < 5 },
+    // ATR distance (how stretched from SMA20)
+    { name: 'atrD>1.0', filter: (s) => s.atrDistance > 1.0 },
+    { name: 'atrD>1.5', filter: (s) => s.atrDistance > 1.5 },
+    { name: 'atrD>2.0', filter: (s) => s.atrDistance > 2.0 },
+    { name: 'atrD>2.5', filter: (s) => s.atrDistance > 2.5 },
+    // Consecutive oversold days
+    { name: 'consOD≥2', filter: (s) => s.consecutiveOversold >= 2 },
+    { name: 'consOD≥3', filter: (s) => s.consecutiveOversold >= 3 },
+    // Volume
+    { name: 'volR<2', filter: (s) => s.volumeRatio < 2.0 },
+    { name: 'volR<1.5', filter: (s) => s.volumeRatio < 1.5 },
+    // --- Combos: top singles ---
+    { name: 'ibs<0.25 + atrD>1.5', filter: (s) => s.ibs < 0.25 && s.atrDistance > 1.5 },
+    { name: 'ibs<0.25 + volR<2', filter: (s) => s.ibs < 0.25 && s.volumeRatio < 2.0 },
+    { name: 'ibs<0.25 + rsi2c<10', filter: (s) => s.ibs < 0.25 && s.rsi2cumul < 10 },
+    { name: 'atrD>1.5 + volR<2', filter: (s) => s.atrDistance > 1.5 && s.volumeRatio < 2.0 },
+    { name: 'atrD>1.5 + rsi2c<15', filter: (s) => s.atrDistance > 1.5 && s.rsi2cumul < 15 },
+    { name: 'atrD>2 + volR<2', filter: (s) => s.atrDistance > 2.0 && s.volumeRatio < 2.0 },
+    { name: 'atrD>2 + ibs<0.25', filter: (s) => s.atrDistance > 2.0 && s.ibs < 0.25 },
+    { name: 'ibs<0.25+atrD>1.5+volR<2', filter: (s) => s.ibs < 0.25 && s.atrDistance > 1.5 && s.volumeRatio < 2.0 },
+    { name: 'ibs<0.20+atrD>1.5+volR<2', filter: (s) => s.ibs < 0.20 && s.atrDistance > 1.5 && s.volumeRatio < 2.0 },
+    { name: 'atrD>2+volR<2+consOD≥2', filter: (s) => s.atrDistance > 2.0 && s.volumeRatio < 2.0 && s.consecutiveOversold >= 2 },
+    { name: 'atrD>1.5+volR<1.5+ibs<0.25', filter: (s) => s.atrDistance > 1.5 && s.volumeRatio < 1.5 && s.ibs < 0.25 },
+    { name: 'atrD>2+volR<1.5', filter: (s) => s.atrDistance > 2.0 && s.volumeRatio < 1.5 },
+    { name: 'score≥375+atrD>1.5+volR<2', filter: (s) => s.score >= 375 && s.atrDistance > 1.5 && s.volumeRatio < 2.0 },
+    { name: 'scr≥375+volR<2+ibs<0.25', filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.ibs < 0.25 },
+    { name: 'scr≥375+volR<2+ibs<0.30', filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.ibs < 0.30 },
+    { name: 'scr≥375+volR<2+ibs<0.40', filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.ibs < 0.40 },
+    { name: 'scr≥375+volR<2+consOD≥2', filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.consecutiveOversold >= 2 },
+    { name: 'scr≥375+volR<2+rsi2c<20', filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.rsi2cumul < 20 },
+    { name: 'scr≥375+volR<2+rsi2c<15', filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.rsi2cumul < 15 },
+    { name: 'all:scr375+vR2+ibs25+atrD1.5', filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.ibs < 0.25 && s.atrDistance > 1.5 },
+    { name: 'all:scr375+vR2+consOD2+atrD2', filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.consecutiveOversold >= 2 && s.atrDistance > 2.0 },
   ];
+
+  // Multi-period win rate analysis
+  console.log('\n📊 Holding period analysis:');
+  console.log('-'.repeat(70));
+  for (const period of [1, 2, 3, 5, 7, 10, 15, 20]) {
+    let wins = 0, total = 0;
+    for (const sig of diagSignals) {
+      if (sig.decision !== 'BUY') continue;
+      const prices = priceData.get(sig.ticker);
+      if (!prices) continue;
+      const idx = prices.findIndex(p => p.date.getTime() === sig.date.getTime());
+      if (idx === -1 || idx + period >= prices.length) continue;
+      total++;
+      if (prices[idx + period].close > sig.close) wins++;
+    }
+    const wr = total > 0 ? (wins / total * 100).toFixed(1) : 'N/A';
+    console.log(`  ${String(period).padStart(2)}d: ${wr}% (${wins}/${total})`);
+  }
+
+  // volR<1.5 subset multi-period
+  console.log('\n📊 volR<1.5 holding period:');
+  console.log('-'.repeat(70));
+  const lowVol = diagSignals.filter(s => s.decision === 'BUY' && s.volumeRatio < 1.5);
+  for (const period of [1, 2, 3, 5, 7, 10, 15, 20]) {
+    let wins = 0, total = 0;
+    for (const sig of lowVol) {
+      const prices = priceData.get(sig.ticker);
+      if (!prices) continue;
+      const idx = prices.findIndex(p => p.date.getTime() === sig.date.getTime());
+      if (idx === -1 || idx + period >= prices.length) continue;
+      total++;
+      if (prices[idx + period].close > sig.close) wins++;
+    }
+    const wr = total > 0 ? (wins / total * 100).toFixed(1) : 'N/A';
+    console.log(`  ${String(period).padStart(2)}d: ${wr}% (${wins}/${total})`);
+  }
 
   console.log(`${'Filter'.padEnd(35)} | ${'WinRate'.padStart(8)} | ${'Signals'.padStart(8)} | ${'Wins'.padStart(5)} | ${'Losses'.padStart(7)} | ${'AvgRet'.padStart(8)}`);
   console.log('-'.repeat(85));
@@ -392,10 +550,29 @@ export async function backtest() {
     console.log(`${name.padEnd(35)} | ${wr.padStart(8)} | ${String(total).padStart(8)} | ${String(w).padStart(5)} | ${String(l).padStart(7)} | ${avg.padStart(8)}`);
   }
 
-  // Also run grid search with the best post-hoc approach embedded
+  // Phase 3: Grid search with structural filters
+  console.log('\n\n📋 Phase 3: Grid search');
+  console.log('='.repeat(130));
+
   const configs: { name: string; config: PipelineConfig }[] = [];
-  // placeholder to keep compilation happy
-  configs.push({ name: 'placeholder', config: baseConfig });
+
+  for (const threshold of [370, 400, 430, 460, 500]) {
+    for (const maxVolR of [1.5, 2.0, 2.5, 99]) {
+      for (const confMin of [3, 4, 5]) {
+        for (const rev of [true, false]) {
+          const cfg: PipelineConfig = {
+            ...baseConfig,
+            confluence: { ...baseConfig.confluence, minActive: confMin },
+            thresholds: { buy: threshold, sell: 200 },
+            volumeSpike: { enabled: maxVolR < 99, maxVolumeRatio: maxVolR },
+            reversalConfirm: { enabled: rev, volumeMultiplier: 1.0 },
+          };
+          const name = `Th=${threshold} vR<${maxVolR} C≥${confMin} R=${rev ? 'Y' : 'N'}`;
+          configs.push({ name, config: cfg });
+        }
+      }
+    }
+  }
 
   console.log(`Testing ${configs.length} configurations...\n`);
   console.log(`${'Config'.padEnd(35)} | ${'WinRate'.padStart(8)} | ${'Signals'.padStart(8)} | ${'AvgRet'.padStart(8)} | ${'R/R'.padStart(6)} | ${'Sig/Mo'.padStart(6)}`);
