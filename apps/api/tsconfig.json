@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["../../packages/core/src/*", "./src/*"],
+      "@stock-checker/core": ["../../packages/core/src/index.ts"],
+      "@stock-checker/core/*": ["../../packages/core/*"]
+    }
+  },
+  "include": ["src", "../../packages/core/src"]
+}

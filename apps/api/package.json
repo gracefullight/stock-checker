@@ -1,0 +1,17 @@
+{
+  "name": "@stock-checker/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun --external '@stock-checker/*'",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stock-checker/core": "workspace:*",
+    "@fastify/cors": "^10",
+    "fastify": "^5"
+  }
+}

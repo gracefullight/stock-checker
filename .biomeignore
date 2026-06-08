@@ -6,4 +6,5 @@
 .github
 node_modules
 dist
+.next
 scripts

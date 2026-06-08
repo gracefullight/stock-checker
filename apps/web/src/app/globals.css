@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0a0a0a;
+  --surface: #111111;
+  --border: #222222;
+  --text-primary: #e0e0e0;
+  --text-secondary: #888888;
+  --green: #00c851;
+  --red: #ff4444;
+  --yellow: #ffd700;
+  --cyan: #00bcd4;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: var(--cyan);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}

@@ -1,3 +1,132 @@
 [tools]
 node = "24"
 bun = "1"
+
+# ── Install ──────────────────────────────────────────────────
+[tasks.install]
+description = "Install all dependencies"
+run = "bun install"
+
+# ── Dev Servers ──────────────────────────────────────────────
+[tasks."dev:api"]
+description = "Start Fastify API server (port 3001)"
+dir = "apps/api"
+run = "bun run dev"
+
+[tasks."dev:web"]
+description = "Start Next.js dev server (port 3000)"
+dir = "apps/web"
+run = "bun run dev"
+
+[tasks.dev]
+description = "Start API + Web dev servers in parallel"
+depends = ["dev:api", "dev:web"]
+
+# ── Build ─────────────────────────────────────────────────────
+[tasks."build:core"]
+dir = "packages/core"
+run = "bun run build"
+
+[tasks."build:api"]
+depends = ["build:core"]
+dir = "apps/api"
+run = "bun run build"
+
+[tasks."build:web"]
+depends = ["build:core"]
+dir = "apps/web"
+run = "bun run build"
+
+[tasks.build]
+description = "Build all apps"
+depends = ["build:api", "build:web"]
+
+# ── Quality ───────────────────────────────────────────────────
+[tasks.lint]
+description = "Lint entire monorepo"
+run = "biome check ."
+
+[tasks."lint:fix"]
+description = "Lint + auto-fix"
+run = "biome check --write --unsafe ."
+
+[tasks.format]
+description = "Format all files"
+run = "biome format --write ."
+
+[tasks."typecheck:core"]
+dir = "packages/core"
+run = "bun run typecheck"
+
+[tasks."typecheck:api"]
+dir = "apps/api"
+run = "bun run typecheck"
+
+[tasks."typecheck:web"]
+dir = "apps/web"
+run = "bun run typecheck"
+
+[tasks.typecheck]
+description = "Type-check all packages in parallel"
+depends = ["typecheck:core", "typecheck:api", "typecheck:web"]
+
+# ── Test ──────────────────────────────────────────────────────
+[tasks."test:core"]
+dir = "packages/core"
+run = "bun run test"
+
+[tasks."test:api"]
+dir = "apps/api"
+run = "bun run test"
+
+[tasks.test]
+description = "Run all tests in parallel"
+depends = ["test:core", "test:api"]
+
+[tasks."test:watch"]
+description = "Run core tests in watch mode"
+dir = "packages/core"
+run = "bun run test:watch"
+
+# ── CLI (stock-checker commands) ─────────────────────────────
+[tasks.predict]
+description = "Run stock prediction  [usage: mise run predict -- --ticker=TSLA,PLTR]"
+dir = "packages/core"
+run = "bun src/index.ts predict $@"
+
+[tasks.optimize]
+description = "Run parameter optimizer"
+dir = "packages/core"
+run = "bun src/index.ts optimize $@"
+
+[tasks.learn]
+description = "Run learning from feedback"
+dir = "packages/core"
+run = "bun src/index.ts learn $@"
+
+[tasks.backtest]
+description = "Run backtest"
+dir = "packages/core"
+run = "bun src/index.ts backtest $@"
+
+# ── CI Pipeline ───────────────────────────────────────────────
+[tasks.ci]
+description = "Full CI gate: lint → typecheck → test → build"
+depends = ["lint", "typecheck", "test", "build"]
+
+# ── Git Hooks ─────────────────────────────────────────────────
+[tasks."hooks:install"]
+description = "Install git pre-commit hook"
+run = """
+cat > .git/hooks/pre-commit << 'EOF'
+#!/bin/sh
+# Lint + format staged TS/JS files via biome
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\\.(ts|tsx|js|jsx|json)$')
+if [ -n "$STAGED" ]; then
+  echo "$STAGED" | xargs biome check --write --unsafe
+  echo "$STAGED" | xargs git add
+fi
+EOF
+chmod +x .git/hooks/pre-commit
+echo "pre-commit hook installed"
+"""

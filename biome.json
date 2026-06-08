@@ -6,7 +6,15 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["src/**", "package.json", "tsconfig.json", "biome.json", "vitest.config.ts"]
+    "includes": [
+      "apps/*/src/**",
+      "packages/*/src/**",
+      "apps/*/package.json",
+      "packages/*/package.json",
+      "package.json",
+      "tsconfig.json",
+      "biome.json"
+    ]
   },
   "plugins": ["node_modules/@gracefullight/biome-plugin/rules/no-relative-imports.grit"],
   "formatter": {

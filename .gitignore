@@ -2,10 +2,31 @@ node_modules
 dist
 .DS_Store
 
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Next.js
+.next/
+out/
+
+# Serena MCP runtime
+.serena/
+
 .opencode/
 
-# Optimization config (generated at runtime)
+# Optimization config + feedback data (generated at runtime)
 data/config/
+packages/core/data/config/
+packages/core/data/feedback/
+
+# Backtest / prediction output
+packages/core/backtest-results-*.txt
+packages/core/public/*.csv
+
+# Agent plan artifacts
+docs/plans/
 
 # oh-my-agent runtime (local artifacts — do not commit)
 .antigravitycli/
