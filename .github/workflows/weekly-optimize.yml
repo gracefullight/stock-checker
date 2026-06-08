@@ -19,6 +19,7 @@ jobs:
 
       - name: Run optimization
         run: bun src/index.ts optimize --trials 50
+        working-directory: packages/core
 
       - name: Upload results as artifacts
         if: always()
@@ -26,14 +27,5 @@ jobs:
         with:
           name: optimization-results
           path: |
-            data/config/
-            src/constants.ts
+            packages/core/data/config/
           retention-days: 30
-
-      - name: Commit optimized weights
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "feat: update optimized hyperparameters and calibration"
-          file_pattern: |
-            data/config/optimized_weights.json
-            src/constants.ts
