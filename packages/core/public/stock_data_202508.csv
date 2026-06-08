@@ -1,4 +1,4 @@
-Date,Ticker,Close,Volume,RSI,StochK,BBLower,BBUpper,DonchLower,DonchUpper,WilliamsR,FearGreed,Patterns,Score,Opinion
+Date,Ticker,Close,Volume,RSI,StochK,BBLower,BBUpper,DonchLower,DonchUpper,WilliamsR,FearGreed,Patterns,Score,Opinion,ATR,StopLoss,TakeProfit,TrailingStop,TrailingStart,MACD,MACDSignal,MACDHistogram,SMA20,EMA20,SMA50,SMA200,VolumeRatio,TrendRegime,ConfluenceRatio,InstitutionalScore,InstitutionalPassed
 2025-08-11,TSLA,341.95,15709688,61.35,99.59,299.81,340.64,297.82,342.13,-0.41,70,DoubleBottom,70.00,HOLD
 2025-08-11,PLTR,184.93,10275991,77.04,92.28,137.17,185.73,145.06,187.99,-7.72,70,,0.00,HOLD
 2025-08-11,IONQ,41.98,1951255,51.28,64.01,38.13,46.00,37.25,47.72,-35.99,70,,0.00,HOLD

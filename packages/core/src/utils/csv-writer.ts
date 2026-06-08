@@ -43,6 +43,8 @@ async function formatCsvRow(item: TickerResult): Promise<string> {
     item.volumeRatio?.toFixed(2) ?? '',
     item.trendRegime ?? '',
     item.confluenceRatio?.toFixed(2) ?? '',
+    item.institutionalScore?.toFixed(2) ?? '',
+    item.institutionalPassed != null ? String(item.institutionalPassed) : '',
   ].join(',');
 
   return `${row}\n`;
@@ -91,6 +93,8 @@ export async function writeToCsv(data: TickerResult[]): Promise<void> {
     'VolumeRatio',
     'TrendRegime',
     'ConfluenceRatio',
+    'InstitutionalScore',
+    'InstitutionalPassed',
   ].join(',');
 
   let csv = '';

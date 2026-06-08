@@ -1,4 +1,4 @@
-Date,Ticker,Close,Volume,RSI,StochK,BBLower,BBUpper,DonchLower,DonchUpper,WilliamsR,FearGreed,Patterns,Score,Opinion
+Date,Ticker,Close,Volume,RSI,StochK,BBLower,BBUpper,DonchLower,DonchUpper,WilliamsR,FearGreed,Patterns,Score,Opinion,ATR,StopLoss,TakeProfit,TrailingStop,TrailingStart,MACD,MACDSignal,MACDHistogram,SMA20,EMA20,SMA50,SMA200,VolumeRatio,TrendRegime,ConfluenceRatio,InstitutionalScore,InstitutionalPassed
 2026-05-01,ABCL,4.43,6692496,68.15,94.84,3.25,4.46,3.22,4.47,-5.16,26,,316.47,SELL,0.26,4.81,3.66,4.81,4.30,0.31,0.25,0.06,3.86,3.92,3.61,4.14,1.19,uptrend,0.00
 2026-05-01,BE,290.52,9464620,77.89,93.97,120.81,302.45,130.50,296.50,-6.03,26,,329.34,SELL,20.47,321.23,229.11,321.23,280.28,46.71,37.45,9.26,211.63,222.49,175.50,114.38,0.87,uptrend,0.00
 2026-05-01,BMNR,21.88,29369890,52.17,43.11,20.18,23.22,19.30,24.11,-56.89,26,,113.40,HOLD,1.28,19.97,25.71,19.97,22.52,0.88,0.91,-0.02,21.70,21.56,20.92,35.05,0.75,downtrend,0.00

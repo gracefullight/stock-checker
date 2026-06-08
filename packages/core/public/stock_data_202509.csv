@@ -1,4 +1,4 @@
-Date,Ticker,Close,Volume,RSI,StochK,BBLower,BBUpper,DonchLower,DonchUpper,WilliamsR,FearGreed,Patterns,Score,Opinion
+Date,Ticker,Close,Volume,RSI,StochK,BBLower,BBUpper,DonchLower,DonchUpper,WilliamsR,FearGreed,Patterns,Score,Opinion,ATR,StopLoss,TakeProfit,TrailingStop,TrailingStart,MACD,MACDSignal,MACDHistogram,SMA20,EMA20,SMA50,SMA200,VolumeRatio,TrendRegime,ConfluenceRatio,InstitutionalScore,InstitutionalPassed
 2025-08-29,BMNR,43.62,34209400,46.44,0.60,32.14,66.82,30.67,71.74,-99.40,46,,148.00,HOLD,7.19,32.83,65.20,32.83,47.22
 2025-08-29,DNA,12.67,2034700,52.10,52.85,11.09,14.31,10.95,14.72,-47.15,46,,0.00,HOLD,1.07,11.06,15.88,11.06,13.21
 2025-08-29,GEV,612.97,2265000,49.53,37.38,589.74,670.74,581.23,674.97,-62.62,46,,0.00,HOLD,22.27,579.56,679.78,579.56,624.11

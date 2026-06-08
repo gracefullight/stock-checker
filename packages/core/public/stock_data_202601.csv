@@ -1,4 +1,4 @@
-Date,Ticker,Close,Volume,RSI,StochK,BBLower,BBUpper,DonchLower,DonchUpper,WilliamsR,FearGreed,Patterns,Score,Opinion
+Date,Ticker,Close,Volume,RSI,StochK,BBLower,BBUpper,DonchLower,DonchUpper,WilliamsR,FearGreed,Patterns,Score,Opinion,ATR,StopLoss,TakeProfit,TrailingStop,TrailingStart,MACD,MACDSignal,MACDHistogram,SMA20,EMA20,SMA50,SMA200,VolumeRatio,TrendRegime,ConfluenceRatio,InstitutionalScore,InstitutionalPassed
 2025-12-31,ABCL,3.42,7657400,38.82,18.52,3.35,3.81,3.32,3.86,-81.48,20,FallingWedge,268.00,BUY,0.20,3.13,4.01,3.13,3.52
 2025-12-31,BE,86.89,5464700,42.49,32.35,72.34,119.44,75.70,119.90,-67.65,20,,50.00,HOLD,8.77,73.73,113.20,73.73,91.28
 2025-12-31,BMNR,27.15,33878400,38.28,2.45,24.41,40.21,26.84,42.08,-97.55,20,,198.00,HOLD,2.69,23.12,35.21,23.12,28.49
