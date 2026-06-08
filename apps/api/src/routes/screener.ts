@@ -1,5 +1,5 @@
 import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
-import { getFearGreedIndex } from '@stock-checker/core/src/services/data-fetcher';
+import { getFearGreedIndex, getHistoricalPrices } from '@stock-checker/core/src/services/data-fetcher';
 import { getEarningsData } from '@stock-checker/core/src/services/earnings';
 import { getFundamentals } from '@stock-checker/core/src/services/fundamentals';
 import { getStockNews } from '@stock-checker/core/src/services/news';
@@ -96,6 +96,31 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         return reply.send({ ...result, ...extras });
       } catch (error) {
         req.log.error({ err: error }, 'single screener failed');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
+    }
+  );
+
+  // GET /api/screener/:ticker/ohlcv?days=180
+  app.get<{ Params: SingleTickerParams; Querystring: { days?: string } }>(
+    '/screener/:ticker/ohlcv',
+    async (req, reply) => {
+      try {
+        const ticker = req.params.ticker.toUpperCase();
+        const days = Math.min(Number(req.query.days ?? 180), 730);
+        const data = await getHistoricalPrices(ticker, days);
+        return reply.send(
+          data.map((d) => ({
+            time: d.date.toISOString().split('T')[0],
+            open: d.open ?? d.close,
+            high: d.high ?? d.close,
+            low: d.low ?? d.close,
+            close: d.close,
+            volume: d.volume ?? 0,
+          }))
+        );
+      } catch (error) {
+        req.log.error({ err: error }, 'ohlcv failed');
         return reply.status(500).send({ error: 'Internal server error' });
       }
     }

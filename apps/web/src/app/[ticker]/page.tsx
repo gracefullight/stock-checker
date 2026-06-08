@@ -1,9 +1,25 @@
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { IndicatorRow } from '@/components/indicator-row';
 import { PatternList } from '@/components/pattern-list';
 import { ScoreBar } from '@/components/score-bar';
 import { SignalBadge } from '@/components/signal-badge';
 import { getTickerDetail } from '@/lib/api';
+
+const CandlestickChart = dynamic(
+  () => import('@/components/candlestick-chart').then((m) => m.CandlestickChart),
+  { ssr: false, loading: () => <div className="h-[400px] bg-[var(--surface)] animate-pulse" /> }
+);
+
+const ProbabilityChart = dynamic(
+  () => import('@/components/probability-chart').then((m) => m.ProbabilityChart),
+  { ssr: false }
+);
+
+const IndicatorGauge = dynamic(
+  () => import('@/components/indicator-gauge').then((m) => m.IndicatorGauge),
+  { ssr: false }
+);
 
 interface PageProps {
   params: Promise<{ ticker: string }>;
@@ -106,6 +122,11 @@ export default async function TickerDetailPage({ params }: PageProps) {
         )}
       </div>
 
+      {/* Price chart */}
+      <Section title="PRICE CHART">
+        <CandlestickChart ticker={symbol} days={180} />
+      </Section>
+
       {/* 2-column grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Indicators */}
@@ -161,7 +182,7 @@ export default async function TickerDetailPage({ params }: PageProps) {
               </div>
               <div className="text-xs font-mono text-[var(--text-secondary)]">
                 THRESHOLD:{' '}
-                <span className="text-[var(--text-primary)]">BUY &gt;370 / SELL &lt;200</span>
+                <span className="text-[var(--text-primary)]">BUY &gt;280 / SELL &lt;200</span>
               </div>
             </div>
           </Section>
@@ -178,36 +199,42 @@ export default async function TickerDetailPage({ params }: PageProps) {
             </table>
           </Section>
 
-          {/* Probabilities */}
-          {(data.buyProbability !== undefined || data.sellProbability !== undefined) && (
-            <Section title="SIGNAL PROBABILITIES">
-              <table className="w-full" aria-label="Signal probabilities">
-                <tbody>
-                  {data.buyProbability !== undefined && (
-                    <IndicatorRow
-                      label="Buy %"
-                      value={`${(data.buyProbability * 100).toFixed(1)}%`}
-                    />
-                  )}
-                  {data.sellProbability !== undefined && (
-                    <IndicatorRow
-                      label="Sell %"
-                      value={`${(data.sellProbability * 100).toFixed(1)}%`}
-                    />
-                  )}
-                  {data.holdProbability !== undefined && (
-                    <IndicatorRow
-                      label="Hold %"
-                      value={`${(data.holdProbability * 100).toFixed(1)}%`}
-                    />
-                  )}
-                  {data.confidence !== undefined && (
-                    <IndicatorRow label="Confidence" value={data.confidence} />
-                  )}
-                </tbody>
-              </table>
-            </Section>
-          )}
+          {/* Signal analysis */}
+          {data.buyProbability !== undefined &&
+            data.sellProbability !== undefined &&
+            data.holdProbability !== undefined && (
+              <Section title="SIGNAL ANALYSIS">
+                <ProbabilityChart
+                  buyProbability={data.buyProbability}
+                  sellProbability={data.sellProbability}
+                  holdProbability={data.holdProbability}
+                />
+                {data.confidence !== undefined && (
+                  <div className="mt-2 text-center font-mono text-[10px] text-[var(--text-secondary)]">
+                    CONFIDENCE{' '}
+                    <span className="text-[var(--text-primary)]">{data.confidence}</span>
+                  </div>
+                )}
+              </Section>
+            )}
+
+          {/* Oscillator gauges */}
+          <Section title="OSCILLATORS">
+            <div className="flex justify-around py-2">
+              <IndicatorGauge
+                label="RSI"
+                value={data.rsi}
+                oversoldThreshold={30}
+                overboughtThreshold={70}
+              />
+              <IndicatorGauge
+                label="STOCH K"
+                value={data.stochasticK}
+                oversoldThreshold={20}
+                overboughtThreshold={80}
+              />
+            </div>
+          </Section>
         </div>
       </div>
 

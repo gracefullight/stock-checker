@@ -78,3 +78,19 @@ export function addToPortfolio(ticker: string): Promise<void> {
 export function removeFromPortfolio(ticker: string): Promise<void> {
   return apiFetch<void>(`/api/portfolio/${ticker}`, { method: 'DELETE' });
 }
+
+export interface OHLCVCandle {
+  time: string; // YYYY-MM-DD
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/**
+ * GET /api/screener/:ticker/ohlcv?days=180
+ */
+export function getOHLCV(ticker: string, days = 180): Promise<OHLCVCandle[]> {
+  return apiFetch<OHLCVCandle[]>(`/api/screener/${ticker}/ohlcv?days=${days}`);
+}

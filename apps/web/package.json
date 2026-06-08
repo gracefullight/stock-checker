@@ -11,10 +11,12 @@
   "dependencies": {
     "@stock-checker/core": "workspace:*",
     "@tailwindcss/postcss": "^4.3.0",
+    "lightweight-charts": "^5.2.0",
     "next": "^15",
     "postcss": "^8.5.15",
     "react": "^19",
     "react-dom": "^19",
+    "recharts": "^3.8.1",
     "tailwindcss": "^4.3.0"
   }
 }
