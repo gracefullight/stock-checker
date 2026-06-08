@@ -17,7 +17,7 @@ export async function exportToJson(data: TickerResult[]): Promise<void> {
     return;
   }
 
-  const filePath = join(CSV_DIR, `stock_data_${DateTime.now().toFormat('yyyyLLdd')}.json`);
+  const filePath = join(CSV_DIR, `stock_data_${DateTime.now().toFormat('yyyyLL')}.json`);
   const jsonOutput = JSON.stringify(data, null, 2);
 
   try {
