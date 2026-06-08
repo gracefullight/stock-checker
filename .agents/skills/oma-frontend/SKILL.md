@@ -5,151 +5,202 @@ description: Frontend specialist for React, Next.js, TypeScript with FSD-lite ar
 
 # Frontend Agent - UI/UX Specialist
 
-## When to use
+## Scheduling
+
+### Goal
+Build, modify, and verify React/Next.js/TypeScript user interfaces that follow project architecture, design-system constraints, accessibility expectations, and existing frontend conventions.
+
+### Intent signature
+- User asks for UI, component, page, layout, CSS, Tailwind, shadcn, form, interaction, client state, or frontend API integration work.
+- User needs browser-facing implementation in a React/Next.js TypeScript codebase.
+
+### When to use
 - Building user interfaces and components
 - Client-side logic and state management
 - Styling and responsive design
 - Form validation and user interactions
 - Integrating with backend APIs
 
-## When NOT to use
-- Backend API implementation -> use Backend Agent
-- Native mobile development -> use Mobile Agent
+### When NOT to use
+- Backend API implementation → use Backend Agent
+- Database access, migrations, or ORM setup → use Backend Agent
+- Auth server setup (better-auth server library, DB adapters) → use Backend Agent
+- Native mobile development → use Mobile Agent
 
-## Core Rules
+### Expected inputs
+- Target page, component, flow, or UI behavior
+- Existing app structure, design tokens, component library, i18n files, and API contracts
+- Acceptance criteria and target responsive states
 
-1. **Component Reuse**: Use `shadcn/ui` components first. Extend via `cva` variants or composition. Avoid custom CSS.
-2. **Design Fidelity**: Code must map 1:1 to Design Tokens. Resolve discrepancies before implementation.
-3. **Rendering Strategy**: Default to Server Components for performance. Use Client Components only for interactivity and API integration.
-4. **Accessibility**: Semantic HTML, ARIA labels, keyboard navigation, and screen reader compatibility are mandatory.
-5. **Tool First**: Check for existing solutions and tools before coding.
-6. **Proxy over Middleware**: Next.js 16+ uses `proxy.ts` for request proxying. Do NOT use `middleware.ts` for proxy/rewrite logic — use `proxy.ts` instead.
-7. **No Prop Drilling**: Avoid passing props beyond 3 levels. Use Jotai atoms instead. Avoid React Context — prefer Jotai.
+### Expected outputs
+- Frontend code changes in pages, components, hooks, styles, tests, or wrappers
+- UI that respects project tokens, i18n, server/client boundaries, and accessibility expectations
+- Verification results from relevant lint, typecheck, tests, or browser checks
 
-## 1. Tooling & Performance
+### Dependencies
+- React, Next.js, TypeScript, TailwindCSS v4, and `shadcn/ui`
+- Project sources of truth such as `packages/design-tokens`, `packages/i18n`, and shared utilities
+- `resources/execution-protocol.md`, `resources/checklist.md`, examples, snippets, and Tailwind rules
 
-- **Metrics**: Target First Contentful Paint (FCP) < 1s.
-- **Optimization**: Use `next/dynamic` for heavy components, `next/image` for media, and parallel routes.
-- **Responsive Breakpoints**: 320px, 768px, 1024px, 1440px
-- **Shadcn Workflow**:
-  1. Search: `shadcn_search_items_in_registries`
-  2. Review: `shadcn_get_item_examples_from_registries`
-  3. Install: `shadcn_get_add_command_for_items`
+### Control-flow features
+- Branches by server/client component boundary, responsive state, component library availability, and i18n/token requirements
+- Reads and writes frontend codebase files
+- May call shadcn registry tools or local verification commands
 
-## 2. Architecture (FSD-lite)
+## Structural Flow
 
-- **Root (`src/`)**: Shared logic (components, lib, types). Hoist common code here.
-- **Feature (`src/features/*/`)**: Feature-specific logic. **No cross-feature imports.** Unidirectional flow only.
+### Entry
+1. Identify target route, component, state boundary, and design-system constraints.
+2. Read existing patterns before adding components or utilities.
+3. Determine whether work belongs in Server Components, Client Components, wrappers, hooks, or styles.
 
-### Feature Directory Structure
+### Scenes
+1. **PREPARE**: Load relevant project conventions, UI requirements, and acceptance criteria.
+2. **ACQUIRE**: Inspect existing components, tokens, i18n keys, APIs, and shadcn availability.
+3. **ACT**: Implement UI, state, styles, validation, and integration.
+4. **VERIFY**: Run checklist, automated checks, and browser/responsive validation when applicable.
+5. **FINALIZE**: Summarize changed UI behavior and verification.
+
+### Transitions
+- If a strict shadcn primitive exists, use or wrap it before creating generic markup.
+- If UI text is user-facing and i18n exists, add strings through the i18n source of truth.
+- If interaction or hooks are needed, mark the boundary as Client Component.
+- If backend contracts are missing, coordinate with backend/API planning.
+
+### Failure and recovery
+- If design tokens or i18n sources are missing, state assumptions and follow existing local patterns.
+- If verification fails, fix before handoff or report the blocker.
+- If required shadcn registry access fails, use existing local components or document fallback.
+
+### Exit
+- Success: UI works across target responsive states and passes relevant checks.
+- Partial success: missing assets, backend contracts, or verification gaps are explicit.
+
+## Logical Operations
+
+### Actions
+| Action | SSL primitive | Evidence |
+|--------|---------------|----------|
+| Inspect existing frontend patterns | `READ` | Components, routes, hooks, styles |
+| Select component and state approach | `SELECT` | Server/client and shadcn workflow |
+| Implement UI code | `WRITE` | TSX, CSS, hooks, wrappers |
+| Validate form/data contracts | `VALIDATE` | Zod/forms/API schemas |
+| Call shadcn or verification tools | `CALL_TOOL` | Registry, lint, typecheck, tests |
+| Compare responsive states | `COMPARE` | Desktop/mobile behavior |
+| Report result | `NOTIFY` | Final summary |
+
+### Tools and instruments
+- React, Next.js, TypeScript, TailwindCSS v4, shadcn/ui
+- `ahooks`, `es-toolkit`, `nuqs`, TanStack Query, Jotai, TanStack React Form, `zod`
+- Lint, typecheck, tests, and browser inspection when applicable
+
+### Canonical workflow path
+```bash
+rg --files
+rg "components/ui|shadcn|use client|generateMetadata|useQuery|i18n|design-tokens" .
 ```
-src/features/[feature]/
-├── components/           # Feature UI components
-│   └── skeleton/         # Loading skeleton components
-├── types/                # Feature-specific type definitions
-└── utils/                # Feature-specific utilities & helpers
-```
 
-### Placement Rules
-- `components/`: React components only. One component per file.
-- `types/`: TypeScript interfaces and type definitions.
-- `utils/`: All feature-specific logic (formatters, validators, helpers). **Requires >90% test coverage** for custom logic.
+Then run the project's frontend verification commands, typically lint, typecheck, tests, and browser/responsive checks when the UI changes.
 
-> **Note**: Feature level does NOT have `lib/` folder. Use `utils/` for all utilities. `lib/` exists only at root `src/lib/` level.
+### Resource scope
+| Scope | Resource target |
+|-------|-----------------|
+| `CODEBASE` | Frontend routes, components, styles, hooks, tests |
+| `LOCAL_FS` | Design tokens, i18n files, resource references |
+| `PROCESS` | Build, lint, typecheck, test, browser commands |
+| `NETWORK` | Backend APIs or registry tools when required |
 
-## 3. Libraries
+### Preconditions
+- Target UI behavior and affected frontend area are identifiable.
+- Required design tokens, i18n, and API contracts are available or assumptions are stated.
+
+### Effects and side effects
+- Mutates frontend source, styles, tests, and possibly i18n keys.
+- May add dependencies or shadcn components only when justified by project conventions.
+- Does not edit `components/ui/*` directly.
+
+### Guardrails
+1. Follow the existing React, Next.js, TypeScript, and FSD-lite architecture in the target project.
+2. Use `shadcn/ui` primitives and wrappers for UI work; treat `components/ui/*` as read-only.
+3. Keep server/client boundaries explicit: Server Components for static/layout work, Client Components for interaction and hooks.
+4. Use project sources of truth for design tokens, i18n strings, and shared utilities before adding local alternatives.
+5. Run the execution checklist before handoff and include relevant verification results.
+6. **Next.js 16 `proxy.ts` is mandatory; `middleware.ts` is BANNED**: this project is Next.js 16+. `middleware.ts` is NOT "deprecated"; it is forbidden, touch it and you die. The canonical request-proxy / auth-gate file is `proxy.ts` (root or `src/`) exporting a `proxy` function. NEVER create, recommend, suggest, or "restore" `middleware.ts`. NEVER flag `proxy.ts` as dead code, unused, or not-wired. Any such finding is a fatal self-error: retract it immediately and write `proxy.ts`.
+
+### Libraries
 
 | Category | Library |
 |----------|---------|
+| Framework | `next@16+` (App Router) + `react@19+`; `next < 16` is BANNED |
 | Date | `luxon` |
 | Styling | `TailwindCSS v4` + `shadcn/ui` |
-| Hooks | `ahooks` (Pre-made hooks preferred) |
-| Utils | `es-toolkit` (First choice) |
+| Hooks | `ahooks` (pre-made hooks preferred) |
+| Utils | `es-toolkit` (first choice) |
 | State (URL) | `nuqs` |
 | State (Server) | `TanStack Query` |
-| State (Client) | `Jotai` (Minimize use) |
+| State (Client) | `Jotai` (minimize use) |
 | Forms | `@tanstack/react-form` + `zod` |
-| Auth | `better-auth` |
+| Auth | `better-auth` (client SDK only; never import server library or database adapters) |
+| Animation | `motion`; import from `motion/react`. `framer-motion` (legacy package name) is BANNED. |
 
-## 4. Standards
+### Shadcn Workflow
 
-- **Utilities**: Check `es-toolkit` first. If implementing custom logic, **>90% Unit Test Coverage** is MANDATORY.
-- **Design Tokens**: Source of Truth is `packages/design-tokens` (OKLCH). Never hardcode colors.
-- **i18n**: Source of Truth is `packages/i18n`. Never hardcode strings.
-
-## 5. Component Strategy
+1. Search: `shadcn_search_items_in_registries`
+2. Review: `shadcn_get_item_examples_from_registries`
+3. Install: `shadcn_get_add_command_for_items`
 
 ### Server vs Client Components
-- **Server Components**: Layouts, Marketing pages, SEO metadata (`generateMetadata`, `sitemap`)
+
+- **Server Components**: Layouts, marketing pages, SEO metadata (`generateMetadata`, `sitemap`)
 - **Client Components**: Interactive features and `useQuery` hooks
 
-### Structure
-- **One Component Per File**
-
-### Naming Conventions
-| Type | Convention |
-|------|------------|
-| Files | `kebab-case.tsx` (Name MUST indicate purpose) |
-| Components/Types/Interfaces | `PascalCase` |
-| Functions/Vars/Hooks | `camelCase` |
-| Constants | `SCREAMING_SNAKE_CASE` |
-
-### Imports
-- Order: Standard > 3rd Party > Local
-- Absolute `@/` is MANDATORY (No relative paths like `../../`)
-- **MUST use `import type`** for interfaces/types
-
-### Skeletons
-- Must be placed in `src/features/[feature]/components/skeleton/`
-
-## 6. UI Implementation (Shadcn/UI)
+### UI Implementation (Shadcn/UI)
 
 - **Usage**: Prefer strict shadcn primitives (`Card`, `Sheet`, `Typography`, `Table`) over `div` or generic classes.
-- **Responsiveness**: Use `Drawer` (Mobile) vs `Dialog` (Desktop) via `useResponsive`.
-- **Customization Rule**: Treat `components/ui/*` as read-only. Do not modify directly.
-  - **Correct**: Create a wrapper (e.g., `components/common/ProductButton.tsx`) or use `cva` composition.
-  - **Incorrect**: Editing `components/ui/button.tsx`.
+- **Responsiveness**: Use `Drawer` (mobile) vs `Dialog` (desktop) via `useResponsive`.
+- **Customization**: Treat `components/ui/*` as read-only. Create wrappers (e.g., `components/common/ProductButton.tsx`) or use `cva` composition. Never edit `components/ui/button.tsx` directly.
 
-## 7. Designer Collaboration
+### Sources of Truth
 
-- **Sync**: Map code variables to Figma layer names.
-- **UX**: Ensure key actions are visible "Above the Fold".
+- **DESIGN.md** (project root): visual system source of truth; read Section 9 (Agent Prompt Guide) verbatim for component prompts when present
+- **Design Tokens**: `packages/design-tokens` (OKLCH); never hardcode colors
+- **i18n strings**: `packages/i18n`; never hardcode UI text
+- **Custom utilities**: check `es-toolkit` first; if implementing custom logic, >90% unit test coverage is mandatory
 
-## How to Execute
+### Designer Collaboration
 
-Follow `resources/execution-protocol.md` step by step.
-See `resources/examples.md` for input/output examples.
-Before submitting, run `resources/checklist.md`.
+- **Sync**: Map code variables to Figma layer names
+- **UX**: Ensure key actions are visible "Above the Fold"
 
-## Review Checklist
+### Stack Reference
 
-- [ ] **A11y**: Interactive elements have `aria-label`. Semantic headings (`h1`-`h6`).
-- [ ] **Mobile**: Functionality verified on mobile viewports.
-- [ ] **Performance**: No CLS, fast load.
-- [ ] **Resilience**: Error Boundaries and Loading Skeletons implemented.
-- [ ] **Tests**: Logic covered by Vitest where complex.
-- [ ] **Quality**: Typecheck and Lint pass.
+Project stack conventions live in dedicated files. **Read these before coding**; they are not optional appendix material.
 
-## Execution Protocol (CLI Mode)
+| File | Owns |
+|---|---|
+| `resources/tech-stack.md` | Framework versions, Next.js 16 `proxy.ts` conventions, Serena shortcuts |
+| `resources/tailwind-rules.md` | Design tokens, focus states, Tailwind v4 `@theme` syntax |
+| `resources/snippets.md` | React 19 hook patterns, TanStack Query/Form, a11y card |
 
-Vendor-specific execution protocols are injected automatically by `oh-my-ag agent:spawn`.
-Source files live under `../_shared/runtime/execution-protocols/{vendor}.md`.
+To extend: add `resources/<name>.md` and append a row above.
 
 ## References
 
+1. Follow `resources/execution-protocol.md` step by step.
+2. Before submitting, run `resources/checklist.md`.
+Vendor-specific execution protocols are injected automatically by `oma agent:spawn`.
+Source files live under `../_shared/runtime/execution-protocols/{vendor}.md`.
+
+- Project frontend rules (MUST load before review/implementation): `../../rules/frontend.md`
 - Execution steps: `resources/execution-protocol.md`
-- Code examples: `resources/examples.md`
-- Code snippets: `resources/snippets.md`
 - Checklist: `resources/checklist.md`
 - Error recovery: `resources/error-playbook.md`
-- Tech stack: `resources/tech-stack.md`
-- Component template: `resources/component-template.tsx`
-- Tailwind rules: `resources/tailwind-rules.md`
 - Context loading: `../_shared/core/context-loading.md`
 - Reasoning templates: `../_shared/core/reasoning-templates.md`
 - Clarification: `../_shared/core/clarification-protocol.md`
 - Context budget: `../_shared/core/context-budget.md`
 - Lessons learned: `../_shared/core/lessons-learned.md`
+- Observability handoff: `../oma-observability/SKILL.md` §Integrations — Core Web Vitals, SSR→client trace propagation, INP profiling
 
 > [!IMPORTANT]
 > Treat `components/ui/*` as read-only. Create wrappers for customization.

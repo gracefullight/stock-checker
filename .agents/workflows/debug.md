@@ -1,13 +1,15 @@
 ---
-description: Structured bug diagnosis and fixing workflow — reproduce, diagnose root cause, apply minimal fix, write regression test, and scan for similar patterns
+name: debug
+description: Structured bug diagnosis and fixing workflow that reproduces, diagnoses root cause, applies a minimal fix, writes regression tests, and scans for similar patterns
+disable-model-invocation: true
 ---
 
-# MANDATORY RULES — VIOLATION IS FORBIDDEN
+# MANDATORY RULES: VIOLATION IS FORBIDDEN
 
-- **Response language follows `language` setting in `.agents/config/user-preferences.yaml` if configured.**
+- **Response language follows `language` setting in `.agents/oma-config.yaml` if configured.**
 - **NEVER skip steps.** Execute from Step 1 in order.
 - **You MUST use MCP tools throughout the workflow.**
-  - Use code analysis tools (`find_symbol`, `find_referencing_symbols`, `search_for_pattern`) for bug investigation — NOT raw file reads or grep.
+  - Use code analysis tools (`find_symbol`, `find_referencing_symbols`, `search_for_pattern`) for bug investigation, NOT raw file reads or grep.
   - Use memory write tool to record debugging results.
   - Memory path: configurable via `memoryConfig.basePath` (default: `.serena/memories`)
   - Tool names: configurable via `memoryConfig.tools` in `mcp.json`
@@ -20,6 +22,10 @@ description: Structured bug diagnosis and fixing workflow — reproduce, diagnos
 Before starting, determine your runtime environment by following `.agents/skills/_shared/core/vendor-detection.md`.
 
 Steps 1-5 execute inline for all vendors. Step 6 (similar pattern scanning) may delegate to a `debug-investigator` subagent when the scan scope is broad.
+
+### L1 Decision Events
+
+Use the `oma_emit` helper documented in `.agents/skills/_shared/runtime/event-spec.md` before required L1 decision checkpoints. The helper wraps `oma state:emit`.
 
 ### Subagent Spawn Criteria
 
@@ -43,13 +49,13 @@ Include diagnosis results and scan scope. Results returned as JSON output.
 #### If Gemini CLI
 
 ```bash
-oh-my-ag agent:spawn debug "scan prompt with diagnosis context" {session_id} -w {workspace}
+oma agent:spawn debug "scan prompt with diagnosis context" {session_id} -w {workspace}
 ```
 
 #### If Antigravity or CLI Fallback
 
 ```bash
-oh-my-ag agent:spawn debug "scan prompt with diagnosis context" {session_id} -w {workspace}
+oma agent:spawn debug "scan prompt with diagnosis context" {session_id} -w {workspace}
 ```
 
 ---
@@ -76,12 +82,19 @@ Use `find_symbol` to identify the exact function and file. Do NOT grep or read f
 ## Step 3: Diagnose Root Cause
 
 Use MCP `find_referencing_symbols` to trace the execution path backward from the error point.
-Identify the root cause — not just the symptom. Check:
+Identify the root cause, not just the symptom. Check:
 - null/undefined access
 - Race conditions
 - Missing error handling
 - Wrong data types
 - Stale state
+
+When the root cause is confirmed, emit and verify the required diagnosis decision:
+
+```bash
+oma_emit "decision.made" '{"subject":"debug.root-cause","decision":"Treat the confirmed root cause as the basis for the minimal fix.","rationale":"The diagnosis traced the failure path and distinguished the root cause from symptoms."}'
+oma state:verify --workflow debug --checkpoint root-cause
+```
 
 ---
 

@@ -6,3 +6,8 @@ dist
 
 # Optimization config (generated at runtime)
 data/config/
+
+# oh-my-agent runtime (local artifacts — do not commit)
+.antigravitycli/
+.agents/results/
+.agents/state/

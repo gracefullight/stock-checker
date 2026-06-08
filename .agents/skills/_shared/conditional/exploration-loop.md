@@ -42,14 +42,14 @@ Hypothesis B: ...
 
 Execute each hypothesis **in isolation**.
 
-**In multi-agent mode** (`/orchestrate`, `/coordinate`):
+**In multi-agent mode** (`/orchestrate`, `/work`):
 - Spawn the **same agent type** (e.g., `backend-engineer`) multiple times with different prompts
 - Each spawn includes the hypothesis context in the task description:
   ```
   Task: "Fix input validation using Hypothesis A: Zod schema at router level.
          Context: Previous attempt (raw regex) failed QA twice."
   ```
-- Agents use existing IDs — no new agent definitions needed
+- Agents use existing IDs; no new agent definitions needed
 - Each agent works in a separate workspace (`-w ./hyp-a`, `-w ./hyp-b`)
 - Result files differentiated by workspace, not agent ID
 
@@ -139,7 +139,7 @@ Agent FAIL after 2 retries
   → Keep winner workspace, discard others
 ```
 
-### In `/coordinate`
+### In `/work`
 
 Triggered when Issue Remediation Loop stalls (same issue persists after fix):
 

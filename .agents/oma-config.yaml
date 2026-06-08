@@ -1,0 +1,14 @@
+# Migrated by oma migration 008 — model_preset single-file config
+language: en
+date_format: ISO
+timezone: Asia/Seoul
+model_preset: claude
+vendors:
+  - claude
+  - codex
+  - copilot
+  - cursor
+  - grok
+  - kiro
+  - qwen
+  - antigravity

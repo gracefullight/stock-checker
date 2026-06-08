@@ -1,10 +1,12 @@
 ---
-description: Initialize project harness — AGENTS.md as table of contents, ARCHITECTURE.md as domain map, structured docs/ knowledge base
+name: deepinit
+description: Initialize project harness with AGENTS.md as table of contents, ARCHITECTURE.md as domain map, and a structured docs/ knowledge base
+disable-model-invocation: true
 ---
 
-# MANDATORY RULES — VIOLATION IS FORBIDDEN
+# MANDATORY RULES: VIOLATION IS FORBIDDEN
 
-- **Response language follows `language` setting in `.agents/config/user-preferences.yaml` if configured.**
+- **Response language follows `language` setting in `.agents/oma-config.yaml` if configured.**
 - **NEVER skip steps.** Execute from Step 0 in order. Explicitly report completion of each step before proceeding.
 - **You MUST use MCP tools throughout the entire workflow.** This is NOT optional.
   - Use code analysis tools (`get_symbols_overview`, `find_symbol`, `search_for_pattern`, `list_dir`) for code exploration.
@@ -28,12 +30,12 @@ A short AGENTS.md (~100 lines) serves as a map with pointers to deeper sources o
 
 Three categories of documentation:
 
-1. **Maps** — ARCHITECTURE.md, system topology, domain boundaries
-2. **Execution Plans** — active work, completed work, tech debt tracking
-3. **Design Specifications** — indexed architectural decisions, core beliefs, product specs
+1. **Maps**: ARCHITECTURE.md, system topology, domain boundaries
+2. **Plans**: active and completed work plans (status field tracked per file), tech debt tracking
+3. **Design Specifications**: indexed architectural decisions, core beliefs, product specs
 
 Agents can discover file listings and directory structures via tools.
-What agents CANNOT discover from code alone — and what the harness must provide:
+What agents CANNOT discover from code alone, and what the harness must provide:
 
 - Why architectural decisions were made
 - Which patterns are forbidden and why
@@ -53,10 +55,12 @@ docs/
 │   ├── index.md
 │   ├── core-beliefs.md             ← agent-first operating principles
 │   └── {decision-name}.md
-├── exec-plans/                     ← execution plans as first-class artifacts
-│   ├── active/                     ← in-progress work
-│   ├── completed/                  ← finished plans (preserved for context)
-│   └── tech-debt-tracker.md        ← known debt with priority and rationale
+├── plans/                          ← plan artifacts (local working notes; gitignored)
+│   ├── designs/                    ← permanent design references (Status: Approved/Draft)
+│   │   └── {NNN}-{name}.md
+│   └── work/                       ← execution plans (Status: Active/Completed)
+│       ├── {NNN}-{name}.md
+│       └── tech-debt-tracker.md    ← known debt with priority and rationale
 ├── generated/                      ← auto-generated docs (DB schema, API specs, etc.)
 │   └── db-schema.md
 ├── product-specs/                  ← product specifications
@@ -81,7 +85,7 @@ Not all files are required. Generate only what is **discoverable and relevant** 
 ## Step 0: Preparation
 
 1. Read `.agents/skills/oma-coordination/SKILL.md` and confirm Core Rules.
-2. Check if `AGENTS.md`, `ARCHITECTURE.md`, or `docs/` already exists — if so, this is an **update run** (see Step 6).
+2. Check if `AGENTS.md`, `ARCHITECTURE.md`, or `docs/` already exists. If so, this is an **update run** (see Step 6).
 
 ---
 
@@ -100,19 +104,19 @@ Not all files are required. Generate only what is **discoverable and relevant** 
    - Naming conventions in use
    - Test organization strategy
 
-3. **Identify implicit rules** — patterns consistently followed but not documented:
+3. **Identify implicit rules** (patterns consistently followed but not documented):
    - Import restrictions, export patterns
    - Error handling conventions
    - State management approach
    - Code organization patterns per domain
 
-4. **Assess domains** — which areas of the codebase need domain-specific guidance:
+4. **Assess domains** (which areas of the codebase need domain-specific guidance):
    - Frontend, backend, mobile, infra, etc.
    - Design system, product flows
    - Security-sensitive areas
    - Reliability-critical paths
 
-5. **Detect boundaries** — where boundary `AGENTS.md` files are needed:
+5. **Detect boundaries** (where boundary `AGENTS.md` files are needed):
    - Root (always)
    - Each package/app in monorepo
    - Major architectural boundaries
@@ -151,30 +155,30 @@ Generate only the files that are **relevant and discoverable** from the codebase
 
 **Indexed, verified architectural decisions.**
 
-- **`index.md`** — catalogue of all design docs with status (draft/verified/superseded)
-- **`core-beliefs.md`** — agent-first operating principles for this project. What defines how work is done here. Examples:
+- **`index.md`**: catalogue of all design docs with status (draft/verified/superseded)
+- **`core-beliefs.md`**: agent-first operating principles for this project. What defines how work is done here. Examples:
   - "Agents write all code; humans review and set direction"
   - "Every change must be verifiable by CI alone"
   - "Prefer explicit over implicit; no magic"
-- **`{decision-name}.md`** — individual architectural decisions with context, options considered, rationale, and consequences
+- **`{decision-name}.md`**: individual architectural decisions with context, options considered, rationale, and consequences
 
-### `docs/exec-plans/`
+### `docs/plans/`
 
-**Execution plans as first-class artifacts.**
+**Structured plan artifacts (local working notes; `docs/plans/` is gitignored).**
 
-Complex work is captured in execution plans with progress and decision logs, checked into the repository.
+Folder = type. Status field = lifecycle. Filenames use a 3-digit zero-padded sequential prefix per folder.
 
-- **`active/`** — currently in-progress plans
-- **`completed/`** — finished plans preserved for context and reference
-- **`tech-debt-tracker.md`** — known tech debt with priority, rationale, and proposed resolution
+- **`designs/{NNN}-{name}.md`**: permanent design references (architecture, API specs, tradeoffs)
+- **`work/{NNN}-{name}.md`**: execution plans with progress, decision log, and `Status` header (`Active` → `Completed`)
+- **`work/tech-debt-tracker.md`**: known tech debt with priority, rationale, and proposed resolution
 
-Initially: create directory structure + tech-debt-tracker.md with any debt discovered in Step 1.
+Initially: create `designs/` and `work/` subdirectories + `work/tech-debt-tracker.md` with any debt discovered in Step 1.
 
 ### `docs/generated/`
 
 **Auto-generated documentation.**
 
-- Database schemas, API specs, dependency graphs — anything derivable from code that is expensive to re-derive.
+- Database schemas, API specs, dependency graphs (anything derivable from code that is expensive to re-derive).
 - Mark each file with generation method and timestamp.
 - Initially: create directory. Populate only if generation sources exist (e.g., Prisma schema → db-schema.md).
 
@@ -182,8 +186,8 @@ Initially: create directory structure + tech-debt-tracker.md with any debt disco
 
 **Product specifications.**
 
-- **`index.md`** — catalogue of product specs
-- **`{feature-name}.md`** — user-facing feature specs with acceptance criteria
+- **`index.md`**: catalogue of product specs
+- **`{feature-name}.md`**: user-facing feature specs with acceptance criteria
 - Initially: create directory + index.md. Populate from discovered product-facing code.
 
 ### `docs/references/`
@@ -202,7 +206,7 @@ Generate only those relevant to the project:
 |------|-----------------|---------|
 | `DESIGN.md` | Project has UI/design system | Design system principles, component patterns, visual language |
 | `FRONTEND.md` | Project has frontend | Frontend architecture, rendering strategy, state management, routing |
-| `PLANS.md` | Always | Planning process conventions, how to write exec-plans, template |
+| `PLANS.md` | Always | Planning process conventions, how to write plans, template |
 | `PRODUCT-SENSE.md` | User-facing product | Product thinking, user mental models, prioritization framework |
 | `QUALITY-SCORE.md` | Always | Quality grades per domain/layer with gap tracking over time |
 | `RELIABILITY.md` | Has backend/infra | Reliability standards, SLOs, error budgets, incident response |
@@ -228,7 +232,7 @@ Reference this file from AGENTS.md so review agents load it automatically.
 - Write **only what was discovered** in Step 1. Do not fabricate rules.
 - If a pattern is unclear, note it as "observed but unconfirmed" for human review.
 - Mark sections needing human input with `<!-- TODO: confirm this rule -->`.
-- Keep each file focused — one concern per file.
+- Keep each file focused on one concern per file.
 - Use concrete examples from the actual codebase.
 
 ---
@@ -249,7 +253,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full domain map.
 
 ## Documentation
 - [Design Docs](docs/design-docs/index.md) — architectural decisions and core beliefs
-- [Execution Plans](docs/exec-plans/) — active and completed work plans
+- [Plans](docs/plans/) — design references (`designs/`) and execution plans (`work/`)
 - [Product Specs](docs/product-specs/index.md) — feature specifications
 - [References](docs/references/) — external library docs for LLMs
 
@@ -264,7 +268,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full domain map.
 - [Quality Score](docs/QUALITY-SCORE.md) — per-domain quality grades
 - [Code Review](docs/CODE-REVIEW.md) — review standards and checklist
 - [Plans](docs/PLANS.md) — planning conventions
-- [Tech Debt](docs/exec-plans/tech-debt-tracker.md) — known debt tracker
+- [Tech Debt](docs/plans/work/tech-debt-tracker.md) — known debt tracker
 - [Product Sense](docs/PRODUCT-SENSE.md) — product thinking framework
 
 ## Project Structure
@@ -281,7 +285,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full domain map.
 
 - **No file listings.** Agents can `list_dir`.
 - **Every line should point somewhere or state a rule.** No filler.
-- Only list docs that were actually generated — no dead links.
+- Only list docs that were actually generated. No dead links.
 
 ---
 
@@ -321,32 +325,24 @@ Only at **package/app boundaries** in monorepos.
 ### Rules
 
 - **Max 50 lines.** Point to `docs/` for details.
-- Content must be **specific to this boundary** — don't repeat root-level rules.
+- Content must be **specific to this boundary**. Don't repeat root-level rules.
 
 ---
 
-## Step 6: Update Existing Harness (If Applicable)
+## Step 6: Verify After Updates (Delegated)
 
-If `AGENTS.md`, `ARCHITECTURE.md`, or `docs/` already exists:
+This step is now handled by `oma-docs`. After deepinit completes, the user can run:
 
-1. **Re-analyze** codebase (Step 1) to detect changes since last generation.
-2. **Compare** existing docs against current code reality:
-   - Are documented rules still followed?
-   - Are there new patterns that emerged but aren't documented?
-   - Are there referenced files/dirs that no longer exist?
-   - Has quality improved or degraded? (update QUALITY-SCORE.md)
-3. **Preserve** all `<!-- MANUAL: -->` blocks exactly.
-4. **Preserve** all `<!-- TODO: -->` markers that haven't been resolved.
-5. **Update** factual content (structure changes, new boundaries, new domains).
-6. **Flag** potential stale rules: `<!-- REVIEW: this rule may be outdated -->`.
-7. **Move** completed exec-plans from `active/` to `completed/`.
-8. Report all changes to the user.
+- `/oma-docs verify`: check generated harness docs against the current codebase.
+- Set `docs.auto_verify: true` in `oma-config.yaml` to run verify automatically at the end of `/scm`, `/work`, and `/ultrawork` workflows.
+
+deepinit no longer detects drift on update runs; it only generates 0→1 bootstrap content. The legacy `<!-- REVIEW: this rule may be outdated -->` marker behavior is replaced by the broken-ref report from `oma-docs verify`.
 
 ---
 
 ## Step 7: Validate
 
-1. All files referenced in AGENTS.md actually exist — no dead links.
+1. All files referenced in AGENTS.md actually exist (no dead links).
 2. All `<!-- Parent: -->` references in boundary AGENTS.md resolve correctly.
 3. ARCHITECTURE.md is consistent with actual package/module structure.
 4. No `docs/` file contains information agents can derive from code (file listings, symbol enumerations).

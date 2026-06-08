@@ -284,25 +284,25 @@
 
 ## Issue Prioritization
 
-### 🔴 CRITICAL (Block Deployment)
+### CRITICAL (Block Deployment)
 - Security vulnerabilities (SQL injection, XSS, auth bypass)
 - Data loss bugs
 - Application crashes
 - Complete feature breakage
 
-### 🟠 HIGH (Fix Before Launch)
+### HIGH (Fix Before Launch)
 - Performance issues (> 5s load time)
 - Major accessibility violations
 - Missing auth checks
 - Broken core functionality
 
-### 🟡 MEDIUM (Fix in Sprint)
+### MEDIUM (Fix in Sprint)
 - Minor bugs
 - Code quality issues
 - Missing tests
 - Minor accessibility issues
 
-### 🔵 LOW (Backlog)
+### LOW (Backlog)
 - Refactoring opportunities
 - Performance optimizations
 - Nice-to-have features
@@ -314,7 +314,25 @@
 
 - Run automated tools FIRST: `npm audit`, `bandit`, `lighthouse`
 - Use Serena MCP for code analysis patterns
-- Use Antigravity Browser for E2E testing
+- Use Chrome DevTools MCP (`new_page` with `isolatedContext: "qa-test"`) for runtime verification and E2E testing
 - Document all findings with file:line references
 - Provide remediation code examples
 - Estimate fix time for each issue
+
+---
+
+## Runtime Verification (after static review)
+
+Record results in the structured table format defined in `execution-protocol.md` Step 2.5 (Recording Results).
+
+- [ ] Application starts without errors
+- [ ] All modified endpoints return expected status codes; verify with `list_network_requests()`
+- [ ] Form submissions produce correct database state; verify with `fill_form()` + `list_network_requests()`
+- [ ] Error states render user-friendly messages (not stack traces); verify with `take_snapshot()` on error paths
+- [ ] Empty/loading/error UI states all handled; verify with `navigate_page()` to empty state routes + `take_snapshot()`
+- [ ] Interactive elements respond to input (not display-only); verify with `click(uid)` + `take_snapshot()` before/after
+- [ ] Auth flows work end-to-end (register → login → protected route → logout); verify with sequential `fill()` + `click()` + `list_network_requests()`
+- [ ] Rate limiting / throttling triggers at configured thresholds; verify with rapid `evaluate_script(fetch)` calls
+- [ ] File upload/download actually transfers data (not stubbed); verify with `upload_file(uid, filePath)` + response check
+- [ ] Pagination returns correct pages (not always page 1); verify with `click()` page 2 + `take_snapshot()` to confirm different content
+- [ ] Zero JS console errors on critical paths; verify with `list_console_messages(types: ["error"])`

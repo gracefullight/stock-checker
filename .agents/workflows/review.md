@@ -1,10 +1,12 @@
 ---
-description: Full QA review pipeline — security audit (OWASP Top 10), performance analysis, accessibility check (WCAG 2.1 AA), and code quality review
+name: review
+description: Full QA review pipeline covering security audit (OWASP Top 10), performance analysis, accessibility check (WCAG 2.1 AA), and code quality review
+disable-model-invocation: true
 ---
 
-# MANDATORY RULES — VIOLATION IS FORBIDDEN
+# MANDATORY RULES: VIOLATION IS FORBIDDEN
 
-- **Response language follows `language` setting in `.agents/config/user-preferences.yaml` if configured.**
+- **Response language follows `language` setting in `.agents/oma-config.yaml` if configured.**
 - **NEVER skip steps.** Execute from Step 1 in order.
 - **You MUST use MCP tools throughout the workflow.**
   - Use code analysis tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) for code analysis and review.
@@ -19,6 +21,10 @@ description: Full QA review pipeline — security audit (OWASP Top 10), performa
 
 Before starting, determine your runtime environment by following `.agents/skills/_shared/core/vendor-detection.md`.
 The detected vendor determines how the QA agent is spawned (Step 7).
+
+### L1 Decision Events
+
+Use the `oma_emit` helper documented in `.agents/skills/_shared/runtime/event-spec.md` before required L1 decision checkpoints. The helper wraps `oma state:emit`.
 
 ---
 
@@ -92,6 +98,13 @@ Compile all findings into a prioritized report:
 Each finding must include: `file:line`, description, and remediation code.
 Use memory write tool to record the final report.
 
+After severity classification is complete, emit and verify the required review decision:
+
+```bash
+oma_emit "decision.made" '{"subject":"review.severity-classification","decision":"Use the classified finding severities for the QA report and follow-up routing.","rationale":"Findings have been reviewed and assigned CRITICAL/HIGH/MEDIUM/LOW severity with remediation context."}'
+oma state:verify --workflow review --checkpoint severity-classification
+```
+
 ---
 
 ## Agent Delegation: Spawn QA Agent
@@ -107,7 +120,7 @@ Request parallel subagent execution with the review scope and standards.
 
 ### If Gemini CLI or Antigravity or CLI Fallback
 ```bash
-oh-my-ag agent:spawn qa-agent "Review files for security, performance, accessibility, and code quality. Follow .agents/skills/oma-qa/SKILL.md standards. Report as CRITICAL/HIGH/MEDIUM/LOW with file:line and remediation." session-id
+oma agent:spawn qa-agent "Review files for security, performance, accessibility, and code quality. Follow .agents/skills/oma-qa/SKILL.md standards. Report as CRITICAL/HIGH/MEDIUM/LOW with file:line and remediation." session-id
 ```
 
 ---
@@ -129,8 +142,8 @@ When user wants fixes too, execute review then fix then re-review loop:
 
 ### If Gemini CLI or Antigravity or CLI Fallback
      ```bash
-     oh-my-ag agent:spawn backend "Fix issues: [issues]" session-id -w ./backend &
-     oh-my-ag agent:spawn frontend "Fix issues: [issues]" session-id -w ./frontend &
+     oma agent:spawn backend "Fix issues: [issues]" session-id -w ./backend &
+     oma agent:spawn frontend "Fix issues: [issues]" session-id -w ./frontend &
      wait
      ```
 

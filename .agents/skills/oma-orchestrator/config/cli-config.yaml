@@ -1,8 +1,8 @@
 # SubAgent CLI Configuration
 # Select your preferred CLI vendor for sub-agent execution
 
-# Default CLI vendor (used as fallback when user-preferences.yaml is not configured)
-# For per-agent CLI mapping, see: .agents/config/user-preferences.yaml
+# Default CLI vendor (used as fallback when oma-config.yaml is not configured)
+# For per-agent CLI mapping, see: .agents/oma-config.yaml
 active_vendor: gemini
 
 # Vendor configurations
@@ -40,11 +40,9 @@ vendors:
     output_format_flag: "--json"
     auto_approve_flag: "--full-auto"
     model_flag: "-m"
-    default_model: "gpt-5.3-codex"
-    # Environment variable for isolation
-    isolation_env: "CODEX_HOME=/tmp/codex-subagent-$$"
+    default_model: "gpt-5.5"
     response_jq: ".response"
-    isolation_method: "env"
+    isolation_method: "directory"
 
   qwen:
     command: qwen
@@ -53,8 +51,42 @@ vendors:
     output_format: "json"
     auto_approve_flag: "--yolo"
     model_flag: "-m"
-    default_model: "qwen3-coder-plus"
+    default_model: "qwen3.6-plus"
     response_jq: ".output"
+    isolation_method: "directory"
+
+  # Cursor Agent headless CLI: `cursor agent -p …` (--print). Prompt is positional.
+  # Models: run `cursor agent models` (legacy fallback: `cursor agent --list-models`).
+  # `auto` lets Cursor route to an available model (quota-friendly); pin to a specific
+  # id (e.g. composer-2.5, composer-2.5-fast) for reproducibility.
+  cursor:
+    command: cursor
+    prompt_flag: none
+    output_format_flag: "--output-format"
+    output_format: "json"
+    auto_approve_flag: "--yolo"
+    model_flag: "--model"
+    default_model: "auto"
+    isolation_method: "directory"
+
+  # Kiro CLI headless: `kiro-cli chat --no-interactive --trust-all-tools [--model …] "<prompt>"`.
+  # Models: AWS Bedrock IDs (e.g. anthropic.claude-sonnet-4-5-20251001-v1:0).
+  # Use "auto" to let Kiro select the model based on its own configuration.
+  kiro:
+    command: kiro-cli
+    prompt_flag: none
+    auto_approve_flag: "--trust-all-tools"
+    model_flag: "--model"
+    default_model: "auto"
+    isolation_method: "directory"
+
+  # pi headless print mode: `pi [--model …] -p "<prompt>"`.
+  # Model accepts any pi model pattern/alias, including thinking suffixes.
+  pi:
+    command: pi
+    prompt_flag: "-p"
+    model_flag: "--model"
+    default_model: "sonnet:high"
     isolation_method: "directory"
 
 # SubAgent execution settings
