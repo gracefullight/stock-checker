@@ -1,25 +1,10 @@
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { IndicatorRow } from '@/components/indicator-row';
 import { PatternList } from '@/components/pattern-list';
 import { ScoreBar } from '@/components/score-bar';
 import { SignalBadge } from '@/components/signal-badge';
+import { TickerCharts } from '@/components/ticker-charts';
 import { getTickerDetail } from '@/lib/api';
-
-const CandlestickChart = dynamic(
-  () => import('@/components/candlestick-chart').then((m) => m.CandlestickChart),
-  { ssr: false, loading: () => <div className="h-[400px] bg-[var(--surface)] animate-pulse" /> }
-);
-
-const ProbabilityChart = dynamic(
-  () => import('@/components/probability-chart').then((m) => m.ProbabilityChart),
-  { ssr: false }
-);
-
-const IndicatorGauge = dynamic(
-  () => import('@/components/indicator-gauge').then((m) => m.IndicatorGauge),
-  { ssr: false }
-);
 
 interface PageProps {
   params: Promise<{ ticker: string }>;
@@ -122,9 +107,17 @@ export default async function TickerDetailPage({ params }: PageProps) {
         )}
       </div>
 
-      {/* Price chart */}
+      {/* Price chart + signal charts */}
       <Section title="PRICE CHART">
-        <CandlestickChart ticker={symbol} days={180} />
+        <TickerCharts
+          ticker={symbol}
+          buyProbability={data.buyProbability}
+          sellProbability={data.sellProbability}
+          holdProbability={data.holdProbability}
+          confidence={data.confidence}
+          rsi={data.rsi}
+          stochasticK={data.stochasticK}
+        />
       </Section>
 
       {/* 2-column grid */}
@@ -199,42 +192,6 @@ export default async function TickerDetailPage({ params }: PageProps) {
             </table>
           </Section>
 
-          {/* Signal analysis */}
-          {data.buyProbability !== undefined &&
-            data.sellProbability !== undefined &&
-            data.holdProbability !== undefined && (
-              <Section title="SIGNAL ANALYSIS">
-                <ProbabilityChart
-                  buyProbability={data.buyProbability}
-                  sellProbability={data.sellProbability}
-                  holdProbability={data.holdProbability}
-                />
-                {data.confidence !== undefined && (
-                  <div className="mt-2 text-center font-mono text-[10px] text-[var(--text-secondary)]">
-                    CONFIDENCE{' '}
-                    <span className="text-[var(--text-primary)]">{data.confidence}</span>
-                  </div>
-                )}
-              </Section>
-            )}
-
-          {/* Oscillator gauges */}
-          <Section title="OSCILLATORS">
-            <div className="flex justify-around py-2">
-              <IndicatorGauge
-                label="RSI"
-                value={data.rsi}
-                oversoldThreshold={30}
-                overboughtThreshold={70}
-              />
-              <IndicatorGauge
-                label="STOCH K"
-                value={data.stochasticK}
-                oversoldThreshold={20}
-                overboughtThreshold={80}
-              />
-            </div>
-          </Section>
         </div>
       </div>
 

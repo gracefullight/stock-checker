@@ -35,9 +35,10 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 /**
  * GET /api/screener?tickers=AAPL,TSLA,NVDA
  */
-export function getScreener(tickers: string[]): Promise<TickerResult[]> {
+export async function getScreener(tickers: string[]): Promise<TickerResult[]> {
   const params = new URLSearchParams({ tickers: tickers.join(',') });
-  return apiFetch<TickerResult[]>(`/api/screener?${params.toString()}`);
+  const res = await apiFetch<{ results: TickerResult[] }>(`/api/screener?${params.toString()}`);
+  return res.results;
 }
 
 /**

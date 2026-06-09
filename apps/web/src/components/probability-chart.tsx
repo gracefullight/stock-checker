@@ -16,9 +16,9 @@ const SLICES = [
 
 export function ProbabilityChart({ buyProbability, sellProbability, holdProbability }: Props) {
   const data = [
-    { name: 'BUY', value: Math.round(buyProbability * 100) },
-    { name: 'SELL', value: Math.round(sellProbability * 100) },
-    { name: 'HOLD', value: Math.round(holdProbability * 100) },
+    { name: 'BUY', value: Math.round(buyProbability) },
+    { name: 'SELL', value: Math.round(sellProbability) },
+    { name: 'HOLD', value: Math.round(holdProbability) },
   ];
 
   const dominant = data.reduce((a, b) => (a.value >= b.value ? a : b));
