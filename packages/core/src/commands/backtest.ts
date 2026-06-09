@@ -49,6 +49,8 @@ interface WinRateResult {
   rewardRisk: number;
   monthlyBreakdown: Record<string, { wins: number; total: number }>;
   signalsPerMonth: number;
+  /** Average bars held per trade (fixed 5 for the 5-day metric). */
+  avgHoldBars: number;
 }
 
 function buildIndicatorsAtBar(
@@ -360,6 +362,7 @@ function measure5DayWinRate(
     rewardRisk: avgLoss > 0 ? avgWin / avgLoss : 0,
     monthlyBreakdown: monthly,
     signalsPerMonth: total / monthCount,
+    avgHoldBars: 5,
   };
 }
 
@@ -378,6 +381,7 @@ function measureTrendHoldWinRate(
   const stopPct = opts.stopPct ?? 8;
   const gcCache = new Map<string, ReturnType<typeof gaussianChannel>['series']>();
 
+  let holdBarsTotal = 0;
   let wins = 0;
   let total = 0;
   const returns: number[] = [];
@@ -399,17 +403,21 @@ function measureTrendHoldWinRate(
     const entry = sig.close;
     const stop = entry * (1 - stopPct / 100);
     const lastK = Math.min(idx + maxHold, prices.length - 1);
+    let exitBar = lastK;
     let exitPrice = prices[lastK].close;
     for (let k = idx + 1; k <= lastK; k++) {
       if (prices[k].close <= stop) {
         exitPrice = prices[k].close;
+        exitBar = k;
         break;
       }
       if (series[k].direction === 'down') {
         exitPrice = prices[k].close;
+        exitBar = k;
         break;
       }
     }
+    holdBarsTotal += exitBar - idx;
 
     const ret = ((exitPrice - entry) / entry) * 100;
     returns.push(ret);
@@ -442,6 +450,7 @@ function measureTrendHoldWinRate(
     rewardRisk: avgLoss > 0 ? avgWin / avgLoss : 0,
     monthlyBreakdown: monthly,
     signalsPerMonth: total / monthCount,
+    avgHoldBars: total > 0 ? holdBarsTotal / total : 0,
   };
 }
 
@@ -666,6 +675,29 @@ export async function backtest() {
   console.log(`  Win rate:    ${(v6Result.winRate5d - v5Result.winRate5d).toFixed(1)}pp`);
   console.log(`  Avg return:  ${(v6Result.avgReturn - v5Result.avgReturn).toFixed(2)}pp`);
   console.log(`  R/R ratio:   ${(v6Result.rewardRisk - v5Result.rewardRisk).toFixed(2)}`);
+
+  // Per-bar normalized return — apples-to-apples vs the fixed 5-day horizon.
+  const v5PerBar = v5Result.avgReturn / v5Result.avgHoldBars;
+  const v6PerBar = v6Result.avgHoldBars > 0 ? v6Result.avgReturn / v6Result.avgHoldBars : 0;
+  console.log('\nPer-bar return (normalized for holding period):');
+  console.log(`  V5 (hold ${v5Result.avgHoldBars.toFixed(1)} bars): ${v5PerBar.toFixed(3)}%/bar`);
+  console.log(`  V6 (hold ${v6Result.avgHoldBars.toFixed(1)} bars): ${v6PerBar.toFixed(3)}%/bar`);
+
+  // Robustness — is V6's edge regime-dependent (only the 2023-26 bull)? Split by entry year.
+  console.log('\nV6 trend-hold robustness by entry year:');
+  console.log(
+    `${'Year'.padEnd(6)} | ${'Signals'.padStart(7)} | ${'WinRate'.padStart(7)} | ${'AvgRet'.padStart(7)} | ${'PerBar'.padStart(7)} | ${'R/R'.padStart(5)} | ${'Hold'.padStart(5)}`
+  );
+  for (const yr of ['2023', '2024', '2025', '2026']) {
+    const sub = v5Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+    if (sub.length === 0) continue;
+    const r = measureTrendHoldWinRate(sub, priceData);
+    const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
+    console.log(
+      `${yr.padEnd(6)} | ${String(r.totalSignals).padStart(7)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
+    );
+  }
+
   console.log('\nDelta (V4 - V2 baseline):');
   console.log(`  Win rate:    ${(v4Result.winRate5d - v2Result.winRate5d).toFixed(1)}pp`);
   console.log(
