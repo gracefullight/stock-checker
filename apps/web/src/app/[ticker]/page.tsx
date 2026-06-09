@@ -171,7 +171,7 @@ export default async function TickerDetailPage({ params }: PageProps) {
                 <ScoreBar value={data.score} />
               </div>
               <div className="text-xs font-mono text-muted-foreground">
-                THRESHOLD: <span className="text-foreground">BUY &gt;280 / SELL &lt;200</span>
+                THRESHOLD: <span className="text-foreground">BUY &gt;200 / SELL &lt;130</span>
               </div>
             </div>
           </Section>
