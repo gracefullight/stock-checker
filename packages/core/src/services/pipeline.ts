@@ -241,22 +241,34 @@ export function evaluateSignal(params: {
       const ibs = range > 0 ? (close - bar.low) / range : 0.5;
       const atrPct = close > 0 ? (indicators.atr / close) * 100 : 0;
       const volR = indicators.volumeRatio;
+      const rsOk =
+        q.rsMin === undefined ||
+        (instResult.components.rsSpy >= q.rsMin && instResult.components.rsSector >= q.rsMin);
+      const pullbackOk = !q.requireBelowSma50 || close < indicators.sma50;
       const qualified =
         ibs < q.ibsMax &&
         atrPct < q.atrPctMax &&
         volR > q.volRMin &&
         volR < q.volRMax &&
-        (q.scoreMax === undefined || buyScore < q.scoreMax);
+        (q.scoreMax === undefined || buyScore < q.scoreMax) &&
+        rsOk &&
+        pullbackOk;
       if (!qualified) {
-        return makeHold(
-          ticker,
-          buyScore,
-          sellScore,
-          trendResult,
-          HOLD_CONFLUENCE,
-          HOLD_REVERSAL,
-          instResult
-        );
+        // Setup consumed: the score fired and the quality judgment is made once.
+        // Callers should record this date in their cluster window so the same
+        // deteriorating cluster cannot re-trigger on later (worse) bars.
+        return {
+          ...makeHold(
+            ticker,
+            buyScore,
+            sellScore,
+            trendResult,
+            HOLD_CONFLUENCE,
+            HOLD_REVERSAL,
+            instResult
+          ),
+          qualityBlocked: true,
+        };
       }
     }
 

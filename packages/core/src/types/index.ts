@@ -240,6 +240,18 @@ export interface PipelineConfig {
      * with buyScore ≥ scoreMax is downgraded to HOLD. Undefined = no cap.
      */
     scoreMax?: number;
+    /**
+     * Leader filter (essay #1: 상대강도 — leaders fall less, rise first). Requires
+     * BOTH institutional rsSpy and rsSector component gradients ≥ rsMin, i.e. the
+     * name is outperforming the market AND its sector. Undefined = off.
+     */
+    rsMin?: number;
+    /**
+     * Pullback filter (essay #1: buy leaders on weakness, not extension). When
+     * true, the entry bar's close must be BELOW the 50-day SMA — a pullback
+     * within a (Gaussian-confirmed) uptrend rather than a chase. Undefined/false = off.
+     */
+    requireBelowSma50?: boolean;
   };
   institutional: InstitutionalConfig;
 }
@@ -257,4 +269,12 @@ export interface PipelineResult {
     institutional: InstitutionalScore;
   };
   confidence: number;
+  /**
+   * True when a score-qualified BUY was downgraded to HOLD by the entry-quality
+   * gate. Callers managing a cluster window should treat this as "setup
+   * consumed": the setup fired and was judged once — later bars of the same
+   * deteriorating cluster must not re-trigger (a pullback that keeps closing
+   * weak for days is a breakdown, not an entry).
+   */
+  qualityBlocked?: boolean;
 }

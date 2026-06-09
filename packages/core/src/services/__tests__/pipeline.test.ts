@@ -414,6 +414,7 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
       avgDailyDollarVol: 0,
     });
     expect(result.finalDecision).toBe('BUY');
+    expect(result.qualityBlocked).toBeUndefined();
   });
 
   it('downgrades BUY to HOLD when the entry bar fails the quality gate', () => {
@@ -443,5 +444,8 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
     expect(result.finalDecision).toBe('HOLD');
     // Blocked by the quality gate, not by trend/score — the trend gate still passed.
     expect(result.gateResults.trend.passed).toBe(true);
+    // Setup-consumed marker: callers must record this date in their cluster
+    // window so the same deteriorating setup cannot re-trigger on later bars.
+    expect(result.qualityBlocked).toBe(true);
   });
 });

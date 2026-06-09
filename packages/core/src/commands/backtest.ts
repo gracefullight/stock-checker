@@ -183,6 +183,82 @@ const TICKER_SECTOR_ETF: Record<string, string> = {
   BE: 'XLI',
   // Real Estate
   OPEN: 'XLRE',
+  // --- Diversified expansion (broader, less tech-skewed universe) ---
+  // Technology
+  ORCL: 'XLK',
+  ADBE: 'XLK',
+  NOW: 'XLK',
+  INTU: 'XLK',
+  IBM: 'XLK',
+  TXN: 'XLK',
+  AMAT: 'XLK',
+  LRCX: 'XLK',
+  KLAC: 'XLK',
+  ANET: 'XLK',
+  CSCO: 'XLK',
+  ACN: 'XLK',
+  // Communication Services
+  DIS: 'XLC',
+  TMUS: 'XLC',
+  // Consumer Discretionary
+  HD: 'XLY',
+  NKE: 'XLY',
+  MCD: 'XLY',
+  SBUX: 'XLY',
+  LOW: 'XLY',
+  TJX: 'XLY',
+  BKNG: 'XLY',
+  GM: 'XLY',
+  // Consumer Staples
+  PG: 'XLP',
+  KO: 'XLP',
+  PEP: 'XLP',
+  COST: 'XLP',
+  WMT: 'XLP',
+  // Financials
+  JPM: 'XLF',
+  BAC: 'XLF',
+  GS: 'XLF',
+  MS: 'XLF',
+  V: 'XLF',
+  MA: 'XLF',
+  AXP: 'XLF',
+  BLK: 'XLF',
+  // Health Care
+  UNH: 'XLV',
+  JNJ: 'XLV',
+  LLY: 'XLV',
+  ABBV: 'XLV',
+  MRK: 'XLV',
+  PFE: 'XLV',
+  TMO: 'XLV',
+  ABT: 'XLV',
+  // Industrials
+  CAT: 'XLI',
+  DE: 'XLI',
+  BA: 'XLI',
+  HON: 'XLI',
+  UPS: 'XLI',
+  GE: 'XLI',
+  LMT: 'XLI',
+  RTX: 'XLI',
+  UNP: 'XLI',
+  // Energy
+  XOM: 'XLE',
+  CVX: 'XLE',
+  COP: 'XLE',
+  SLB: 'XLE',
+  // Utilities
+  NEE: 'XLU',
+  DUK: 'XLU',
+  SO: 'XLU',
+  // Materials
+  LIN: 'XLB',
+  FCX: 'XLB',
+  NUE: 'XLB',
+  // Real Estate
+  PLD: 'XLRE',
+  AMT: 'XLRE',
 };
 
 function alignBenchmark(bench: BenchmarkCandle[], data: { date: Date }[]): number[] {
@@ -481,7 +557,10 @@ function runSignalsWithContext(
       gaussianPoint: gaussianSeries[i],
     });
 
-    if (result.finalDecision === 'BUY') {
+    // Record BUYs and quality-blocked setups into the cluster window: a setup is
+    // judged ONCE on its first score-fire; later bars of the same deteriorating
+    // cluster must not re-trigger (matches live "first pullback day" semantics).
+    if (result.finalDecision === 'BUY' || result.qualityBlocked) {
       recentBuyDates.push(data[i].date);
     }
 
@@ -766,6 +845,83 @@ export async function backtest() {
     'UBER',
     'ABNB',
     'DASH',
+    // --- Diversified expansion: liquid large caps across ALL sectors so the
+    // universe (and the 60% win-rate question) is not a tech-growth artifact ---
+    // Technology
+    'ORCL',
+    'ADBE',
+    'NOW',
+    'INTU',
+    'IBM',
+    'TXN',
+    'AMAT',
+    'LRCX',
+    'KLAC',
+    'ANET',
+    'CSCO',
+    'ACN',
+    // Communication
+    'DIS',
+    'TMUS',
+    // Consumer Discretionary
+    'HD',
+    'NKE',
+    'MCD',
+    'SBUX',
+    'LOW',
+    'TJX',
+    'BKNG',
+    'GM',
+    // Consumer Staples
+    'PG',
+    'KO',
+    'PEP',
+    'COST',
+    'WMT',
+    // Financials
+    'JPM',
+    'BAC',
+    'GS',
+    'MS',
+    'V',
+    'MA',
+    'AXP',
+    'BLK',
+    // Health Care
+    'UNH',
+    'JNJ',
+    'LLY',
+    'ABBV',
+    'MRK',
+    'PFE',
+    'TMO',
+    'ABT',
+    // Industrials
+    'CAT',
+    'DE',
+    'BA',
+    'HON',
+    'UPS',
+    'GE',
+    'LMT',
+    'RTX',
+    'UNP',
+    // Energy
+    'XOM',
+    'CVX',
+    'COP',
+    'SLB',
+    // Utilities
+    'NEE',
+    'DUK',
+    'SO',
+    // Materials
+    'LIN',
+    'FCX',
+    'NUE',
+    // Real Estate
+    'PLD',
+    'AMT',
   ];
 
   console.log('Loading historical data for', tickers.length, 'tickers...');
@@ -774,9 +930,19 @@ export async function backtest() {
     { date: Date; open: number; high: number; low: number; close: number; volume: number }[]
   >();
 
-  for (const ticker of tickers) {
-    try {
-      const data = await DataLoader.loadHistoricalData(ticker, HISTORY_DAYS);
+  // Fetch in parallel batches (bounded concurrency — polite to the data API).
+  const FETCH_CONCURRENCY = 6;
+  for (let b = 0; b < tickers.length; b += FETCH_CONCURRENCY) {
+    const batch = tickers.slice(b, b + FETCH_CONCURRENCY);
+    const results = await Promise.allSettled(
+      batch.map(async (ticker) => ({
+        ticker,
+        data: await DataLoader.loadHistoricalData(ticker, HISTORY_DAYS),
+      }))
+    );
+    for (const r of results) {
+      if (r.status !== 'fulfilled') continue;
+      const { ticker, data } = r.value;
       if (data.length >= 210) {
         allData.set(ticker, data);
         console.log(
@@ -785,8 +951,6 @@ export async function backtest() {
       } else {
         console.log(`  ${ticker}: ${data.length} bars (skipped, < 210)`);
       }
-    } catch {
-      /* skip */
     }
   }
 
@@ -1053,6 +1217,68 @@ export async function backtest() {
     {
       name: 'ibs.30 atr4 vol.8-1.5 scr<400',
       gate: { enabled: true, ibsMax: 0.3, atrPctMax: 4, volRMin: 0.8, volRMax: 1.5, scoreMax: 400 },
+    },
+    // Essay #1 leader-pullback (주도주 눌림목): strong RS vs market AND sector,
+    // pulled back below the 50-day line, calm, weak intraday close, real volume.
+    // Top generalizing family from the diversified-universe Phase-4 search.
+    {
+      name: 'LDR rs.5+50b ibs.3 atr3.5 scr380',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR rs.5+50b ibs.3 atr3.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR rs.5 only ibs.3 atr3.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.5,
+      },
+    },
+    {
+      name: 'LDR 50b only ibs.3 atr3.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR rs.7+50b ibs.3 atr3.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+      },
     },
   ];
   for (const variant of gateVariants) {
