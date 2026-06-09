@@ -21,7 +21,9 @@ jobs:
         run: bun src/index.ts predict --ticker="ABCL,BE,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST" --sort=asc
         working-directory: packages/core
       - name: Pull latest changes before commit
-        run: git pull --rebase origin main
+        # --autostash: the predict step leaves updated CSVs unstaged, which a
+        # plain pull --rebase refuses to run on.
+        run: git pull --rebase --autostash origin main
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore: daily stock data update"
