@@ -79,9 +79,13 @@ run = "bun run test"
 dir = "apps/api"
 run = "bun run test"
 
+[tasks."test:web"]
+dir = "apps/web"
+run = "bun run test"
+
 [tasks.test]
 description = "Run all tests in parallel"
-depends = ["test:core", "test:api"]
+depends = ["test:core", "test:api", "test:web"]
 
 [tasks."test:watch"]
 description = "Run core tests in watch mode"
