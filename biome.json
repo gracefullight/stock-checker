@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.3.12/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -13,7 +13,8 @@
       "packages/*/package.json",
       "package.json",
       "tsconfig.json",
-      "biome.json"
+      "biome.json",
+      "!**/*.css"
     ]
   },
   "plugins": ["node_modules/@gracefullight/biome-plugin/rules/no-relative-imports.grit"],
@@ -53,5 +54,12 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["**/components/ui/**"],
+      "linter": { "enabled": false },
+      "assist": { "enabled": false }
+    }
+  ]
 }
