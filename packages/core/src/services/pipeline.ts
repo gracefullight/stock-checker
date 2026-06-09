@@ -1,4 +1,9 @@
+import { gradientScore } from '@/services/analysis';
+import { confluenceCheck } from '@/services/confluence';
 import type { BenchmarkCandle } from '@/services/data-fetcher';
+import { calcInstitutionalScore } from '@/services/institutional';
+import { reversalConfirm } from '@/services/reversal-confirm';
+import { trendGate } from '@/services/trend-gate';
 import type {
   CandleData,
   ConfluenceResult,
@@ -9,11 +14,6 @@ import type {
   ReversalConfirmation,
   TrendGateResult,
 } from '@/types';
-import { gradientScore } from './analysis';
-import { confluenceCheck } from './confluence';
-import { calcInstitutionalScore } from './institutional';
-import { reversalConfirm } from './reversal-confirm';
-import { trendGate } from './trend-gate';
 
 const _HOLD_TREND: TrendGateResult = {
   passed: false,
@@ -80,7 +80,6 @@ export function evaluateSignal(params: {
     ticker,
     indicators,
     close,
-    open,
     fearGreed,
     patternScore,
     recentCandles,

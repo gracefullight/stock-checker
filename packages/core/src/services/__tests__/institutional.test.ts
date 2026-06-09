@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { calcInstitutionalScore } from '@/services/institutional';
 import { DEFAULT_INSTITUTIONAL_CONFIG } from '@/constants';
 import type { BenchmarkCandle } from '@/services/data-fetcher';
+import { calcInstitutionalScore } from '@/services/institutional';
 
 function makeBenchCandles(n: number, startPrice = 100, dailyReturn = 0.001): BenchmarkCandle[] {
   const candles: BenchmarkCandle[] = [];
   let price = startPrice;
   for (let i = 0; i < n; i++) {
     price *= 1 + dailyReturn;
-    candles.push({ date: new Date(2025, 0, i + 1), close: price, volume: 1_000_000, high: price * 1.01, low: price * 0.99 });
+    candles.push({
+      date: new Date(2025, 0, i + 1),
+      close: price,
+      volume: 1_000_000,
+      high: price * 1.01,
+      low: price * 0.99,
+    });
   }
   return candles;
 }
@@ -32,8 +38,8 @@ describe('calcInstitutionalScore', () => {
 
     const result = calcInstitutionalScore({
       close,
-      highs: closes.slice(-20).map(c => c * 1.01),
-      lows: closes.slice(-20).map(c => c * 0.99),
+      highs: closes.slice(-20).map((c) => c * 1.01),
+      lows: closes.slice(-20).map((c) => c * 0.99),
       closes,
       volumes: new Array(20).fill(500_000),
       donchUpper: close * 1.001,
@@ -138,7 +144,7 @@ describe('calcInstitutionalScore', () => {
 
     const r50m = calcInstitutionalScore({ ...base, avgDailyDollarVol: 50_000_001 });
     const r10m = calcInstitutionalScore({ ...base, avgDailyDollarVol: 10_000_001 });
-    const r5m  = calcInstitutionalScore({ ...base, avgDailyDollarVol: 5_000_001 });
+    const r5m = calcInstitutionalScore({ ...base, avgDailyDollarVol: 5_000_001 });
     const rLow = calcInstitutionalScore({ ...base, avgDailyDollarVol: 4_000_000 });
 
     expect(r50m.components.liquidity).toBe(1.0);

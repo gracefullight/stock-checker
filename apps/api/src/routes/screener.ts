@@ -1,10 +1,13 @@
 import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
-import { getFearGreedIndex, getHistoricalPrices } from '@stock-checker/core/src/services/data-fetcher';
-import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
-import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
+import {
+  getFearGreedIndex,
+  getHistoricalPrices,
+} from '@stock-checker/core/src/services/data-fetcher';
 import { getEarningsData } from '@stock-checker/core/src/services/earnings';
 import { getFundamentals } from '@stock-checker/core/src/services/fundamentals';
 import { getStockNews } from '@stock-checker/core/src/services/news';
+import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
+import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
 import type { FastifyPluginAsync } from 'fastify';
 import { analyzeTicker } from '@/lib/analyze';
 

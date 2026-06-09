@@ -18,9 +18,9 @@ interface InstitutionalParams {
 }
 
 function rsGradient(excess: number): number {
-  if (excess > 0.10) return 1.0;
+  if (excess > 0.1) return 1.0;
   if (excess > 0.05) return 0.75;
-  if (excess > 0)    return 0.5;
+  if (excess > 0) return 0.5;
   if (excess > -0.05) return 0.25;
   return 0.0;
 }
@@ -29,7 +29,7 @@ function calcRS(
   tickerCloses: number[],
   benchCandles: BenchmarkCandle[],
   shortPeriod: number,
-  longPeriod: number,
+  longPeriod: number
 ): number {
   const n = tickerCloses.length;
   if (n < longPeriod + 1 || benchCandles.length < longPeriod + 1) return 0;
@@ -37,12 +37,14 @@ function calcRS(
   const benchCloses = benchCandles.slice(-n).map((c) => c.close);
 
   const ret = (arr: number[], period: number) =>
-    arr.length > period ? (arr[arr.length - 1] - arr[arr.length - 1 - period]) / arr[arr.length - 1 - period] : 0;
+    arr.length > period
+      ? (arr[arr.length - 1] - arr[arr.length - 1 - period]) / arr[arr.length - 1 - period]
+      : 0;
 
   const tRet13 = ret(tickerCloses, shortPeriod);
-  const bRet13  = ret(benchCloses,  shortPeriod);
-  const tRet26  = ret(tickerCloses, longPeriod);
-  const bRet26  = ret(benchCloses,  longPeriod);
+  const bRet13 = ret(benchCloses, shortPeriod);
+  const tRet26 = ret(tickerCloses, longPeriod);
+  const bRet26 = ret(benchCloses, longPeriod);
 
   const rs13 = tRet13 - bRet13;
   const rs26 = tRet26 - bRet26;
@@ -51,10 +53,18 @@ function calcRS(
 
 export function calcInstitutionalScore(params: InstitutionalParams): InstitutionalScore {
   const {
-    close, highs, lows, closes, volumes,
-    donchUpper, volumeRatio,
-    spyCandles, sectorCandles,
-    avgDailyDollarVol, earningsBeat, earningsEstimateUp,
+    close,
+    highs,
+    lows,
+    closes,
+    volumes,
+    donchUpper,
+    volumeRatio,
+    spyCandles,
+    sectorCandles,
+    avgDailyDollarVol,
+    earningsBeat,
+    earningsEstimateUp,
     config,
   } = params;
 
@@ -65,8 +75,12 @@ export function calcInstitutionalScore(params: InstitutionalParams): Institution
   const rsSectorGrad = rsGradient(rsSector);
 
   const n = Math.min(highs.length, lows.length, closes.length, volumes.length, 20);
-  const h = highs.slice(-n), l = lows.slice(-n), c = closes.slice(-n), v = volumes.slice(-n);
-  let typVolSum = 0, volSum = 0;
+  const h = highs.slice(-n),
+    l = lows.slice(-n),
+    c = closes.slice(-n),
+    v = volumes.slice(-n);
+  let typVolSum = 0,
+    volSum = 0;
   for (let i = 0; i < n; i++) {
     const typPrice = (h[i] + l[i] + c[i]) / 3;
     typVolSum += typPrice * v[i];
@@ -78,7 +92,7 @@ export function calcInstitutionalScore(params: InstitutionalParams): Institution
   else if (close > vwap20) vwapGrad = 0.6;
   else vwapGrad = 0.0;
 
-  const nearBreakout    = close >= donchUpper * 0.98;
+  const nearBreakout = close >= donchUpper * 0.98;
   const volumeConfirmed = volumeRatio >= 1.5;
   let breakoutVolGrad: number;
   if (nearBreakout && volumeConfirmed) breakoutVolGrad = 1.0;
@@ -86,10 +100,10 @@ export function calcInstitutionalScore(params: InstitutionalParams): Institution
   else breakoutVolGrad = 0.0;
 
   let liquidityGrad: number;
-  if (avgDailyDollarVol >= 50_000_000)      liquidityGrad = 1.0;
+  if (avgDailyDollarVol >= 50_000_000) liquidityGrad = 1.0;
   else if (avgDailyDollarVol >= 10_000_000) liquidityGrad = 0.7;
-  else if (avgDailyDollarVol >= 5_000_000)  liquidityGrad = 0.4;
-  else                                       liquidityGrad = 0.0;
+  else if (avgDailyDollarVol >= 5_000_000) liquidityGrad = 0.4;
+  else liquidityGrad = 0.0;
 
   let earningsGrad: number;
   if (earningsBeat === null) earningsGrad = 0.3;
@@ -99,23 +113,23 @@ export function calcInstitutionalScore(params: InstitutionalParams): Institution
 
   const w = config.weights;
   const score =
-    rsSpyGrad       * w.rsSpy       +
-    rsSectorGrad    * w.rsSector    +
-    vwapGrad        * w.vwap        +
+    rsSpyGrad * w.rsSpy +
+    rsSectorGrad * w.rsSector +
+    vwapGrad * w.vwap +
     breakoutVolGrad * w.breakoutVol +
-    liquidityGrad   * w.liquidity   +
-    earningsGrad    * w.earnings;
+    liquidityGrad * w.liquidity +
+    earningsGrad * w.earnings;
 
   return {
     score,
     passed: score >= config.threshold,
     components: {
-      rsSpy:       rsSpyGrad,
-      rsSector:    rsSectorGrad,
-      vwap:        vwapGrad,
+      rsSpy: rsSpyGrad,
+      rsSector: rsSectorGrad,
+      vwap: vwapGrad,
       breakoutVol: breakoutVolGrad,
-      liquidity:   liquidityGrad,
-      earnings:    earningsGrad,
+      liquidity: liquidityGrad,
+      earnings: earningsGrad,
     },
   };
 }

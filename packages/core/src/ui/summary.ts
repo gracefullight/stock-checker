@@ -34,12 +34,14 @@ function colorRsi(rsi: number): string {
 
 function pad(str: string, len: number): string {
   // Strip ANSI codes to calculate visible length
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC (\x1b) is required to match ANSI SGR escape sequences for visible-width calculation.
   const visible = str.replace(/\x1b\[[0-9;]*m/g, '');
   const padding = Math.max(0, len - visible.length);
   return str + ' '.repeat(padding);
 }
 
 function padStart(str: string, len: number): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC (\x1b) is required to match ANSI SGR escape sequences for visible-width calculation.
   const visible = str.replace(/\x1b\[[0-9;]*m/g, '');
   const padding = Math.max(0, len - visible.length);
   return ' '.repeat(padding) + str;
