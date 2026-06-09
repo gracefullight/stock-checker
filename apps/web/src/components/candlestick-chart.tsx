@@ -113,9 +113,9 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
         // Axis ticks as ISO date instead of lightweight-charts' "10 Mar '26".
         tickMarkFormatter: (time: unknown) => toIsoDate(time),
       },
-      // Crosshair / legend label as full YYYY-MM-DD HH:mm:ss.
+      // Crosshair / legend label as YYYY-MM-DD (daily bars — no intraday time).
       localization: {
-        timeFormatter: (time: unknown) => `${toIsoDate(time)} 00:00:00`,
+        timeFormatter: (time: unknown) => toIsoDate(time),
       },
       width: container.clientWidth,
       height: 380,
