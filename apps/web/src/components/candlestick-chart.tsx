@@ -14,6 +14,17 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { OHLCVCandle } from '@/lib/api';
 import { getOHLCV } from '@/lib/api';
 
+/** Format a lightweight-charts Time (string / BusinessDay / UNIX seconds) as YYYY-MM-DD. */
+function toIsoDate(time: unknown): string {
+  if (typeof time === 'string') return time;
+  if (typeof time === 'number') return new Date(time * 1000).toISOString().slice(0, 10);
+  if (time && typeof time === 'object' && 'year' in time) {
+    const b = time as { year: number; month: number; day: number };
+    return `${b.year}-${String(b.month).padStart(2, '0')}-${String(b.day).padStart(2, '0')}`;
+  }
+  return String(time);
+}
+
 /** Convert a #rrggbb hex (from readToken) to an rgba() string with alpha. */
 function hexToRgba(hex: string, alpha: number): string {
   const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
@@ -96,7 +107,16 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
       },
       crosshair: { mode: 1 },
       rightPriceScale: { borderColor },
-      timeScale: { borderColor, timeVisible: true },
+      timeScale: {
+        borderColor,
+        timeVisible: true,
+        // Axis ticks as ISO date instead of lightweight-charts' "10 Mar '26".
+        tickMarkFormatter: (time: unknown) => toIsoDate(time),
+      },
+      // Crosshair / legend label as full YYYY-MM-DD HH:mm:ss.
+      localization: {
+        timeFormatter: (time: unknown) => `${toIsoDate(time)} 00:00:00`,
+      },
       width: container.clientWidth,
       height: 380,
     });
