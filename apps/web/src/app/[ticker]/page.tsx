@@ -94,6 +94,9 @@ export default async function TickerDetailPage({ params }: PageProps) {
           </span>
           <span className="text-xs font-mono text-muted-foreground ml-auto">{data.date}</span>
         </div>
+        {data.name && (
+          <div className="mt-1 font-mono text-sm text-muted-foreground">{data.name}</div>
+        )}
         {data.trendRegime && (
           <div className="mt-2 text-xs font-mono text-muted-foreground">
             REGIME: <span className="text-foreground">{data.trendRegime.toUpperCase()}</span>

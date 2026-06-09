@@ -87,6 +87,9 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         const extras: Record<string, unknown> = {};
 
         await Promise.all([
+          Promise.resolve(getQuoteNames([ticker])).then((n) => {
+            extras.name = n?.[ticker];
+          }),
           includeFields.includes('fundamentals')
             ? getFundamentals(ticker).then((d) => {
                 extras.fundamentals = d;
