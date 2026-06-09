@@ -1,42 +1,59 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
-import './globals.css';
+import { ThemeProvider } from 'next-themes';
+import '@/app/globals.css';
+import { ThemeToggle } from '@/components/common/theme-toggle';
 import { FearGreedDisplay } from '@/components/fear-greed-display';
+import { Toaster } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
+
+export const viewport: Viewport = {
+  themeColor: '#00bcd4',
+};
 
 export const metadata: Metadata = {
   title: 'Stock Screener',
-  description: 'Bloomberg-style stock screener dashboard',
+  description: 'Momentum-based equity screener with institutional analysis',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-[var(--bg)] text-[var(--text-primary)]">
-        {/* Top status bar */}
-        <header className="sticky top-0 z-50 flex items-center justify-between px-4 py-1.5 bg-[var(--surface)] border-b border-[var(--border)]">
-          <div className="flex items-center gap-4">
-            <span className="text-xs font-bold font-mono tracking-widest text-[var(--cyan)]">
-              STOCK SCREENER
-            </span>
-            <nav className="flex items-center gap-3" aria-label="Main navigation">
-              <Link
-                href="/"
-                className="text-xs font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-              >
-                [SCREENER]
-              </Link>
-              <Link
-                href="/portfolio"
-                className="text-xs font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-              >
-                [PORTFOLIO]
-              </Link>
-            </nav>
-          </div>
-          <FearGreedDisplay />
-        </header>
+    <html lang="en" suppressHydrationWarning>
+      <body className="min-h-screen bg-background text-foreground">
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+          <TooltipProvider>
+            {/* Top status bar */}
+            <header className="sticky top-0 z-50 flex items-center justify-between px-4 py-1.5 bg-card border-b border-border">
+              <div className="flex items-center gap-4">
+                <span className="text-xs font-bold font-mono tracking-widest text-primary">
+                  STOCK SCREENER
+                </span>
+                <nav className="flex items-center gap-3" aria-label="Main navigation">
+                  <Link
+                    href="/"
+                    className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    [SCREENER]
+                  </Link>
+                  <Link
+                    href="/portfolio"
+                    className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    [PORTFOLIO]
+                  </Link>
+                </nav>
+              </div>
+              <div className="flex items-center gap-2">
+                <FearGreedDisplay />
+                <ThemeToggle />
+              </div>
+            </header>
 
-        <main className="p-4">{children}</main>
+            <main className="p-4">{children}</main>
+
+            <Toaster />
+          </TooltipProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

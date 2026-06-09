@@ -1,8 +1,22 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { FearGreedResult } from '@/lib/api';
 import { getFearGreed } from '@/lib/api';
+
+function getBadgeVariant(value: number): 'default' | 'destructive' | 'outline' {
+  if (value >= 60) return 'default'; // success — we'll override color via className
+  if (value <= 30) return 'destructive';
+  return 'outline';
+}
+
+function getValueColorClass(value: number): string {
+  if (value >= 60) return 'text-success';
+  if (value <= 30) return 'text-destructive';
+  return 'text-warning';
+}
 
 export function FearGreedDisplay() {
   const [data, setData] = useState<FearGreedResult | null>(null);
@@ -14,26 +28,41 @@ export function FearGreedDisplay() {
       .catch(() => setError(true));
   }, []);
 
-  if (error || !data) {
-    return (
-      <span className="text-xs font-mono text-[var(--text-secondary)]">
-        {error ? 'F&G: N/A' : 'F&G: ...'}
-      </span>
-    );
+  if (error) {
+    return <span className="text-xs font-mono text-muted-foreground">F&G: N/A</span>;
   }
 
-  let color = 'text-[var(--yellow)]';
-  if (data.value >= 60) color = 'text-[var(--green)]';
-  else if (data.value <= 30) color = 'text-[var(--red)]';
+  if (!data) {
+    return <span className="text-xs font-mono text-muted-foreground">F&G: ...</span>;
+  }
+
+  const colorClass = getValueColorClass(data.value);
 
   return (
-    <span
-      className="text-xs font-mono"
-      aria-label={`Fear & Greed Index: ${data.value} (${data.label})`}
-    >
-      <span className="text-[var(--text-secondary)]">F&G: </span>
-      <span className={`font-bold ${color}`}>{data.value}</span>
-      <span className="text-[var(--text-secondary)] ml-1">({data.label})</span>
-    </span>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          render={(props) => (
+            <span
+              {...props}
+              role="img"
+              className="text-xs font-mono cursor-default"
+              aria-label={`Fear & Greed Index: ${data.value} (${data.label})`}
+            >
+              <span className="text-muted-foreground">F&G: </span>
+              <Badge
+                variant={getBadgeVariant(data.value)}
+                className={`font-mono font-bold ${colorClass}`}
+              >
+                {data.value}
+              </Badge>
+            </span>
+          )}
+        />
+        <TooltipContent>
+          <span className="font-mono text-xs">{data.label}</span>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

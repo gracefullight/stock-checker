@@ -1,3 +1,8 @@
+import { cva } from 'class-variance-authority';
+
+import { TableCell, TableRow } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
+
 interface IndicatorRowProps {
   label: string;
   value: number | string;
@@ -7,17 +12,34 @@ interface IndicatorRowProps {
   };
 }
 
-function getValueColor(value: number | string, threshold?: IndicatorRowProps['threshold']): string {
+const valueColorVariants = cva('py-1 px-2 text-xs font-mono text-right tabular-nums', {
+  variants: {
+    color: {
+      success: 'text-success',
+      destructive: 'text-destructive',
+      warning: 'text-warning',
+      default: 'text-foreground',
+    },
+  },
+  defaultVariants: {
+    color: 'default',
+  },
+});
+
+function getValueColor(
+  value: number | string,
+  threshold?: IndicatorRowProps['threshold']
+): 'success' | 'destructive' | 'warning' | 'default' {
   if (typeof value !== 'number' || !threshold) {
-    return 'text-[var(--text-primary)]';
+    return 'default';
   }
   if (threshold.buy !== undefined && value >= threshold.buy) {
-    return 'text-[var(--green)]';
+    return 'success';
   }
   if (threshold.sell !== undefined && value <= threshold.sell) {
-    return 'text-[var(--red)]';
+    return 'destructive';
   }
-  return 'text-[var(--yellow)]';
+  return 'warning';
 }
 
 function formatValue(value: number | string): string {
@@ -28,15 +50,13 @@ function formatValue(value: number | string): string {
 }
 
 export function IndicatorRow({ label, value, threshold }: IndicatorRowProps) {
-  const colorClass = getValueColor(value, threshold);
+  const color = getValueColor(value, threshold);
   return (
-    <tr className="border-b border-[var(--border)] hover:bg-[var(--surface)]">
-      <td className="py-1 px-2 text-xs text-[var(--text-secondary)] font-mono whitespace-nowrap">
+    <TableRow>
+      <TableCell className="py-1 px-2 text-xs text-muted-foreground font-mono whitespace-nowrap">
         {label}
-      </td>
-      <td className={`py-1 px-2 text-xs font-mono text-right tabular-nums ${colorClass}`}>
-        {formatValue(value)}
-      </td>
-    </tr>
+      </TableCell>
+      <TableCell className={cn(valueColorVariants({ color }))}>{formatValue(value)}</TableCell>
+    </TableRow>
   );
 }

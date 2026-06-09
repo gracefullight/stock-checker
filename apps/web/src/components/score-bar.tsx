@@ -1,21 +1,38 @@
+import { Progress } from '@base-ui/react/progress';
+import { cva } from 'class-variance-authority';
+import { ProgressIndicator, ProgressTrack } from '@/components/ui/progress';
+import { cn } from '@/lib/utils';
+
 interface ScoreBarProps {
   value: number;
   max?: number;
 }
 
+const scoreIndicatorVariants = cva('h-full transition-all', {
+  variants: {
+    threshold: {
+      success: 'bg-success',
+      destructive: 'bg-destructive',
+      warning: 'bg-warning',
+    },
+  },
+  defaultVariants: {
+    threshold: 'warning',
+  },
+});
+
+function getThreshold(value: number): 'success' | 'destructive' | 'warning' {
+  if (value > 280) return 'success';
+  if (value < 200) return 'destructive';
+  return 'warning';
+}
+
 export function ScoreBar({ value, max = 600 }: ScoreBarProps) {
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
-
-  let fillColor: string;
-  if (value > 280) {
-    fillColor = 'bg-[var(--green)]';
-  } else if (value < 200) {
-    fillColor = 'bg-[var(--red)]';
-  } else {
-    fillColor = 'bg-[var(--yellow)]';
-  }
+  const threshold = getThreshold(value);
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: role="meter" is the correct WAI-ARIA role for this custom score gauge; there is no equivalent native element with these aria-value semantics.
     <div
       className="flex items-center gap-2 min-w-[140px]"
       role="meter"
@@ -24,13 +41,15 @@ export function ScoreBar({ value, max = 600 }: ScoreBarProps) {
       aria-valuemax={max}
       aria-label={`Score: ${value} of ${max}`}
     >
-      <div className="flex-1 h-2 bg-[var(--border)] rounded-sm overflow-hidden">
-        <div
-          className={`h-full rounded-sm transition-all ${fillColor}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <span className="text-xs font-mono text-[var(--text-secondary)] w-10 text-right tabular-nums">
+      <Progress.Root value={pct} max={100} className="flex-1">
+        <ProgressTrack>
+          <ProgressIndicator
+            className={cn(scoreIndicatorVariants({ threshold }))}
+            style={{ width: `${pct}%` }}
+          />
+        </ProgressTrack>
+      </Progress.Root>
+      <span className="text-xs font-mono text-muted-foreground w-10 text-right tabular-nums">
         {Math.round(value)}
       </span>
     </div>

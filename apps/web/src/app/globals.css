@@ -1,37 +1,225 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
+@custom-variant dark (&:is(.dark *));
+
+/* -----------------------------------------------------------------------
+   Light theme (default — app defaults to dark via next-themes defaultTheme)
+   OKLCH neutral base per shadcn Neutral Pro + finance semantic tokens
+   ----------------------------------------------------------------------- */
 :root {
-  --bg: #0a0a0a;
-  --surface: #111111;
-  --border: #222222;
-  --text-primary: #e0e0e0;
-  --text-secondary: #888888;
-  --green: #00c851;
-  --red: #ff4444;
-  --yellow: #ffd700;
-  --cyan: #00bcd4;
+  /* Shadcn neutral tokens — light */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(0.985 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.556 0.175 220); /* cyan-ish accent, maps --cyan #00bcd4 */
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325); /* red, maps --red #ff4444 */
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.556 0.175 220);
+  --radius: 0.375rem;
+
+  /* Finance semantic tokens — light */
+  --success: oklch(0.65 0.2 145); /* green, maps --green #00c851 */
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.82 0.17 85); /* amber, maps --yellow #ffd700 */
+  --warning-foreground: oklch(0.205 0 0);
+
+  /* Chart series tokens — light (cool monochrome + finance hues) */
+  --chart-1: oklch(0.556 0.175 220); /* primary cyan */
+  --chart-2: oklch(0.65 0.2 145); /* success green */
+  --chart-3: oklch(0.577 0.245 27.325); /* destructive red */
+  --chart-4: oklch(0.82 0.17 85); /* warning amber */
+  --chart-5: oklch(0.439 0 0); /* neutral grey */
+
+  /* Sidebar */
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.556 0.175 220);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.556 0.175 220);
+
+  /* -----------------------------------------------------------------------
+     Backward-compat aliases — legacy var names resolve to new tokens.
+     Components still using var(--bg), var(--cyan), etc. keep rendering
+     until they are migrated in later tasks.
+     ----------------------------------------------------------------------- */
+  --bg: var(--background);
+  --surface: var(--card);
+  --text-primary: var(--foreground);
+  --text-secondary: var(--muted-foreground);
+  --green: var(--success);
+  --red: var(--destructive);
+  --yellow: var(--warning);
+  --cyan: var(--primary);
 }
 
-body {
-  background: var(--bg);
-  color: var(--text-primary);
-  font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+/* -----------------------------------------------------------------------
+   Dark theme — applied via next-themes class="dark" (defaultTheme="dark")
+   Matches original Bloomberg terminal dark palette
+   ----------------------------------------------------------------------- */
+.dark {
+  /* Shadcn neutral tokens — dark */
+  --background: oklch(0.145 0 0); /* near #0a0a0a */
+  --foreground: oklch(0.92 0 0); /* near #e0e0e0 */
+  --card: oklch(0.185 0 0); /* near #111111 */
+  --card-foreground: oklch(0.92 0 0);
+  --popover: oklch(0.185 0 0);
+  --popover-foreground: oklch(0.92 0 0);
+  --primary: oklch(0.72 0.14 220); /* cyan #00bcd4 in OKLCH */
+  --primary-foreground: oklch(0.145 0 0);
+  --secondary: oklch(0.22 0 0);
+  --secondary-foreground: oklch(0.92 0 0);
+  --muted: oklch(0.22 0 0);
+  --muted-foreground: oklch(0.58 0 0); /* near #888888 */
+  --accent: oklch(0.22 0 0);
+  --accent-foreground: oklch(0.92 0 0);
+  --destructive: oklch(0.65 0.245 27.325); /* red #ff4444 */
+  --border: oklch(0.28 0 0); /* near #222222 */
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.72 0.14 220);
+
+  /* Finance semantic tokens — dark */
+  --success: oklch(0.75 0.2 145); /* green #00c851 */
+  --success-foreground: oklch(0.145 0 0);
+  --warning: oklch(0.87 0.17 85); /* yellow #ffd700 */
+  --warning-foreground: oklch(0.145 0 0);
+
+  /* Chart series tokens — dark */
+  --chart-1: oklch(0.72 0.14 220); /* primary cyan */
+  --chart-2: oklch(0.75 0.2 145); /* success green */
+  --chart-3: oklch(0.65 0.245 27.325); /* destructive red */
+  --chart-4: oklch(0.87 0.17 85); /* warning amber */
+  --chart-5: oklch(0.58 0 0); /* muted grey */
+
+  /* Sidebar — dark */
+  --sidebar: oklch(0.185 0 0);
+  --sidebar-foreground: oklch(0.92 0 0);
+  --sidebar-primary: oklch(0.72 0.14 220);
+  --sidebar-primary-foreground: oklch(0.145 0 0);
+  --sidebar-accent: oklch(0.22 0 0);
+  --sidebar-accent-foreground: oklch(0.92 0 0);
+  --sidebar-border: oklch(0.28 0 0);
+  --sidebar-ring: oklch(0.72 0.14 220);
+
+  /* Backward-compat aliases — same mapping, dark values now resolved */
+  --bg: var(--background);
+  --surface: var(--card);
+  --text-primary: var(--foreground);
+  --text-secondary: var(--muted-foreground);
+  --green: var(--success);
+  --red: var(--destructive);
+  --yellow: var(--warning);
+  --cyan: var(--primary);
 }
 
-* {
-  box-sizing: border-box;
+/* -----------------------------------------------------------------------
+   @theme inline — Tailwind v4 design token bridge
+   Maps CSS custom properties → Tailwind utility classes
+   ----------------------------------------------------------------------- */
+@theme inline {
+  /* Typography */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+  --font-heading: var(--font-sans);
+
+  /* Core palette */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Finance semantic tokens */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+
+  /* Chart series */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* Sidebar */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Radius scale */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-a {
-  color: var(--cyan);
-  text-decoration: none;
-}
+/* -----------------------------------------------------------------------
+   Base layer — default element styles
+   ----------------------------------------------------------------------- */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    box-sizing: border-box;
+  }
 
-a:hover {
-  text-decoration: underline;
-}
+  body {
+    @apply bg-background text-foreground;
+    /* Monospace data-dense default (Bloomberg terminal aesthetic) */
+    font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+  }
 
-:focus-visible {
-  outline: 2px solid var(--cyan);
-  outline-offset: 2px;
+  html {
+    @apply font-sans;
+  }
+
+  a {
+    color: var(--primary);
+    text-decoration: none;
+  }
+
+  a:hover {
+    text-decoration: underline;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
 }

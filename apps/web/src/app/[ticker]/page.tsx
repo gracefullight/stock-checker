@@ -4,6 +4,7 @@ import { PatternList } from '@/components/pattern-list';
 import { ScoreBar } from '@/components/score-bar';
 import { SignalBadge } from '@/components/signal-badge';
 import { TickerCharts } from '@/components/ticker-charts';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getTickerDetail } from '@/lib/api';
 
 interface PageProps {
@@ -11,21 +12,25 @@ interface PageProps {
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const headingId = `section-${title.replace(/\s+/g, '-').toLowerCase()}`;
   return (
-    <section
-      className="border border-[var(--border)] bg-[var(--surface)]"
-      aria-labelledby={`section-${title.replace(/\s+/g, '-').toLowerCase()}`}
+    <Card
+      className="rounded-none ring-0 border border-border bg-card py-0"
+      aria-labelledby={headingId}
+      role="region"
     >
-      <div className="px-3 py-1.5 border-b border-[var(--border)] bg-[#0f0f0f]">
-        <h2
-          id={`section-${title.replace(/\s+/g, '-').toLowerCase()}`}
-          className="text-[10px] font-mono font-bold tracking-widest text-[var(--cyan)]"
-        >
-          {title}
-        </h2>
-      </div>
-      <div className="p-3">{children}</div>
-    </section>
+      <CardHeader className="px-3 py-1.5 border-b border-border rounded-none bg-muted/30">
+        <CardTitle>
+          <h2
+            id={headingId}
+            className="text-[10px] font-mono font-bold tracking-widest text-primary"
+          >
+            {title}
+          </h2>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3">{children}</CardContent>
+    </Card>
   );
 }
 
@@ -33,7 +38,7 @@ export default async function TickerDetailPage({ params }: PageProps) {
   const { ticker } = await params;
   const symbol = ticker.toUpperCase();
 
-  let data;
+  let data: Awaited<ReturnType<typeof getTickerDetail>> | undefined;
   let error: string | null = null;
 
   try {
@@ -46,15 +51,12 @@ export default async function TickerDetailPage({ params }: PageProps) {
     return (
       <div>
         <div className="mb-4">
-          <Link
-            href="/"
-            className="text-xs font-mono text-[var(--text-secondary)] hover:text-[var(--cyan)]"
-          >
+          <Link href="/" className="text-xs font-mono text-muted-foreground hover:text-primary">
             &lt; BACK TO SCREENER
           </Link>
         </div>
         <div
-          className="p-4 border border-[var(--red)] bg-[var(--surface)] font-mono text-xs text-[var(--red)]"
+          className="p-4 border border-destructive bg-card font-mono text-xs text-destructive"
           role="alert"
         >
           ERROR [{symbol}]: {error}
@@ -65,7 +67,7 @@ export default async function TickerDetailPage({ params }: PageProps) {
 
   if (!data) {
     return (
-      <div className="font-mono text-xs text-[var(--text-secondary)]" aria-live="polite">
+      <div className="font-mono text-xs text-muted-foreground" aria-live="polite">
         LOADING...
       </div>
     );
@@ -77,32 +79,24 @@ export default async function TickerDetailPage({ params }: PageProps) {
     <div className="space-y-4">
       {/* Breadcrumb */}
       <div>
-        <Link
-          href="/"
-          className="text-xs font-mono text-[var(--text-secondary)] hover:text-[var(--cyan)]"
-        >
+        <Link href="/" className="text-xs font-mono text-muted-foreground hover:text-primary">
           &lt; BACK TO SCREENER
         </Link>
       </div>
 
       {/* Header */}
-      <div className="border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="border border-border bg-card p-4">
         <div className="flex items-center gap-4 flex-wrap">
-          <h1 className="text-3xl font-bold font-mono text-[var(--text-primary)] tracking-widest">
-            {symbol}
-          </h1>
+          <h1 className="text-3xl font-bold font-mono text-foreground tracking-widest">{symbol}</h1>
           <SignalBadge signal={signal} />
-          <span className="text-2xl font-mono font-bold tabular-nums text-[var(--yellow)]">
+          <span className="text-2xl font-mono font-bold tabular-nums text-warning">
             ${data.close.toFixed(2)}
           </span>
-          <span className="text-xs font-mono text-[var(--text-secondary)] ml-auto">
-            {data.date}
-          </span>
+          <span className="text-xs font-mono text-muted-foreground ml-auto">{data.date}</span>
         </div>
         {data.trendRegime && (
-          <div className="mt-2 text-xs font-mono text-[var(--text-secondary)]">
-            REGIME:{' '}
-            <span className="text-[var(--text-primary)]">{data.trendRegime.toUpperCase()}</span>
+          <div className="mt-2 text-xs font-mono text-muted-foreground">
+            REGIME: <span className="text-foreground">{data.trendRegime.toUpperCase()}</span>
           </div>
         )}
       </div>
@@ -170,12 +164,11 @@ export default async function TickerDetailPage({ params }: PageProps) {
           <Section title="COMPOSITE SCORE">
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-[var(--text-secondary)] w-20">SCORE</span>
+                <span className="text-xs font-mono text-muted-foreground w-20">SCORE</span>
                 <ScoreBar value={data.score} />
               </div>
-              <div className="text-xs font-mono text-[var(--text-secondary)]">
-                THRESHOLD:{' '}
-                <span className="text-[var(--text-primary)]">BUY &gt;280 / SELL &lt;200</span>
+              <div className="text-xs font-mono text-muted-foreground">
+                THRESHOLD: <span className="text-foreground">BUY &gt;280 / SELL &lt;200</span>
               </div>
             </div>
           </Section>
@@ -191,7 +184,6 @@ export default async function TickerDetailPage({ params }: PageProps) {
               </tbody>
             </table>
           </Section>
-
         </div>
       </div>
 

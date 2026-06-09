@@ -1,4 +1,7 @@
 import { ScreenerTable } from '@/components/screener-table';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { getScreener } from '@/lib/api';
 
 const TICKERS = [
@@ -24,8 +27,31 @@ const TICKERS = [
   'PINS',
 ];
 
+function ScreenerSkeleton() {
+  return (
+    <div className="space-y-2" role="status" aria-live="polite" aria-label="Loading screener data">
+      <div className="flex gap-2 px-2 py-1.5 border-b border-border">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <Skeleton key={i} className="h-4 w-16" />
+        ))}
+      </div>
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div key={i} className="flex gap-2 px-2 py-1.5">
+          <Skeleton className="h-4 w-12" />
+          <Skeleton className="h-4 w-16" />
+          <Skeleton className="h-4 w-10" />
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-4 w-14" />
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-12" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default async function ScreenerPage() {
-  let results;
+  let results: Awaited<ReturnType<typeof getScreener>> | undefined;
   let error: string | null = null;
 
   try {
@@ -37,36 +63,38 @@ export default async function ScreenerPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-sm font-bold font-mono tracking-widest text-[var(--cyan)]">
+        <h1 className="text-sm font-bold font-mono tracking-widest text-primary">
           EQUITY SCREENER — {TICKERS.length} SYMBOLS
         </h1>
-        <span className="text-xs font-mono text-[var(--text-secondary)]">
+        <span className="text-xs font-mono text-muted-foreground">
           {new Date().toISOString().split('T')[0]}
         </span>
       </div>
 
       {error ? (
-        <div
-          className="p-4 border border-[var(--red)] bg-[var(--surface)] font-mono text-xs text-[var(--red)]"
-          role="alert"
-        >
-          ERROR: {error}
-        </div>
+        <Alert variant="destructive">
+          <AlertTitle className="font-mono text-xs font-bold">ERROR</AlertTitle>
+          <AlertDescription className="font-mono text-xs">{error}</AlertDescription>
+        </Alert>
       ) : !results ? (
-        <div className="p-4 font-mono text-xs text-[var(--text-secondary)]" aria-live="polite">
-          LOADING...
-        </div>
+        <Card>
+          <CardContent>
+            <ScreenerSkeleton />
+          </CardContent>
+        </Card>
       ) : results.length === 0 ? (
-        <div className="p-4 font-mono text-xs text-[var(--text-secondary)]">NO DATA AVAILABLE</div>
+        <div className="p-4 font-mono text-xs text-muted-foreground">NO DATA AVAILABLE</div>
       ) : (
-        <div className="border border-[var(--border)] bg-[var(--surface)]">
-          <div className="px-3 py-1.5 border-b border-[var(--border)] flex items-center gap-2">
-            <span className="text-[10px] font-mono text-[var(--text-secondary)]">
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b border-border py-1.5 px-3">
+            <span className="text-[10px] font-mono text-muted-foreground">
               {results.length} RESULTS — SORTED BY SCORE DESC BY DEFAULT
             </span>
-          </div>
-          <ScreenerTable results={results} />
-        </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <ScreenerTable results={results} />
+          </CardContent>
+        </Card>
       )}
     </div>
   );

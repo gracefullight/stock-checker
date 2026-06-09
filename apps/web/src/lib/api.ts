@@ -1,6 +1,10 @@
 import type { TickerResult } from '@stock-checker/core/src/types';
+import axios, { type AxiosError } from 'axios';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+// Server components can use the non-public env var to avoid exposing internal
+// addresses. Clients only see NEXT_PUBLIC_* so the fallback chain is:
+//   process.env.API_URL (server-only)  →  process.env.NEXT_PUBLIC_API_URL  →  localhost
+const API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 export type { TickerResult };
 
@@ -16,20 +20,46 @@ export interface TickerDetailResult extends TickerResult {
   earnings?: Record<string, unknown>;
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  });
+export interface OHLCVCandle {
+  time: string; // YYYY-MM-DD
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  sma20: number | null;
+  sma50: number | null;
+  sma200: number | null;
+  bbUpper: number | null;
+  bbLower: number | null;
+  signal: 'BUY' | 'SELL' | 'HOLD' | null;
+}
 
-  if (!res.ok) {
-    throw new Error(`API error ${res.status}: ${res.statusText}`);
+const instance = axios.create({
+  baseURL: API_URL,
+  timeout: 10_000,
+  headers: { 'Content-Type': 'application/json' },
+});
+
+instance.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (error.response) {
+      const { status, statusText } = error.response;
+      throw new Error(`API error ${status}: ${statusText}`);
+    }
+    // Network error, timeout, or request setup failure
+    throw new Error(`API error: ${error.message}`);
   }
+);
 
-  return res.json() as Promise<T>;
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await instance.request<T>({
+    url: path,
+    method: init?.method as string | undefined,
+    headers: init?.headers as Record<string, string> | undefined,
+  });
+  return response.data;
 }
 
 /**
@@ -49,7 +79,9 @@ export function getTickerDetail(
   include: string[] = ['fundamentals', 'earnings']
 ): Promise<TickerDetailResult> {
   const params = new URLSearchParams({ include: include.join(',') });
-  return apiFetch<TickerDetailResult>(`/api/screener/${ticker}?${params.toString()}`);
+  return apiFetch<TickerDetailResult>(
+    `/api/screener/${encodeURIComponent(ticker)}?${params.toString()}`
+  );
 }
 
 /**
@@ -62,42 +94,28 @@ export function getFearGreed(): Promise<FearGreedResult> {
 /**
  * GET /api/portfolio
  */
-export function getPortfolio(): Promise<string[]> {
-  return apiFetch<string[]>('/api/portfolio');
+export async function getPortfolio(): Promise<string[]> {
+  const res = await apiFetch<{ assets: string[]; createdAt: string }>('/api/portfolio');
+  return res.assets;
 }
 
 /**
  * POST /api/portfolio/:ticker
  */
 export function addToPortfolio(ticker: string): Promise<void> {
-  return apiFetch<void>(`/api/portfolio/${ticker}`, { method: 'POST' });
+  return apiFetch<void>(`/api/portfolio/${encodeURIComponent(ticker)}`, { method: 'POST' });
 }
 
 /**
  * DELETE /api/portfolio/:ticker
  */
 export function removeFromPortfolio(ticker: string): Promise<void> {
-  return apiFetch<void>(`/api/portfolio/${ticker}`, { method: 'DELETE' });
-}
-
-export interface OHLCVCandle {
-  time: string; // YYYY-MM-DD
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  sma20: number | null;
-  sma50: number | null;
-  sma200: number | null;
-  bbUpper: number | null;
-  bbLower: number | null;
-  signal: 'BUY' | 'SELL' | 'HOLD' | null;
+  return apiFetch<void>(`/api/portfolio/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
 }
 
 /**
  * GET /api/screener/:ticker/ohlcv?days=180
  */
 export function getOHLCV(ticker: string, days = 180): Promise<OHLCVCandle[]> {
-  return apiFetch<OHLCVCandle[]>(`/api/screener/${ticker}/ohlcv?days=${days}`);
+  return apiFetch<OHLCVCandle[]>(`/api/screener/${encodeURIComponent(ticker)}/ohlcv?days=${days}`);
 }

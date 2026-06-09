@@ -1,10 +1,19 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { PatternList } from '@/components/pattern-list';
 import { ScoreBar } from '@/components/score-bar';
 import { SignalBadge } from '@/components/signal-badge';
+import { Button } from '@/components/ui/button';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import type { TickerResult } from '@/lib/api';
 
 type SortKey = 'ticker' | 'close' | 'rsi' | 'score' | 'opinion';
@@ -23,9 +32,15 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
 ];
 
 function rowBorderColor(opinion: string): string {
-  if (opinion === 'BUY') return 'border-l-2 border-l-[var(--green)]';
-  if (opinion === 'SELL') return 'border-l-2 border-l-[var(--red)]';
+  if (opinion === 'BUY') return 'border-l-2 border-l-success';
+  if (opinion === 'SELL') return 'border-l-2 border-l-destructive';
   return 'border-l-2 border-l-transparent';
+}
+
+function rsiColorClass(rsi: number): string {
+  if (rsi >= 70) return 'text-destructive';
+  if (rsi <= 30) return 'text-success';
+  return 'text-foreground';
 }
 
 export function ScreenerTable({ results }: ScreenerTableProps) {
@@ -41,17 +56,21 @@ export function ScreenerTable({ results }: ScreenerTableProps) {
     }
   }
 
-  const sorted = [...results].sort((a, b) => {
-    const av = a[sortKey];
-    const bv = b[sortKey];
-    if (typeof av === 'string' && typeof bv === 'string') {
-      return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
-    }
-    if (typeof av === 'number' && typeof bv === 'number') {
-      return sortDir === 'asc' ? av - bv : bv - av;
-    }
-    return 0;
-  });
+  const sorted = useMemo(
+    () =>
+      [...results].sort((a, b) => {
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        if (typeof av === 'string' && typeof bv === 'string') {
+          return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+        }
+        if (typeof av === 'number' && typeof bv === 'number') {
+          return sortDir === 'asc' ? av - bv : bv - av;
+        }
+        return 0;
+      }),
+    [results, sortKey, sortDir]
+  );
 
   function sortIndicator(key: SortKey): string {
     if (key !== sortKey) return '';
@@ -59,90 +78,141 @@ export function ScreenerTable({ results }: ScreenerTableProps) {
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table
-        className="w-full text-xs font-mono border-collapse"
-        aria-label="Stock screener results"
-      >
-        <thead>
-          <tr className="border-b border-[var(--border)]">
-            {COLUMNS.map(({ key, label }) => (
-              <th
-                key={key}
-                className="py-2 px-3 text-left text-[var(--text-secondary)] font-normal cursor-pointer select-none hover:text-[var(--text-primary)] whitespace-nowrap"
-                onClick={() => handleSort(key)}
-                aria-sort={
-                  sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
-                }
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') handleSort(key);
-                }}
-              >
-                {label}
-                <span aria-hidden="true">{sortIndicator(key)}</span>
-              </th>
+    <>
+      {/* Tablet / desktop: full table (≥640px) */}
+      <div className="hidden sm:block">
+        <Table aria-label="Stock screener results">
+          <TableHeader>
+            <TableRow>
+              {COLUMNS.map(({ key, label }) => (
+                <TableHead
+                  key={key}
+                  className="text-muted-foreground font-normal cursor-pointer select-none hover:text-foreground font-mono text-xs whitespace-nowrap"
+                  onClick={() => handleSort(key)}
+                  aria-sort={
+                    sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
+                  }
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') handleSort(key);
+                  }}
+                >
+                  {label}
+                  <span aria-hidden="true">{sortIndicator(key)}</span>
+                </TableHead>
+              ))}
+              <TableHead className="text-muted-foreground font-normal font-mono text-xs whitespace-nowrap">
+                PATTERNS
+              </TableHead>
+              <TableHead className="text-muted-foreground font-normal font-mono text-xs whitespace-nowrap">
+                ACTION
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sorted.map((row) => (
+              <TableRow key={row.ticker} className={rowBorderColor(row.opinion)}>
+                <TableCell className="font-bold font-mono text-xs text-foreground">
+                  <Link href={`/${row.ticker}`} className="hover:text-primary transition-colors">
+                    {row.ticker}
+                  </Link>
+                </TableCell>
+                <TableCell className="tabular-nums font-mono text-xs text-right text-foreground">
+                  {row.close.toFixed(2)}
+                </TableCell>
+                <TableCell className="tabular-nums font-mono text-xs text-right">
+                  <span className={rsiColorClass(row.rsi)}>{row.rsi.toFixed(1)}</span>
+                </TableCell>
+                <TableCell>
+                  <ScoreBar value={row.score} />
+                </TableCell>
+                <TableCell>
+                  <SignalBadge signal={row.opinion as 'BUY' | 'SELL' | 'HOLD'} />
+                </TableCell>
+                <TableCell className="max-w-[300px]">
+                  <PatternList patterns={row.patterns} />
+                </TableCell>
+                <TableCell>
+                  <Link
+                    href={`/${row.ticker}`}
+                    className="text-primary hover:underline text-xs font-mono"
+                    aria-label={`View details for ${row.ticker}`}
+                  >
+                    DETAIL
+                  </Link>
+                </TableCell>
+              </TableRow>
             ))}
-            <th className="py-2 px-3 text-left text-[var(--text-secondary)] font-normal whitespace-nowrap">
-              PATTERNS
-            </th>
-            <th className="py-2 px-3 text-left text-[var(--text-secondary)] font-normal whitespace-nowrap">
-              ACTION
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((row) => (
-            <tr
-              key={row.ticker}
-              className={`border-b border-[var(--border)] hover:bg-[var(--surface)] ${rowBorderColor(row.opinion)}`}
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* Mobile: card list (<640px) */}
+      <div className="sm:hidden">
+        <div
+          className="flex flex-wrap items-center gap-1 border-b border-border p-2"
+          role="toolbar"
+          aria-label="Sort screener results"
+        >
+          <span className="mr-1 font-mono text-[10px] text-muted-foreground">SORT</span>
+          {COLUMNS.map(({ key, label }) => (
+            <Button
+              key={key}
+              type="button"
+              variant={sortKey === key ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-7 px-2 font-mono text-[10px]"
+              aria-pressed={sortKey === key}
+              onClick={() => handleSort(key)}
             >
-              <td className="py-1.5 px-3 font-bold text-[var(--text-primary)]">
+              {label}
+              <span aria-hidden="true">{sortIndicator(key)}</span>
+            </Button>
+          ))}
+        </div>
+        <ul aria-label="Stock screener results" className="divide-y divide-border">
+          {sorted.map((row) => (
+            <li key={row.ticker} className={`p-3 ${rowBorderColor(row.opinion)}`}>
+              <div className="flex items-center justify-between gap-2">
                 <Link
                   href={`/${row.ticker}`}
-                  className="hover:text-[var(--cyan)] transition-colors"
+                  className="font-bold font-mono text-sm text-foreground hover:text-primary"
                 >
                   {row.ticker}
                 </Link>
-              </td>
-              <td className="py-1.5 px-3 tabular-nums text-right text-[var(--text-primary)]">
-                {row.close.toFixed(2)}
-              </td>
-              <td className="py-1.5 px-3 tabular-nums text-right">
-                <span
-                  className={
-                    row.rsi >= 70
-                      ? 'text-[var(--red)]'
-                      : row.rsi <= 30
-                        ? 'text-[var(--green)]'
-                        : 'text-[var(--text-primary)]'
-                  }
-                >
-                  {row.rsi.toFixed(1)}
-                </span>
-              </td>
-              <td className="py-1.5 px-3">
-                <ScoreBar value={row.score} />
-              </td>
-              <td className="py-1.5 px-3">
                 <SignalBadge signal={row.opinion as 'BUY' | 'SELL' | 'HOLD'} />
-              </td>
-              <td className="py-1.5 px-3 max-w-[300px]">
+              </div>
+              <div className="mt-2 flex items-center justify-between font-mono text-xs text-muted-foreground">
+                <span>
+                  CLOSE <span className="tabular-nums text-foreground">{row.close.toFixed(2)}</span>
+                </span>
+                <span>
+                  RSI{' '}
+                  <span className={`tabular-nums ${rsiColorClass(row.rsi)}`}>
+                    {row.rsi.toFixed(1)}
+                  </span>
+                </span>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <span className="w-12 font-mono text-[10px] text-muted-foreground">SCORE</span>
+                <ScoreBar value={row.score} />
+              </div>
+              <div className="mt-2">
                 <PatternList patterns={row.patterns} />
-              </td>
-              <td className="py-1.5 px-3">
+              </div>
+              <div className="mt-2">
                 <Link
                   href={`/${row.ticker}`}
-                  className="text-[var(--cyan)] hover:underline text-xs"
+                  className="font-mono text-xs text-primary hover:underline"
                   aria-label={`View details for ${row.ticker}`}
                 >
-                  DETAIL
+                  DETAIL &rarr;
                 </Link>
-              </td>
-            </tr>
+              </div>
+            </li>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </ul>
+      </div>
+    </>
   );
 }
