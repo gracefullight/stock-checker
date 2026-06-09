@@ -10,6 +10,7 @@ import {
   MEAN_REVERSION_GRADIENT_RANGES,
 } from '@/constants';
 import { DataLoader } from '@/optimization/data-loader';
+import { gaussianChannel } from '@/services/gaussian-channel';
 import { detectPatterns } from '@/services/patterns';
 import { evaluateSignal } from '@/services/pipeline';
 import type { CandleData, IndicatorValues, PipelineConfig } from '@/types';
@@ -362,6 +363,88 @@ function measure5DayWinRate(
   };
 }
 
+/**
+ * Trend-following exit: enter on a BUY signal, hold until the Gaussian Channel
+ * turns red (downtrend) or a stop is hit, capped at maxHold bars. Measures the
+ * realized per-trade win rate / return — the essay's "ride the trend, exit on
+ * color flip" approach vs the fixed 5-day horizon.
+ */
+function measureTrendHoldWinRate(
+  signals: BacktestSignal[],
+  allData: Map<string, { date: Date; close: number }[]>,
+  opts: { maxHold?: number; stopPct?: number } = {}
+): WinRateResult {
+  const maxHold = opts.maxHold ?? 60;
+  const stopPct = opts.stopPct ?? 8;
+  const gcCache = new Map<string, ReturnType<typeof gaussianChannel>['series']>();
+
+  let wins = 0;
+  let total = 0;
+  const returns: number[] = [];
+  const monthly: Record<string, { wins: number; total: number }> = {};
+
+  for (const sig of signals) {
+    if (sig.decision !== 'BUY') continue;
+    const prices = allData.get(sig.ticker);
+    if (!prices) continue;
+    const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
+    if (idx === -1 || idx + 1 >= prices.length) continue;
+
+    let series = gcCache.get(sig.ticker);
+    if (!series) {
+      series = gaussianChannel(prices.map((p) => p.close)).series;
+      gcCache.set(sig.ticker, series);
+    }
+
+    const entry = sig.close;
+    const stop = entry * (1 - stopPct / 100);
+    const lastK = Math.min(idx + maxHold, prices.length - 1);
+    let exitPrice = prices[lastK].close;
+    for (let k = idx + 1; k <= lastK; k++) {
+      if (prices[k].close <= stop) {
+        exitPrice = prices[k].close;
+        break;
+      }
+      if (series[k].direction === 'down') {
+        exitPrice = prices[k].close;
+        break;
+      }
+    }
+
+    const ret = ((exitPrice - entry) / entry) * 100;
+    returns.push(ret);
+    total++;
+    const month = sig.date.toISOString().slice(0, 7);
+    if (!monthly[month]) monthly[month] = { wins: 0, total: 0 };
+    monthly[month].total++;
+    if (exitPrice > entry) {
+      wins++;
+      monthly[month].wins++;
+    }
+  }
+
+  const winReturns = returns.filter((r) => r > 0);
+  const lossReturns = returns.filter((r) => r <= 0);
+  const avgWin =
+    winReturns.length > 0 ? winReturns.reduce((a, b) => a + b, 0) / winReturns.length : 0;
+  const avgLoss =
+    lossReturns.length > 0
+      ? Math.abs(lossReturns.reduce((a, b) => a + b, 0) / lossReturns.length)
+      : 0;
+  const monthCount = Object.keys(monthly).length || 1;
+  return {
+    winRate5d: total > 0 ? (wins / total) * 100 : 0,
+    totalSignals: total,
+    wins,
+    avgReturn: returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0,
+    avgWin,
+    avgLoss,
+    rewardRisk: avgLoss > 0 ? avgWin / avgLoss : 0,
+    monthlyBreakdown: monthly,
+    signalsPerMonth: total / monthCount,
+  };
+}
+
 export async function backtest() {
   const tickers = [
     // Original
@@ -565,6 +648,8 @@ export async function backtest() {
   const v3Result = measure5DayWinRate(v3Signals, priceData);
   const v4Result = measure5DayWinRate(v4Signals, priceData);
   const v5Result = measure5DayWinRate(v5Signals, priceData);
+  // V6 = same institutional entries as V5, but exit on Gaussian Channel flip (trend-hold).
+  const v6Result = measureTrendHoldWinRate(v5Signals, priceData);
 
   console.log(
     `\n${'Version'.padEnd(20)} | ${'WinRate'.padStart(8)} | ${'Signals'.padStart(8)} | ${'AvgRet'.padStart(8)} | ${'R/R'.padStart(6)} | ${'Sig/Mo'.padStart(6)}`
@@ -576,6 +661,11 @@ export async function backtest() {
   console.log(fmtRow('V3', v3Result));
   console.log(fmtRow('V4 (momentum)', v4Result));
   console.log(fmtRow('V5 (institutional)', v5Result));
+  console.log(fmtRow('V6 (V5 + trend-hold)', v6Result));
+  console.log('\nDelta (V6 trend-hold - V5 fixed-5d):');
+  console.log(`  Win rate:    ${(v6Result.winRate5d - v5Result.winRate5d).toFixed(1)}pp`);
+  console.log(`  Avg return:  ${(v6Result.avgReturn - v5Result.avgReturn).toFixed(2)}pp`);
+  console.log(`  R/R ratio:   ${(v6Result.rewardRisk - v5Result.rewardRisk).toFixed(2)}`);
   console.log('\nDelta (V4 - V2 baseline):');
   console.log(`  Win rate:    ${(v4Result.winRate5d - v2Result.winRate5d).toFixed(1)}pp`);
   console.log(
