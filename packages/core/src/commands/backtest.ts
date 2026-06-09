@@ -479,10 +479,12 @@ function measure5DayWinRate(
 function measureTrendHoldWinRate(
   signals: BacktestSignal[],
   allData: Map<string, { date: Date; close: number }[]>,
-  opts: { maxHold?: number; stopPct?: number } = {}
+  opts: { maxHold?: number; stopPct?: number; exitRule?: 'flip' | 'mid'; trailPct?: number } = {}
 ): WinRateResult {
   const maxHold = opts.maxHold ?? 60;
   const stopPct = opts.stopPct ?? 8;
+  const exitRule = opts.exitRule ?? 'flip';
+  const trailPct = opts.trailPct;
   const gcCache = new Map<string, ReturnType<typeof gaussianChannel>['series']>();
 
   let holdBarsTotal = 0;
@@ -509,14 +511,15 @@ function measureTrendHoldWinRate(
     const lastK = Math.min(idx + maxHold, prices.length - 1);
     let exitBar = lastK;
     let exitPrice = prices[lastK].close;
+    let peak = entry;
     for (let k = idx + 1; k <= lastK; k++) {
-      if (prices[k].close <= stop) {
-        exitPrice = prices[k].close;
-        exitBar = k;
-        break;
-      }
-      if (series[k].direction === 'down') {
-        exitPrice = prices[k].close;
+      const c = prices[k].close;
+      if (c > peak) peak = c;
+      const hardStop = c <= stop;
+      const trailStop = trailPct !== undefined && c <= peak * (1 - trailPct / 100);
+      const ruleExit = exitRule === 'mid' ? c < series[k].mid : series[k].direction === 'down';
+      if (hardStop || trailStop || ruleExit) {
+        exitPrice = c;
         exitBar = k;
         break;
       }
@@ -823,6 +826,30 @@ export async function backtest() {
     const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
     console.log(
       `${yr.padEnd(6)} | ${String(r.totalSignals).padStart(7)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
+    );
+  }
+
+  // Exit-rule comparison on the SAME V5 entries — optimize the exit (where the edge is).
+  console.log('\nExit-rule comparison (V5 entries):');
+  console.log(
+    `${'Exit rule'.padEnd(20)} | ${'WinRate'.padStart(7)} | ${'AvgRet'.padStart(7)} | ${'PerBar'.padStart(7)} | ${'R/R'.padStart(5)} | ${'Hold'.padStart(5)}`
+  );
+  const exitVariants: {
+    name: string;
+    opts: { exitRule?: 'flip' | 'mid'; stopPct?: number; trailPct?: number };
+  }[] = [
+    { name: 'flip + stop8 (V6)', opts: { exitRule: 'flip', stopPct: 8 } },
+    { name: 'flip + stop5', opts: { exitRule: 'flip', stopPct: 5 } },
+    { name: 'flip + stop12', opts: { exitRule: 'flip', stopPct: 12 } },
+    { name: 'mid-cross + stop8', opts: { exitRule: 'mid', stopPct: 8 } },
+    { name: 'flip + trail10', opts: { exitRule: 'flip', stopPct: 8, trailPct: 10 } },
+    { name: 'flip + trail15', opts: { exitRule: 'flip', stopPct: 8, trailPct: 15 } },
+  ];
+  for (const v of exitVariants) {
+    const r = measureTrendHoldWinRate(v5Signals, priceData, v.opts);
+    const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
+    console.log(
+      `${v.name.padEnd(20)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
     );
   }
 
