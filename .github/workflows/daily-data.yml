@@ -12,7 +12,7 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -24,8 +24,7 @@ jobs:
         # --autostash: the predict step leaves updated CSVs unstaged, which a
         # plain pull --rebase refuses to run on.
         run: git pull --rebase --autostash origin main
-      - uses: stefanzweifel/git-auto-commit-action@v5
+      - uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "chore: daily stock data update"
           file_pattern: "packages/core/public/*.csv"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
