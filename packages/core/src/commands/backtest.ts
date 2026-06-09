@@ -10,6 +10,7 @@ import {
   MEAN_REVERSION_GRADIENT_RANGES,
 } from '@/constants';
 import { DataLoader } from '@/optimization/data-loader';
+import type { BenchmarkCandle } from '@/services/data-fetcher';
 import { gaussianChannel } from '@/services/gaussian-channel';
 import { detectPatterns } from '@/services/patterns';
 import { evaluateSignal } from '@/services/pipeline';
@@ -108,7 +109,8 @@ function buildIndicatorsAtBar(
 function runBacktestForTicker(
   data: { date: Date; open: number; high: number; low: number; close: number; volume: number }[],
   ticker: string,
-  config: PipelineConfig
+  config: PipelineConfig,
+  spy: BenchmarkCandle[] = []
 ): BacktestSignal[] {
   if (data.length < 210) return [];
 
@@ -116,6 +118,16 @@ function runBacktestForTicker(
   const highs = data.map((d) => d.high);
   const lows = data.map((d) => d.low);
   const volumes = data.map((d) => d.volume);
+
+  // Align SPY benchmark to each bar (last SPY bar on/before the ticker bar) — no lookahead.
+  const spyIdxForBar: number[] = new Array(data.length).fill(-1);
+  if (spy.length > 0) {
+    let sp = 0;
+    for (let i = 0; i < data.length; i++) {
+      while (sp + 1 < spy.length && spy[sp + 1].date.getTime() <= data[i].date.getTime()) sp++;
+      spyIdxForBar[i] = spy[sp].date.getTime() <= data[i].date.getTime() ? sp : -1;
+    }
+  }
 
   // Pre-compute indicators
   const rsi2Arr = RSI.calculate({ values: closes, period: 2 });
@@ -241,6 +253,13 @@ function runBacktestForTicker(
       config.patternWeights
     );
 
+    const spyIdx = spyIdxForBar[i];
+    const spyCandles = spyIdx >= 0 ? spy.slice(0, spyIdx + 1) : [];
+    const dvFrom = Math.max(0, i - 19);
+    let dollarVolSum = 0;
+    for (let k = dvFrom; k <= i; k++) dollarVolSum += data[k].close * data[k].volume;
+    const avgDailyDollarVol = dollarVolSum / (i - dvFrom + 1);
+
     const result = evaluateSignal({
       ticker,
       indicators,
@@ -253,6 +272,13 @@ function runBacktestForTicker(
       config,
       recentBuyDates,
       currentDate: data[i].date,
+      // Institutional/flow inputs — series up to bar i (no lookahead) + market RS + liquidity.
+      allCloses: closes.slice(0, i + 1),
+      allHighs: highs.slice(0, i + 1),
+      allLows: lows.slice(0, i + 1),
+      allVolumes: volumes.slice(0, i + 1),
+      spyCandles,
+      avgDailyDollarVol,
     });
 
     if (result.finalDecision === 'BUY') {
@@ -548,6 +574,15 @@ export async function backtest() {
 
   console.log(`Loaded data for ${allData.size} tickers\n`);
 
+  // Market benchmark (SPY) for relative strength (rsSpy) — loaded once, no lookahead.
+  let spyData: BenchmarkCandle[] = [];
+  try {
+    spyData = await DataLoader.loadHistoricalData('SPY', 1095);
+    console.log(`SPY benchmark: ${spyData.length} bars\n`);
+  } catch {
+    console.log('SPY benchmark unavailable — relative strength stays 0\n');
+  }
+
   // Price data for win rate measurement
   const priceData = new Map<string, { date: Date; close: number }[]>();
   for (const [ticker, data] of allData) {
@@ -647,10 +682,10 @@ export async function backtest() {
   const v4Signals: BacktestSignal[] = [];
   const v5Signals: BacktestSignal[] = [];
   for (const [ticker, data] of allData) {
-    v2Signals.push(...runBacktestForTicker(data, ticker, v2Config));
-    v3Signals.push(...runBacktestForTicker(data, ticker, v3Config));
-    v4Signals.push(...runBacktestForTicker(data, ticker, v4Config));
-    v5Signals.push(...runBacktestForTicker(data, ticker, v5Config));
+    v2Signals.push(...runBacktestForTicker(data, ticker, v2Config, spyData));
+    v3Signals.push(...runBacktestForTicker(data, ticker, v3Config, spyData));
+    v4Signals.push(...runBacktestForTicker(data, ticker, v4Config, spyData));
+    v5Signals.push(...runBacktestForTicker(data, ticker, v5Config, spyData));
   }
 
   const v2Result = measure5DayWinRate(v2Signals, priceData);
