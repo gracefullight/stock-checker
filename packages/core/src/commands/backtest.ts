@@ -106,11 +106,92 @@ function buildIndicatorsAtBar(
   };
 }
 
+// Ticker → sector ETF (for sector relative strength, rsSector). Unmapped → no sector.
+const TICKER_SECTOR_ETF: Record<string, string> = {
+  // Technology
+  INTC: 'XLK',
+  GLW: 'XLK',
+  CIEN: 'XLK',
+  AVGO: 'XLK',
+  AAPL: 'XLK',
+  MSFT: 'XLK',
+  NVDA: 'XLK',
+  AMD: 'XLK',
+  QCOM: 'XLK',
+  MU: 'XLK',
+  MRVL: 'XLK',
+  SMCI: 'XLK',
+  ARM: 'XLK',
+  CRM: 'XLK',
+  SNOW: 'XLK',
+  DDOG: 'XLK',
+  NET: 'XLK',
+  CRWD: 'XLK',
+  ZS: 'XLK',
+  PANW: 'XLK',
+  PLTR: 'XLK',
+  POET: 'XLK',
+  IONQ: 'XLK',
+  U: 'XLK',
+  ENPH: 'XLK',
+  SEDG: 'XLK',
+  FSLR: 'XLK',
+  // Communication Services
+  GOOGL: 'XLC',
+  META: 'XLC',
+  NFLX: 'XLC',
+  SNAP: 'XLC',
+  PINS: 'XLC',
+  RBLX: 'XLC',
+  ROKU: 'XLC',
+  // Consumer Discretionary
+  TSLA: 'XLY',
+  AMZN: 'XLY',
+  RIVN: 'XLY',
+  LCID: 'XLY',
+  SHOP: 'XLY',
+  UBER: 'XLY',
+  ABNB: 'XLY',
+  DASH: 'XLY',
+  // Financials
+  HOOD: 'XLF',
+  UPST: 'XLF',
+  SQ: 'XLF',
+  COIN: 'XLF',
+  SOFI: 'XLF',
+  AFRM: 'XLF',
+  DLO: 'XLF',
+  // Health Care
+  DNA: 'XLV',
+  ABCL: 'XLV',
+  RXRX: 'XLV',
+  MRNA: 'XLV',
+  CRSP: 'XLV',
+  NVAX: 'XLV',
+  // Industrials (clean-energy equipment / power)
+  GEV: 'XLI',
+  BE: 'XLI',
+  // Real Estate
+  OPEN: 'XLRE',
+};
+
+function alignBenchmark(bench: BenchmarkCandle[], data: { date: Date }[]): number[] {
+  const idxForBar: number[] = new Array(data.length).fill(-1);
+  if (bench.length === 0) return idxForBar;
+  let bp = 0;
+  for (let i = 0; i < data.length; i++) {
+    while (bp + 1 < bench.length && bench[bp + 1].date.getTime() <= data[i].date.getTime()) bp++;
+    idxForBar[i] = bench[bp].date.getTime() <= data[i].date.getTime() ? bp : -1;
+  }
+  return idxForBar;
+}
+
 function runBacktestForTicker(
   data: { date: Date; open: number; high: number; low: number; close: number; volume: number }[],
   ticker: string,
   config: PipelineConfig,
-  spy: BenchmarkCandle[] = []
+  spy: BenchmarkCandle[] = [],
+  sector: BenchmarkCandle[] = []
 ): BacktestSignal[] {
   if (data.length < 210) return [];
 
@@ -119,15 +200,9 @@ function runBacktestForTicker(
   const lows = data.map((d) => d.low);
   const volumes = data.map((d) => d.volume);
 
-  // Align SPY benchmark to each bar (last SPY bar on/before the ticker bar) — no lookahead.
-  const spyIdxForBar: number[] = new Array(data.length).fill(-1);
-  if (spy.length > 0) {
-    let sp = 0;
-    for (let i = 0; i < data.length; i++) {
-      while (sp + 1 < spy.length && spy[sp + 1].date.getTime() <= data[i].date.getTime()) sp++;
-      spyIdxForBar[i] = spy[sp].date.getTime() <= data[i].date.getTime() ? sp : -1;
-    }
-  }
+  // Align benchmarks to each bar (last bench bar on/before the ticker bar) — no lookahead.
+  const spyIdxForBar = alignBenchmark(spy, data);
+  const sectorIdxForBar = alignBenchmark(sector, data);
 
   // Pre-compute indicators
   const rsi2Arr = RSI.calculate({ values: closes, period: 2 });
@@ -255,6 +330,8 @@ function runBacktestForTicker(
 
     const spyIdx = spyIdxForBar[i];
     const spyCandles = spyIdx >= 0 ? spy.slice(0, spyIdx + 1) : [];
+    const sectorIdx = sectorIdxForBar[i];
+    const sectorCandles = sectorIdx >= 0 ? sector.slice(0, sectorIdx + 1) : [];
     const dvFrom = Math.max(0, i - 19);
     let dollarVolSum = 0;
     for (let k = dvFrom; k <= i; k++) dollarVolSum += data[k].close * data[k].volume;
@@ -278,6 +355,7 @@ function runBacktestForTicker(
       allLows: lows.slice(0, i + 1),
       allVolumes: volumes.slice(0, i + 1),
       spyCandles,
+      sectorCandles,
       avgDailyDollarVol,
     });
 
@@ -583,6 +661,20 @@ export async function backtest() {
     console.log('SPY benchmark unavailable — relative strength stays 0\n');
   }
 
+  // Sector ETFs for sector relative strength (rsSector) — loaded once.
+  const sectorData = new Map<string, BenchmarkCandle[]>();
+  const neededEtfs = [
+    ...new Set([...allData.keys()].map((t) => TICKER_SECTOR_ETF[t]).filter(Boolean)),
+  ];
+  for (const etf of neededEtfs) {
+    try {
+      sectorData.set(etf, await DataLoader.loadHistoricalData(etf, 1095));
+    } catch {
+      /* skip */
+    }
+  }
+  console.log(`Sector ETFs loaded: ${[...sectorData.keys()].join(', ')}\n`);
+
   // Price data for win rate measurement
   const priceData = new Map<string, { date: Date; close: number }[]>();
   for (const [ticker, data] of allData) {
@@ -682,10 +774,11 @@ export async function backtest() {
   const v4Signals: BacktestSignal[] = [];
   const v5Signals: BacktestSignal[] = [];
   for (const [ticker, data] of allData) {
-    v2Signals.push(...runBacktestForTicker(data, ticker, v2Config, spyData));
-    v3Signals.push(...runBacktestForTicker(data, ticker, v3Config, spyData));
-    v4Signals.push(...runBacktestForTicker(data, ticker, v4Config, spyData));
-    v5Signals.push(...runBacktestForTicker(data, ticker, v5Config, spyData));
+    const sec = sectorData.get(TICKER_SECTOR_ETF[ticker]) ?? [];
+    v2Signals.push(...runBacktestForTicker(data, ticker, v2Config, spyData, sec));
+    v3Signals.push(...runBacktestForTicker(data, ticker, v3Config, spyData, sec));
+    v4Signals.push(...runBacktestForTicker(data, ticker, v4Config, spyData, sec));
+    v5Signals.push(...runBacktestForTicker(data, ticker, v5Config, spyData, sec));
   }
 
   const v2Result = measure5DayWinRate(v2Signals, priceData);
