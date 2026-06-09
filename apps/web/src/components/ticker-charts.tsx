@@ -45,7 +45,9 @@ export function TickerCharts({
     <>
       <Card className="rounded-none ring-0 border border-border bg-card py-0">
         <CardContent className="p-0">
-          <CandlestickChart ticker={ticker} days={180} />
+          {/* key forces a fresh instance per ticker so the chart's data cache
+              never bleeds a previous symbol's candles into a new one. */}
+          <CandlestickChart key={ticker} ticker={ticker} days={180} />
         </CardContent>
       </Card>
 

@@ -37,7 +37,10 @@ export interface OHLCVCandle {
 
 const instance = axios.create({
   baseURL: API_URL,
-  timeout: 10_000,
+  // Upstream (yahoo-finance: fundamentals + earnings + OHLCV) routinely needs
+  // well over 10s; keep a generous ceiling so detail/portfolio pages don't
+  // false-timeout while still bounding genuinely hung requests.
+  timeout: 30_000,
   headers: { 'Content-Type': 'application/json' },
 });
 
