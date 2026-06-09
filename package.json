@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "prepare": "mise run hooks:install"
+    "prepare": "command -v mise >/dev/null 2>&1 && mise run hooks:install || echo 'mise not found; skipping git hooks install'"
   },
   "engines": {
     "node": "24",
