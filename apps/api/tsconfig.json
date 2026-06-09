@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
+    "baseUrl": ".",
     "paths": {
       "@/*": ["../../packages/core/src/*", "./src/*"],
       "@stock-checker/core": ["../../packages/core/src/index.ts"],
