@@ -7,7 +7,7 @@ export function ScoreBar({ value, max = 600 }: ScoreBarProps) {
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
 
   let fillColor: string;
-  if (value > 370) {
+  if (value > 280) {
     fillColor = 'bg-[var(--green)]';
   } else if (value < 200) {
     fillColor = 'bg-[var(--red)]';
@@ -17,7 +17,7 @@ export function ScoreBar({ value, max = 600 }: ScoreBarProps) {
 
   return (
     <div
-      className="flex items-center gap-2 min-w-[120px]"
+      className="flex items-center gap-2 min-w-[140px]"
       role="meter"
       aria-valuenow={value}
       aria-valuemin={0}
@@ -30,7 +30,9 @@ export function ScoreBar({ value, max = 600 }: ScoreBarProps) {
           style={{ width: `${pct}%` }}
         />
       </div>
-      <span className="text-xs font-mono text-[var(--text-secondary)] w-8 text-right">{value}</span>
+      <span className="text-xs font-mono text-[var(--text-secondary)] w-10 text-right tabular-nums">
+        {Math.round(value)}
+      </span>
     </div>
   );
 }
