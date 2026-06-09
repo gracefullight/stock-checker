@@ -448,4 +448,68 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
     // window so the same deteriorating setup cannot re-trigger on later bars.
     expect(result.qualityBlocked).toBe(true);
   });
+
+  // --- SELL = exit discipline, regime-gated for the institutional strategy ---
+  // A distribution-day scenario (heavy volume below VWAP + Donchian breakdown +
+  // MACD dead cross → sellScore ≥ 130). Backtest showed these SELLs have
+  // NEGATIVE directional edge inside an intact uptrend (selling leaders), so
+  // they must be suppressed to HOLD unless the trend itself is broken.
+  describe('institutional SELL regime gate', () => {
+    // 40 descending closes → price sits below VWAP20 (vwap gradient ~0) and the
+    // bar closes near the Donchian low.
+    const fallCloses = Array.from({ length: 40 }, (_, i) => 140 - i);
+    const fallHighs = fallCloses.map((c) => c + 2);
+    const fallLows = fallCloses.map((c) => c - 2);
+    const fallVolumes = Array.from({ length: 40 }, () => 1_000_000);
+
+    const bearishIndicators = (overrides: Partial<IndicatorValues>) =>
+      makeIndicators({
+        rsi: 45,
+        stochasticK: 30,
+        williamsR: -70,
+        bbLower: 90,
+        bbUpper: 200, // %B ≈ 0.09 → no bollinger sell contribution
+        donchLower: 95,
+        donchUpper: 200, // donch position ≈ 0.05 → full breakdown contribution (50)
+        volumeRatio: 1.6, // ≥1.5 + below VWAP → distribution contribution (72)
+        ...overrides,
+      });
+
+    const sellScenario = (indicators: IndicatorValues) =>
+      evaluateSignal({
+        ticker: 'SELL_TEST',
+        indicators,
+        close: 100,
+        open: 101,
+        fearGreed: 50,
+        patternScore: 0,
+        recentCandles: [makeCandle(105, 103), makeCandle(103, 101), makeCandle(101, 100)],
+        recentMacdHistogram: [0.2, 0.1, -0.1], // dead cross → macd sell contribution (35)
+        config: instConfig,
+        allCloses: fallCloses,
+        allHighs: fallHighs,
+        allLows: fallLows,
+        allVolumes: fallVolumes,
+        spyCandles: shortBenchmark,
+        sectorCandles: shortBenchmark,
+        avgDailyDollarVol: 0,
+      });
+
+    it('fires SELL when the trend regime is downtrend (exit discipline)', () => {
+      // close 100 < sma50 120 < sma200 150 → 0/3 conditions → downtrend
+      const result = sellScenario(bearishIndicators({ sma50: 120, sma200: 150 }));
+      expect(result.gateResults.trend.regime).toBe('downtrend');
+      expect(result.finalDecision).toBe('SELL');
+    });
+
+    it('suppresses the same SELL to HOLD inside an intact uptrend', () => {
+      // close 100 > sma50 95 > sma200 90 → 3/3 conditions → uptrend
+      const result = sellScenario(bearishIndicators({ sma50: 95, sma200: 90 }));
+      expect(result.gateResults.trend.regime).toBe('uptrend');
+      // sellScore still qualifies numerically, but the regime gate blocks it —
+      // never sell a leader inside an intact trend on a panic day.
+      expect(result.sellScore).toBeGreaterThanOrEqual(instConfig.thresholds.sell);
+      expect(result.finalDecision).toBe('HOLD');
+    });
+  });
 });

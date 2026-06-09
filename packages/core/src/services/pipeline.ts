@@ -367,8 +367,18 @@ export function evaluateSignal(params: {
     };
   }
 
-  // Check SELL path (no trend gate or reversal confirmation needed)
-  if (sellScore >= config.thresholds.sell && sellScore > buyScore) {
+  // Check SELL path (no trend gate or reversal confirmation needed).
+  //
+  // For the 'institutional' strategy, SELL is an EXIT discipline, not a downside
+  // prediction: backtest showed distribution-day SELLs have NEGATIVE directional
+  // edge (41.9% 5-day accuracy vs 47.6% base down-rate — panic days mean-revert),
+  // and essay #1 treats distribution as a holder's exit warning, not a short
+  // signal. So SELL only fires when the trend itself is broken (regime =
+  // downtrend, essay #2's exit rule) AND distribution is confirmed by sellScore.
+  // Selling leaders inside an intact uptrend is exactly the mistake the essays
+  // warn against — those SELLs are suppressed to HOLD.
+  const sellRegimeOk = config.strategy !== 'institutional' || trendResult.regime === 'downtrend';
+  if (sellScore >= config.thresholds.sell && sellScore > buyScore && sellRegimeOk) {
     return {
       ticker,
       finalDecision: 'SELL',

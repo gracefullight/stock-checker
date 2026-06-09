@@ -65,6 +65,29 @@ plus RSI/MACD only as seasoning. RSI is *not* important.
 - Essay-#2 trend-hold exit on the same entries: lower WR (~40-50%) but R/R 2-3 —
   a different objective, kept as a documented option, not the default.
 
+## SELL signals are EXIT discipline, not downside predictions
+
+Validated 2026-06 on the same universe: SELL signals (distribution day = heavy
+volume below VWAP + Donchian breakdown + MACD dead cross) have **negative
+directional edge** — 41.9% 5-day accuracy vs a 47.6% all-bars base down-rate,
+with +1.8%/5d and +4.2%/20d average forward returns. Panic days mean-revert;
+nothing we tested (distribution days, weak-RS subsets, Gaussian red-flips)
+predicts lower prices ahead with positive edge in this universe.
+
+Therefore:
+
+1. **SELL never means "short this" or "price will fall".** It means *"the trend
+   is broken and distribution is confirmed — holders should exit"* (essay #1 §8
+   treats distribution as a holder's warning; essay #2's exit rule is the
+   Gaussian flip).
+2. The institutional pipeline **suppresses SELL inside an intact uptrend**
+   (regime gate): selling leaders on a panic day is exactly the retail mistake
+   essay #1 warns about. In the 2026 correction (broken-trend regime) the gated
+   SELLs hit 76.9% — exit discipline works when it matters.
+3. The validated position-exit discipline remains the V6/V8 trend-hold: ride
+   the Gaussian green, exit on flip (or mid-cross) with a hard stop — R/R 2–3.5
+   per trade cycle vs ~1.2 for fixed 5-day exits.
+
 ## Hard-won validation rules
 
 1. **Post-hoc filters lie.** A filter applied to recorded signals overestimates the

@@ -675,6 +675,64 @@ function measure5DayWinRate(
   };
 }
 
+interface SellAccuracyResult {
+  total: number;
+  hits: number; // forward return < 0 (the SELL was right)
+  accuracy: number; // %
+  avgRet: number; // average forward return (negative = good for a SELL)
+  avgDown: number; // average |return| when right
+  avgUp: number; // average return when wrong
+  rewardRisk: number; // avgDown / avgUp
+}
+
+/**
+ * SELL-side validation: a SELL "hit" means price is LOWER after `horizon` bars.
+ * Must be compared against the all-bars base down-rate — this universe drifts
+ * up, so the base rate is below 50% and raw accuracy alone overstates nothing.
+ */
+function measureSellAccuracy(
+  signals: BacktestSignal[],
+  allData: Map<string, { date: Date; close: number }[]>,
+  horizon = 5
+): SellAccuracyResult {
+  let hits = 0;
+  let total = 0;
+  let downSum = 0;
+  let downCnt = 0;
+  let upSum = 0;
+  let upCnt = 0;
+  let retSum = 0;
+  for (const sig of signals) {
+    if (sig.decision !== 'SELL') continue;
+    const prices = allData.get(sig.ticker);
+    if (!prices) continue;
+    const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
+    if (idx === -1 || idx + horizon >= prices.length) continue;
+    const ret = ((prices[idx + horizon].close - sig.close) / sig.close) * 100;
+    total++;
+    retSum += ret;
+    if (ret < 0) {
+      hits++;
+      downSum += -ret;
+      downCnt++;
+    } else {
+      upSum += ret;
+      upCnt++;
+    }
+  }
+  const avgDown = downCnt > 0 ? downSum / downCnt : 0;
+  const avgUp = upCnt > 0 ? upSum / upCnt : 0;
+  return {
+    total,
+    hits,
+    accuracy: total > 0 ? (hits / total) * 100 : 0,
+    avgRet: total > 0 ? retSum / total : 0,
+    avgDown,
+    avgUp,
+    rewardRisk: avgUp > 0 ? avgDown / avgUp : 0,
+  };
+}
+
 /**
  * Trend-following exit: enter on a BUY signal, hold until the Gaussian Channel
  * turns red (downtrend) or a stop is hit, capped at maxHold bars. Measures the
@@ -1319,6 +1377,130 @@ export async function backtest() {
     const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
     console.log(
       `${ex.name.padEnd(22)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${String(r.totalSignals).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
+    );
+  }
+
+  // ==========================================================================
+  // SELL signal validation — the SELL path bypasses every buy-side gate, so it
+  // has never been win-rate validated. A SELL "hit" = price LOWER after the
+  // horizon. Edge = accuracy − all-bars base down-rate (the universe drifts up,
+  // so the base rate is the honest yardstick, not 50%).
+  // ==========================================================================
+  console.log('\n📉 SELL signal validation (institutional pipeline SELLs):');
+  const sellSignals = v5Signals.filter((s) => s.decision === 'SELL');
+  console.log(`Total SELL signals: ${sellSignals.length}`);
+  if (sellSignals.length > 0) {
+    console.log(
+      `${'Horizon'.padEnd(8)} | ${'Accuracy'.padStart(8)} | ${'BaseDown'.padStart(8)} | ${'Edge'.padStart(7)} | ${'AvgRet'.padStart(7)} | ${'R/R'.padStart(5)} | ${'N'.padStart(5)}`
+    );
+    for (const h of [1, 3, 5, 10, 20]) {
+      // Base rate: fraction of ALL bars (same warm-up) whose h-bar forward return is negative.
+      let baseDown = 0;
+      let baseN = 0;
+      for (const [, ctx] of ctxMap) {
+        const c = ctx.closes;
+        for (let i = 205; i + h < c.length; i++) {
+          baseN++;
+          if (c[i + h] < c[i]) baseDown++;
+        }
+      }
+      const baseRate = baseN > 0 ? (baseDown / baseN) * 100 : 0;
+      const r = measureSellAccuracy(sellSignals, priceData, h);
+      console.log(
+        `${`${h}d`.padEnd(8)} | ${`${r.accuracy.toFixed(1)}%`.padStart(8)} | ${`${baseRate.toFixed(1)}%`.padStart(8)} | ${`${(r.accuracy - baseRate).toFixed(1)}pp`.padStart(7)} | ${`${r.avgRet.toFixed(2)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${String(r.total).padStart(5)}`
+      );
+    }
+    console.log('  By entry year (5d):');
+    for (const yr of ['2023', '2024', '2025', '2026']) {
+      const sub = sellSignals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+      if (sub.length === 0) continue;
+      const r = measureSellAccuracy(sub, priceData, 5);
+      console.log(
+        `    ${yr}: accuracy=${r.accuracy.toFixed(1)}%  avgRet=${r.avgRet.toFixed(2)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.total}`
+      );
+    }
+    console.log('  By trend regime (5d):');
+    for (const regime of ['uptrend', 'downtrend', 'sideways']) {
+      const sub = sellSignals.filter((s) => s.regime === regime);
+      if (sub.length === 0) continue;
+      const r = measureSellAccuracy(sub, priceData, 5);
+      console.log(
+        `    ${regime.padEnd(9)}: accuracy=${r.accuracy.toFixed(1)}%  avgRet=${r.avgRet.toFixed(2)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.total}`
+      );
+    }
+    // Which component actually carries information? (SELL path has no gate
+    // feedback, so post-hoc subsetting of fired SELLs is valid here.)
+    console.log('  By driver subset (5d):');
+    const sellSubsets: { name: string; f: (s: BacktestSignal) => boolean }[] = [
+      { name: 'distribution vwap<.3+volR≥1.5', f: (s) => s.vwap < 0.3 && s.volumeRatio >= 1.5 },
+      { name: 'overbought rsi≥75', f: (s) => s.rsi >= 75 },
+      { name: 'not-overbought rsi<75', f: (s) => s.rsi < 75 },
+      { name: 'rsi<75 + downtrend', f: (s) => s.rsi < 75 && s.regime === 'downtrend' },
+      { name: 'rsi<75 + volR≥1.5', f: (s) => s.rsi < 75 && s.volumeRatio >= 1.5 },
+      {
+        name: 'distrib + downtrend',
+        f: (s) => s.vwap < 0.3 && s.volumeRatio >= 1.5 && s.regime === 'downtrend',
+      },
+      { name: 'weak RS (rsSpy<.3 & rsSector<.3)', f: (s) => s.rsSpy < 0.3 && s.rsSector < 0.3 },
+      {
+        name: 'weak RS + distribution',
+        f: (s) => s.rsSpy < 0.3 && s.rsSector < 0.3 && s.vwap < 0.3 && s.volumeRatio >= 1.5,
+      },
+    ];
+    for (const sub of sellSubsets) {
+      const rows = sellSignals.filter(sub.f);
+      if (rows.length === 0) {
+        console.log(`    ${sub.name.padEnd(32)}: N=0`);
+        continue;
+      }
+      const r = measureSellAccuracy(rows, priceData, 5);
+      console.log(
+        `    ${sub.name.padEnd(32)}: accuracy=${r.accuracy.toFixed(1)}%  avgRet=${r.avgRet.toFixed(2)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.total}`
+      );
+    }
+  }
+
+  // Candidate replacement SELL trigger — essay #2's exit rule: the Gaussian
+  // Channel flipping red. Measured directly on the precomputed series (the flip
+  // bar is causal: series[i] uses closes[0..i] only).
+  console.log('\n  Gaussian red-flip as SELL trigger (vs same base rates):');
+  for (const h of [5, 10, 20]) {
+    let hits = 0;
+    let total = 0;
+    let retSum = 0;
+    let downSum = 0;
+    let downCnt = 0;
+    let upSum = 0;
+    let upCnt = 0;
+    let baseDown = 0;
+    let baseN = 0;
+    for (const [, ctx] of ctxMap) {
+      const c = ctx.closes;
+      const g = ctx.gaussianSeries;
+      for (let i = 206; i + h < c.length; i++) {
+        baseN++;
+        if (c[i + h] < c[i]) baseDown++;
+        const flippedRed = g[i].direction === 'down' && g[i - 1].direction !== 'down';
+        if (!flippedRed) continue;
+        const ret = ((c[i + h] - c[i]) / c[i]) * 100;
+        total++;
+        retSum += ret;
+        if (ret < 0) {
+          hits++;
+          downSum += -ret;
+          downCnt++;
+        } else {
+          upSum += ret;
+          upCnt++;
+        }
+      }
+    }
+    const baseRate = baseN > 0 ? (baseDown / baseN) * 100 : 0;
+    const acc = total > 0 ? (hits / total) * 100 : 0;
+    const avgDown = downCnt > 0 ? downSum / downCnt : 0;
+    const avgUp = upCnt > 0 ? upSum / upCnt : 0;
+    console.log(
+      `    ${`${h}d`.padEnd(4)}: accuracy=${acc.toFixed(1)}%  base=${baseRate.toFixed(1)}%  edge=${(acc - baseRate).toFixed(1)}pp  avgRet=${total > 0 ? (retSum / total).toFixed(2) : '0'}%  R/R=${avgUp > 0 ? (avgDown / avgUp).toFixed(2) : '0'}  N=${total}`
     );
   }
 
