@@ -86,6 +86,12 @@ export interface OHLCVCandle {
   low: number;
   close: number;
   volume: number;
+  sma20: number | null;
+  sma50: number | null;
+  sma200: number | null;
+  bbUpper: number | null;
+  bbLower: number | null;
+  signal: 'BUY' | 'SELL' | 'HOLD' | null;
 }
 
 /**

@@ -1,5 +1,7 @@
 import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
 import { getFearGreedIndex, getHistoricalPrices } from '@stock-checker/core/src/services/data-fetcher';
+import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
+import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
 import { getEarningsData } from '@stock-checker/core/src/services/earnings';
 import { getFundamentals } from '@stock-checker/core/src/services/fundamentals';
 import { getStockNews } from '@stock-checker/core/src/services/news';
@@ -109,15 +111,36 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         const ticker = req.params.ticker.toUpperCase();
         const days = Math.min(Number(req.query.days ?? 180), 730);
         const data = await getHistoricalPrices(ticker, days);
+
+        const closes = data.map((d) => d.close);
+        const sma20 = calcSMA(closes, 20);
+        const sma50 = calcSMA(closes, 50);
+        const sma200 = calcSMA(closes, 200);
+        const bb = calcBB(closes, 20, 2);
+
+        const fromDate = data[0]?.date.toISOString().split('T')[0] ?? '';
+        const signalMap = new Map(
+          getSignalHistory(ticker, fromDate).map((s) => [s.date, s.opinion])
+        );
+
         return reply.send(
-          data.map((d) => ({
-            time: d.date.toISOString().split('T')[0],
-            open: d.open ?? d.close,
-            high: d.high ?? d.close,
-            low: d.low ?? d.close,
-            close: d.close,
-            volume: d.volume ?? 0,
-          }))
+          data.map((d, i) => {
+            const date = d.date.toISOString().split('T')[0];
+            return {
+              time: date,
+              open: d.open ?? d.close,
+              high: d.high ?? d.close,
+              low: d.low ?? d.close,
+              close: d.close,
+              volume: d.volume ?? 0,
+              sma20: sma20[i],
+              sma50: sma50[i],
+              sma200: sma200[i],
+              bbUpper: bb[i].upper,
+              bbLower: bb[i].lower,
+              signal: signalMap.get(date) ?? null,
+            };
+          })
         );
       } catch (error) {
         req.log.error({ err: error }, 'ohlcv failed');

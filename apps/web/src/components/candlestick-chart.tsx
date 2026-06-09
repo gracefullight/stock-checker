@@ -1,12 +1,28 @@
 'use client';
 
-import { CandlestickSeries, HistogramSeries, createChart } from 'lightweight-charts';
+import {
+  CandlestickSeries,
+  HistogramSeries,
+  LineSeries,
+  createChart,
+  createSeriesMarkers,
+} from 'lightweight-charts';
 import { useEffect, useRef, useState } from 'react';
+import type { OHLCVCandle } from '@/lib/api';
 import { getOHLCV } from '@/lib/api';
 
 interface Props {
   ticker: string;
   days?: number;
+}
+
+type LinePoint = { time: string; value: number } | { time: string };
+
+function toLineData(candles: OHLCVCandle[], key: 'sma20' | 'sma50' | 'sma200' | 'bbUpper' | 'bbLower'): LinePoint[] {
+  return candles.map((d) => {
+    const v = d[key];
+    return v !== null ? { time: d.time, value: v } : { time: d.time };
+  });
 }
 
 export function CandlestickChart({ ticker, days = 180 }: Props) {
@@ -32,9 +48,10 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
       rightPriceScale: { borderColor: '#1f1f1f' },
       timeScale: { borderColor: '#1f1f1f', timeVisible: true },
       width: container.clientWidth,
-      height: 320,
+      height: 380,
     });
 
+    // --- candles ---
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#00ff88',
       downColor: '#ff3333',
@@ -44,6 +61,48 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
       wickDownColor: '#ff3333',
     });
 
+    // --- MA lines ---
+    const sma20Series = chart.addSeries(LineSeries, {
+      color: '#f5c518',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    const sma50Series = chart.addSeries(LineSeries, {
+      color: '#4488ff',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    const sma200Series = chart.addSeries(LineSeries, {
+      color: '#ff8844',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
+    // --- Bollinger Bands ---
+    const bbUpperSeries = chart.addSeries(LineSeries, {
+      color: '#888888',
+      lineWidth: 1,
+      lineStyle: 2, // dashed
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    const bbLowerSeries = chart.addSeries(LineSeries, {
+      color: '#888888',
+      lineWidth: 1,
+      lineStyle: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
+    // --- volume pane ---
     const volumePane = chart.addPane();
     const volumeSeries = volumePane.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
@@ -52,6 +111,12 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
     getOHLCV(ticker, days)
       .then((data) => {
         candleSeries.setData(data);
+        sma20Series.setData(toLineData(data, 'sma20'));
+        sma50Series.setData(toLineData(data, 'sma50'));
+        sma200Series.setData(toLineData(data, 'sma200'));
+        bbUpperSeries.setData(toLineData(data, 'bbUpper'));
+        bbLowerSeries.setData(toLineData(data, 'bbLower'));
+
         volumeSeries.setData(
           data.map((d) => ({
             time: d.time,
@@ -59,6 +124,22 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
             color: d.close >= d.open ? '#00ff8833' : '#ff333333',
           }))
         );
+
+        // signal markers
+        const markers = data
+          .filter((d) => d.signal === 'BUY' || d.signal === 'SELL')
+          .map((d) => ({
+            time: d.time as import('lightweight-charts').Time,
+            position: (d.signal === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
+            shape: (d.signal === 'BUY' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
+            color: d.signal === 'BUY' ? '#00ff88' : '#ff3333',
+            text: d.signal!,
+            size: 1,
+          }));
+        if (markers.length > 0) {
+          createSeriesMarkers(candleSeries, markers);
+        }
+
         chart.timeScale().fitContent();
         setStatus('ready');
       })
@@ -77,7 +158,7 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
 
   if (status === 'error') {
     return (
-      <div className="h-[400px] flex items-center justify-center font-mono text-xs text-[var(--red)]">
+      <div className="h-[420px] flex items-center justify-center font-mono text-xs text-[var(--red)]">
         CHART DATA UNAVAILABLE
       </div>
     );
@@ -86,9 +167,35 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
   return (
     <div className="relative w-full">
       {status === 'loading' && (
-        <div className="absolute inset-0 bg-[var(--surface)] animate-pulse z-10" />
+        <div className="absolute inset-0 h-[420px] bg-[var(--surface)] animate-pulse z-10" />
       )}
       <div ref={containerRef} className="w-full" />
+      {status === 'ready' && (
+        <div className="flex gap-4 px-1 pt-1">
+          <LegendItem color="#f5c518" label="SMA20" />
+          <LegendItem color="#4488ff" label="SMA50" />
+          <LegendItem color="#ff8844" label="SMA200" />
+          <LegendItem color="#888888" label="BB" dashed />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LegendItem({ color, label, dashed }: { color: string; label: string; dashed?: boolean }) {
+  return (
+    <div className="flex items-center gap-1">
+      <span
+        className="w-5 h-px"
+        style={{
+          background: color,
+          borderTop: dashed ? `1px dashed ${color}` : `1px solid ${color}`,
+          display: 'inline-block',
+        }}
+      />
+      <span className="font-mono text-[10px]" style={{ color }}>
+        {label}
+      </span>
     </div>
   );
 }
