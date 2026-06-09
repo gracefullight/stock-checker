@@ -221,6 +221,31 @@ export function evaluateSignal(params: {
       }
     }
 
+    // Gate 1.7: Entry-quality (pullback) gate — essay-aligned. Require a calm
+    // intraday pullback with steady, non-blowoff participation before buying:
+    // low IBS (closed near the low), low ATR% (calm name), moderate volume.
+    if (config.qualityGate?.enabled) {
+      const q = config.qualityGate;
+      const bar = recentCandles[recentCandles.length - 1];
+      const range = bar ? bar.high - bar.low : 0;
+      const ibs = range > 0 ? (close - bar.low) / range : 0.5;
+      const atrPct = close > 0 ? (indicators.atr / close) * 100 : 0;
+      const volR = indicators.volumeRatio;
+      const qualified =
+        ibs < q.ibsMax && atrPct < q.atrPctMax && volR > q.volRMin && volR < q.volRMax;
+      if (!qualified) {
+        return makeHold(
+          ticker,
+          buyScore,
+          sellScore,
+          trendResult,
+          HOLD_CONFLUENCE,
+          HOLD_REVERSAL,
+          instResult
+        );
+      }
+    }
+
     // Gate 2.5: Institutional score gate
     // For the 'institutional' strategy the score is already BLENDED into buyScore
     // via institutionalGradientScore — do NOT hard-gate here, allow the signal through.

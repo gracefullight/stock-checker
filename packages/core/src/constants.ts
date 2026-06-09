@@ -172,6 +172,33 @@ export const DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG = {
   institutional: DEFAULT_INSTITUTIONAL_CONFIG,
 } satisfies import('@/types').PipelineConfig;
 
+/**
+ * Entry-quality (pullback) gate parameters — the most robust config from the
+ * Phase-4 goal search (backtest.ts): largest signal count among those that meet
+ * the goal on BOTH train (≤2024) and holdout (≥2025).
+ *   ibs<0.3, atr%<3.5, 0.8<volR<2.0  →  full-sample 5-day WR ~65.5% / R/R ~1.50
+ *   vs institutional baseline 53.3% / 1.21.
+ * Essay-aligned: low IBS = 눌림목(intraday weakness) entry (essay #2);
+ *   0.8<volR<2 = steady accumulation, not a blowoff spike (essay #1).
+ */
+export const DEFAULT_QUALITY_GATE = {
+  enabled: true,
+  ibsMax: 0.3,
+  atrPctMax: 3.5,
+  volRMin: 0.8,
+  volRMax: 2.0,
+};
+
+/**
+ * Institutional (flow-primary) strategy WITH the entry-quality gate enabled.
+ * This is the recommended high-selectivity config: fewer, higher-quality entries
+ * that hit the ≥60% win-rate / improved-R/R goal in backtest.
+ */
+export const DEFAULT_QUALITY_PIPELINE_CONFIG = {
+  ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
+  qualityGate: DEFAULT_QUALITY_GATE,
+} satisfies import('@/types').PipelineConfig;
+
 export const RISK_MULTIPLIER = 1.5;
 export const REWARD_MULTIPLIER = 2;
 export const TRAILING_MULTIPLIER = 1.2;

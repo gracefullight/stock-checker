@@ -383,4 +383,65 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
     expect(result.gateResults.institutional.passed).toBe(false);
     expect(result.finalDecision).toBe('HOLD');
   });
+
+  // --- Entry-quality (pullback) gate (Gate 1.7) ---
+  // Reuses the same BUY scenario and toggles ONLY the quality gate, so the test
+  // isolates the gate's effect from the scoring path. The entry bar here is
+  // makeCandle(104, 105): high=106, low=103, close=105 → IBS=(105-103)/(106-103)≈0.67;
+  // atr=5, close=105 → ATR%≈4.76; volumeRatio=1.6.
+  it('preserves BUY when the quality gate is enabled but the entry bar qualifies', () => {
+    const lenientGate: PipelineConfig = {
+      ...instConfig,
+      // Lenient thresholds the bar satisfies: ibs 0.67<0.7, atr% 4.76<5, 0.8<1.6<2
+      qualityGate: { enabled: true, ibsMax: 0.7, atrPctMax: 5, volRMin: 0.8, volRMax: 2 },
+    };
+    const result = evaluateSignal({
+      ticker: 'Q_PASS',
+      indicators,
+      close,
+      open: 104,
+      fearGreed: 50,
+      patternScore: 0,
+      recentCandles,
+      recentMacdHistogram: [-0.2, -0.1, 0.1],
+      config: lenientGate,
+      allCloses,
+      allHighs,
+      allLows,
+      allVolumes,
+      spyCandles: shortBenchmark,
+      sectorCandles: shortBenchmark,
+      avgDailyDollarVol: 0,
+    });
+    expect(result.finalDecision).toBe('BUY');
+  });
+
+  it('downgrades BUY to HOLD when the entry bar fails the quality gate', () => {
+    const strictGate: PipelineConfig = {
+      ...instConfig,
+      // Shipped DEFAULT_QUALITY_GATE thresholds: the bar fails ibs (0.67≮0.3) and atr% (4.76≮3.5)
+      qualityGate: { enabled: true, ibsMax: 0.3, atrPctMax: 3.5, volRMin: 0.8, volRMax: 2 },
+    };
+    const result = evaluateSignal({
+      ticker: 'Q_FAIL',
+      indicators,
+      close,
+      open: 104,
+      fearGreed: 50,
+      patternScore: 0,
+      recentCandles,
+      recentMacdHistogram: [-0.2, -0.1, 0.1],
+      config: strictGate,
+      allCloses,
+      allHighs,
+      allLows,
+      allVolumes,
+      spyCandles: shortBenchmark,
+      sectorCandles: shortBenchmark,
+      avgDailyDollarVol: 0,
+    });
+    expect(result.finalDecision).toBe('HOLD');
+    // Blocked by the quality gate, not by trend/score — the trend gate still passed.
+    expect(result.gateResults.trend.passed).toBe(true);
+  });
 });

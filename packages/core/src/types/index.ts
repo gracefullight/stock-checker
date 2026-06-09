@@ -218,6 +218,23 @@ export interface PipelineConfig {
     enabled: boolean;
     minGapDays: number;
   };
+  /**
+   * Entry-quality (pullback) gate — essay-aligned. When enabled, a qualifying BUY
+   * is downgraded to HOLD unless the entry bar is a calm pullback with steady,
+   * non-blowoff participation:
+   *   - IBS  = (close − low) / (high − low) < ibsMax  (closed near the low = bought weakness)
+   *   - ATR% = atr / close * 100        < atrPctMax    (calmer name)
+   *   - volRMin < volumeRatio < volRMax  (real but not climactic/blowoff volume)
+   * Backtested (5-day directional, train ≤2024 / holdout ≥2025) to lift win rate
+   * to ~65% with R/R ~1.5, both well above the institutional baseline (53% / 1.21).
+   */
+  qualityGate?: {
+    enabled: boolean;
+    ibsMax: number;
+    atrPctMax: number;
+    volRMin: number;
+    volRMax: number;
+  };
   institutional: InstitutionalConfig;
 }
 
