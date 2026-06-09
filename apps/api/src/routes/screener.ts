@@ -2,9 +2,11 @@ import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
 import {
   getFearGreedIndex,
   getHistoricalPrices,
+  getQuoteNames,
 } from '@stock-checker/core/src/services/data-fetcher';
 import { getEarningsData } from '@stock-checker/core/src/services/earnings';
 import { getFundamentals } from '@stock-checker/core/src/services/fundamentals';
+import { gaussianChannel } from '@stock-checker/core/src/services/gaussian-channel';
 import { getStockNews } from '@stock-checker/core/src/services/news';
 import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
 import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
@@ -43,13 +45,17 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const fearGreed = await getFearGreedIndex();
-      const settled = await Promise.allSettled(
-        tickers.map((ticker) => analyzeTicker(ticker, fearGreed))
-      );
+      // Analysis (slow, per-ticker) and company-name lookup (one batch call) run together.
+      const [settled, names] = await Promise.all([
+        Promise.allSettled(tickers.map((ticker) => analyzeTicker(ticker, fearGreed))),
+        getQuoteNames(tickers),
+      ]);
 
+      const nameMap = names ?? {};
       const results = settled
         .map((r) => (r.status === 'fulfilled' ? r.value : null))
-        .filter((r) => r !== null);
+        .filter((r) => r !== null)
+        .map((r) => ({ ...r, name: nameMap[r.ticker] ?? r.name }));
 
       return reply.send({
         results,
@@ -120,6 +126,8 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         const sma50 = calcSMA(closes, 50);
         const sma200 = calcSMA(closes, 200);
         const bb = calcBB(closes, 20, 2);
+        // Gaussian Channel — full per-bar series (mid/upper/lower + trend color)
+        const gc = gaussianChannel(closes).series;
 
         const fromDate = data[0]?.date.toISOString().split('T')[0] ?? '';
         const signalMap = new Map(
@@ -141,6 +149,10 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
               sma200: sma200[i],
               bbUpper: bb[i].upper,
               bbLower: bb[i].lower,
+              gaussianMid: gc[i].mid,
+              gaussianUpper: gc[i].upper,
+              gaussianLower: gc[i].lower,
+              gaussianGreen: gc[i].isGreen,
               signal: signalMap.get(date) ?? null,
             };
           })

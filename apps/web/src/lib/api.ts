@@ -32,6 +32,10 @@ export interface OHLCVCandle {
   sma200: number | null;
   bbUpper: number | null;
   bbLower: number | null;
+  gaussianMid: number;
+  gaussianUpper: number;
+  gaussianLower: number;
+  gaussianGreen: boolean;
   signal: 'BUY' | 'SELL' | 'HOLD' | null;
 }
 

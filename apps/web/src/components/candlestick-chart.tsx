@@ -9,9 +9,18 @@ import {
 } from 'lightweight-charts';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
+import { GaussianBandSeries } from '@/components/gaussian-band-series';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { OHLCVCandle } from '@/lib/api';
 import { getOHLCV } from '@/lib/api';
+
+/** Convert a #rrggbb hex (from readToken) to an rgba() string with alpha. */
+function hexToRgba(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return hex;
+  const int = Number.parseInt(m[1], 16);
+  return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
+}
 
 interface Props {
   ticker: string;
@@ -92,6 +101,14 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
       height: 380,
     });
 
+    // --- Gaussian Channel translucent fill (drawn first = behind candles) ---
+    const gcBandSeries = chart.addCustomSeries(new GaussianBandSeries(), {
+      colorUp: hexToRgba(successColor, 0.13),
+      colorDown: hexToRgba(destructiveColor, 0.13),
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
     // --- candles ---
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: successColor,
@@ -143,6 +160,22 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
       crosshairMarkerVisible: false,
     });
 
+    // --- Gaussian Channel: a trend-colored ENVELOPE (upper + lower + mid),
+    //     green = uptrend (filter rising), red = downtrend. Both band edges are
+    //     colored so it reads as a channel, not just lines. Color flip = reversal.
+    const gcSeries = (color: string, width: 1 | 2) =>
+      chart.addSeries(LineSeries, {
+        color,
+        lineWidth: width,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+    const gcUpperUp = gcSeries(successColor, 1);
+    const gcUpperDown = gcSeries(destructiveColor, 1);
+    const gcLowerUp = gcSeries(successColor, 1);
+    const gcLowerDown = gcSeries(destructiveColor, 1);
+
     // --- volume pane ---
     const volumePane = chart.addPane();
     const volumeSeries = volumePane.addSeries(HistogramSeries, {
@@ -156,6 +189,25 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
       sma200Series.setData(toLineData(data, 'sma200'));
       bbUpperSeries.setData(toLineData(data, 'bbUpper'));
       bbLowerSeries.setData(toLineData(data, 'bbLower'));
+
+      // Gaussian Channel: each band line split into green/red segments by the
+      // bar's trend direction (whitespace gaps where the other color owns the bar).
+      const gcSplit = (key: 'gaussianUpper' | 'gaussianLower' | 'gaussianMid', green: boolean) =>
+        data.map((d) =>
+          d.gaussianGreen === green ? { time: d.time, value: d[key] } : { time: d.time }
+        );
+      gcUpperUp.setData(gcSplit('gaussianUpper', true));
+      gcUpperDown.setData(gcSplit('gaussianUpper', false));
+      gcLowerUp.setData(gcSplit('gaussianLower', true));
+      gcLowerDown.setData(gcSplit('gaussianLower', false));
+      gcBandSeries.setData(
+        data.map((d) => ({
+          time: d.time,
+          upper: d.gaussianUpper,
+          lower: d.gaussianLower,
+          green: d.gaussianGreen,
+        }))
+      );
 
       // Volume bars — lightweight-charts' canvas parser only understands legacy
       // color strings, so append an 8-digit-hex alpha ("20" ≈ 12.5%) to the
@@ -218,6 +270,7 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
     { tokenVar: '--primary', label: 'SMA50' },
     { tokenVar: '--chart-1', label: 'SMA200' },
     { tokenVar: '--muted-foreground', label: 'BB', dashed: true },
+    { tokenVar: '--success', label: 'GC (trend)' },
   ];
 
   if (status === 'error') {

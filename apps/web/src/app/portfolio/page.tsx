@@ -85,7 +85,7 @@ async function PortfolioHoldings({ tickers }: { tickers: string[] }) {
     <Card className="overflow-hidden">
       <CardHeader className="border-b border-border py-1.5 px-3">
         <span className="text-[10px] font-mono text-muted-foreground">
-          {results.length} RESULTS — SORTED BY SCORE DESC BY DEFAULT
+          {results.length} RESULTS
         </span>
       </CardHeader>
       <CardContent className="p-0">

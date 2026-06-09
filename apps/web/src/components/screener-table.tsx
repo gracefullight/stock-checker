@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { TickerResult } from '@/lib/api';
 
 type SortKey = 'ticker' | 'close' | 'rsi' | 'score' | 'opinion';
@@ -41,6 +42,37 @@ function rsiColorClass(rsi: number): string {
   if (rsi >= 70) return 'text-destructive';
   if (rsi <= 30) return 'text-success';
   return 'text-foreground';
+}
+
+/** Ticker link that shows the company name in a tooltip on hover (when known). */
+function TickerLink({
+  ticker,
+  name,
+  className,
+}: {
+  ticker: string;
+  name?: string;
+  className?: string;
+}) {
+  if (!name) {
+    return (
+      <Link href={`/${ticker}`} className={className}>
+        {ticker}
+      </Link>
+    );
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={(props) => (
+          <Link {...props} href={`/${ticker}`} className={className}>
+            {ticker}
+          </Link>
+        )}
+      />
+      <TooltipContent>{name}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 export function ScreenerTable({ results }: ScreenerTableProps) {
@@ -113,9 +145,11 @@ export function ScreenerTable({ results }: ScreenerTableProps) {
             {sorted.map((row) => (
               <TableRow key={row.ticker} className={rowBorderColor(row.opinion)}>
                 <TableCell className="font-bold font-mono text-xs text-foreground">
-                  <Link href={`/${row.ticker}`} className="hover:text-primary transition-colors">
-                    {row.ticker}
-                  </Link>
+                  <TickerLink
+                    ticker={row.ticker}
+                    name={row.name}
+                    className="hover:text-primary transition-colors"
+                  />
                 </TableCell>
                 <TableCell className="tabular-nums font-mono text-xs text-right text-foreground">
                   {row.close.toFixed(2)}
@@ -174,12 +208,11 @@ export function ScreenerTable({ results }: ScreenerTableProps) {
           {sorted.map((row) => (
             <li key={row.ticker} className={`p-3 ${rowBorderColor(row.opinion)}`}>
               <div className="flex items-center justify-between gap-2">
-                <Link
-                  href={`/${row.ticker}`}
+                <TickerLink
+                  ticker={row.ticker}
+                  name={row.name}
                   className="font-bold font-mono text-sm text-foreground hover:text-primary"
-                >
-                  {row.ticker}
-                </Link>
+                />
                 <SignalBadge signal={row.opinion as 'BUY' | 'SELL' | 'HOLD'} />
               </div>
               <div className="mt-2 flex items-center justify-between font-mono text-xs text-muted-foreground">
