@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_INSTITUTIONAL_CONFIG,
+  DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
   DEFAULT_PIPELINE_CONFIG,
   MEAN_REVERSION_GRADIENT_RANGES,
 } from '@/constants';
+import type { BenchmarkCandle } from '@/services/data-fetcher';
 import { evaluateSignal } from '@/services/pipeline';
 import type { CandleData, IndicatorValues, PipelineConfig } from '@/types';
 
@@ -241,5 +243,144 @@ describe('evaluateSignal', () => {
     });
     // Should not be blocked by trend
     expect(result.gateResults.trend.passed).toBe(true);
+  });
+});
+
+// --- C4: Blend-not-hard-gate for 'institutional' strategy ---
+//
+// Asserts: under strategy='institutional', a signal with STRONG flow but
+// instResult.passed===false still returns finalDecision='BUY'.
+// Under strategy='momentum' (legacy hard-gate), the same weak instResult blocks it.
+describe('evaluateSignal — institutional blend-not-hard-gate', () => {
+  // Use SMA-based trend (not gaussian) by not passing allCloses,
+  // so trend gate resolves from SMA50 > SMA200 uptrend.
+  const instConfig: PipelineConfig = {
+    ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
+    // Override trendGate to SMA-based so we don't need full allCloses for gaussian
+    trendGate: {
+      enabled: true,
+      minConditions: 1,
+      sidewaysThreshold: 3,
+    },
+    // Ensure institutional enabled so calcInstitutionalScore runs
+    institutional: { ...DEFAULT_INSTITUTIONAL_CONFIG, enabled: true },
+  };
+
+  // Close = 105, donchUpper = 106, so close >= donchUpper * 0.98 (breakout zone)
+  // volumeRatio = 1.6 >= 1.5 → breakoutVolGrad = 1.0
+  // Closes trending up so close > vwap20 and volumeRatio > 1.0 → vwapGrad = 1.0
+  // No spyCandles / sectorCandles (length < rsLookback.long + 1 = 127) → rsSpy = rsSector = 0
+  // earningsBeat = null → earningsGrad = 0.3
+  // avgDailyDollarVol = 0 → liquidityGrad = 0
+  //
+  // instResult.score = 0*0.3 + 0*0.25 + 1.0*0.2 + 1.0*0.15 + 0*0.07 + 0.3*0.03 = 0.359 < 0.55
+  // → instResult.passed = false
+  //
+  // institutionalGradientScore buyScore = rsSpy(0)*120 + rsSector(0)*90 + vwap(1)*90
+  //   + breakoutVol(1)*110 + liquidity(0)*40 + earnings(0.3)*30 + oscillators
+  //   = 0 + 0 + 90 + 110 + 0 + 9 + oscillators = 209+ → >= 200 threshold → BUY
+
+  const close = 105;
+  // Build allCloses: 20 bars ascending so vwap < close and recent candles show uptrend
+  const allCloses = Array.from({ length: 20 }, (_, i) => 90 + i);
+  // allHighs / allLows / allVolumes matching the close series
+  const allHighs = allCloses.map((c) => c + 2);
+  const allLows = allCloses.map((c) => c - 2);
+  const allVolumes = Array.from({ length: 20 }, () => 1_000_000);
+
+  const indicators = makeIndicators({
+    rsi: 65,
+    stochasticK: 65,
+    williamsR: -30,
+    donchLower: 85,
+    donchUpper: 106, // close(105) >= 106*0.98=103.88 → nearBreakout
+    sma20: 98,
+    ema20: 98,
+    sma50: 102,
+    sma200: 90,
+    volumeRatio: 1.6, // >= 1.5 → breakoutVolGrad=1.0 and vwapGrad=1.0
+  });
+
+  const recentCandles: CandleData[] = [
+    makeCandle(100, 103),
+    makeCandle(103, 104),
+    makeCandle(104, 105),
+  ];
+
+  // Short spy/sector candles: fewer than rsLookback.long+1 = 127 → rsSpy=rsSector=0
+  const shortBenchmark: BenchmarkCandle[] = Array.from({ length: 10 }, (_, i) => ({
+    date: new Date(2024, 0, i + 1),
+    open: 400,
+    high: 402,
+    low: 398,
+    close: 400,
+    volume: 10_000_000,
+  }));
+
+  it('should return BUY under institutional strategy even when instResult.passed is false', () => {
+    const result = evaluateSignal({
+      ticker: 'INST_TEST',
+      indicators,
+      close,
+      open: 104,
+      fearGreed: 50,
+      patternScore: 0,
+      recentCandles,
+      recentMacdHistogram: [-0.2, -0.1, 0.1], // MACD crossover → extra seasoning
+      config: instConfig,
+      allCloses,
+      allHighs,
+      allLows,
+      allVolumes,
+      spyCandles: shortBenchmark,
+      sectorCandles: shortBenchmark,
+      avgDailyDollarVol: 0,
+      earningsBeat: null,
+      earningsEstimateUp: null,
+    });
+
+    // instResult.passed should be false (score < 0.55 because rsSpy=rsSector=0, no liquidity)
+    expect(result.gateResults.institutional.passed).toBe(false);
+    // BUT institutional strategy blends flow into score, so BUY is still reached
+    expect(result.finalDecision).toBe('BUY');
+  });
+
+  it('should return HOLD under momentum strategy with the same weak instResult (hard-gate blocks)', () => {
+    // Momentum config with institutional enabled (hard-gate) and same flow scenario
+    const momentumConfig: PipelineConfig = {
+      ...DEFAULT_PIPELINE_CONFIG,
+      strategy: 'momentum',
+      institutional: { ...DEFAULT_INSTITUTIONAL_CONFIG, enabled: true },
+      trendGate: { enabled: true, minConditions: 1, sidewaysThreshold: 3 },
+      reversalConfirm: { ...DEFAULT_PIPELINE_CONFIG.reversalConfirm, enabled: false },
+      confidenceGate: { ...DEFAULT_PIPELINE_CONFIG.confidenceGate, enabled: false },
+      regimeFilter: { enabled: false, blockUptrend: false },
+      clusterFilter: { enabled: false, minGapDays: 5 },
+    };
+
+    const result = evaluateSignal({
+      ticker: 'MOM_TEST',
+      indicators,
+      close,
+      open: 104,
+      fearGreed: 50,
+      patternScore: 0,
+      recentCandles,
+      recentMacdHistogram: [-0.2, -0.1, 0.1],
+      config: momentumConfig,
+      allCloses,
+      allHighs,
+      allLows,
+      allVolumes,
+      spyCandles: shortBenchmark,
+      sectorCandles: shortBenchmark,
+      avgDailyDollarVol: 0,
+      earningsBeat: null,
+      earningsEstimateUp: null,
+    });
+
+    // Hard-gate: instResult.passed===false blocks BUY for momentum strategy
+    expect(result.gateResults.institutional.passed).toBe(false);
+    expect(result.finalDecision).toBe('HOLD');
   });
 });

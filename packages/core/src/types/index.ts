@@ -38,6 +38,8 @@ export interface PatternResult {
 
 export interface TickerResult {
   ticker: string;
+  /** Human-readable company name (longName/shortName), when available. */
+  name?: string;
   date: string;
   close: number;
   volume: number;
@@ -112,6 +114,8 @@ export interface TrendGateConfig {
   enabled: boolean;
   minConditions: number;
   sidewaysThreshold: number;
+  /** Trend source for the pipeline.  'sma' = classic SMA50/200 cross; 'gaussian' = Gaussian Channel filter. Default: 'sma' */
+  source?: 'sma' | 'gaussian';
 }
 
 export interface TrendGateResult {
@@ -181,7 +185,7 @@ export interface InstitutionalScore {
 }
 
 export interface PipelineConfig {
-  strategy: 'mean-reversion' | 'momentum';
+  strategy: 'mean-reversion' | 'momentum' | 'institutional';
   indicatorWeights: {
     rsi: number;
     stochastic: number;

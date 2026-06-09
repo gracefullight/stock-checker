@@ -267,7 +267,160 @@ function momentumGradientScore(params: {
   return { buyScore, sellScore, gradients };
 }
 
+// --- Institutional / Flow-Primary Scoring (strategy: 'institutional') ---
+//
+// Weight budget (buy side, total theoretical max shown in parens):
+//
+//   FLOW components (sum of weights = 390):
+//     relativeStrength  rsSpy + rsSector blended via institutionalScore  (weight 120)
+//     vwap accumulation                                                   (weight  90)
+//     breakout + relative-volume                                          (weight 110)
+//     liquidity / dollar-vol quality                                      (weight  40)
+//     earnings revision                                                   (weight  30)
+//
+//   OSCILLATOR "seasoning" (sum = 130):
+//     RSI momentum zone                                                   (weight  40)
+//     MACD crossover                                                       (weight  35)
+//     Stochastic                                                           (weight  25)
+//     Williams %R                                                          (weight  30)
+//
+// Total theoretical max buy score ≈ 520 (before pattern contribution).
+// Threshold should be set proportionally lower than momentum to fire more frequently.
+//
+// Flow dominance test: a +1 unit change in any flow component contributes
+// (component weight) vs oscillator max contribution = 25-40.  Flow components
+// each dominate oscillators individually.
+
+export interface InstitutionalFlowInputs {
+  /** Raw institutional score component gradients (each in [0, 1]) */
+  rsSpy: number;
+  rsSector: number;
+  vwap: number;
+  breakoutVol: number;
+  liquidity: number;
+  earnings: number;
+}
+
+/**
+ * Flow-primary gradient score for the 'institutional' strategy.
+ * Oscillators are included at light confirmation weight only.
+ */
+function institutionalGradientScore(params: {
+  indicators: IndicatorValues;
+  close: number;
+  fearGreed: number | null;
+  patternScore: number;
+  recentMacdHistogram: number[];
+  config: PipelineConfig;
+  flowInputs?: InstitutionalFlowInputs;
+}): { buyScore: number; sellScore: number; gradients: Record<string, number> } {
+  const { indicators, close, patternScore, recentMacdHistogram, flowInputs } = params;
+  const { gradientRanges: gr } = params.config;
+
+  // -- FLOW gradients (primary) --
+
+  // rsSpy and rsSector: if provided from institutionalScore components, use them;
+  // otherwise fall back to volume-proxy (cannot compute RS without benchmark series here)
+  const rsSpyGrad = flowInputs?.rsSpy ?? 0;
+  const rsSectorGrad = flowInputs?.rsSector ?? 0;
+  const vwapGrad = flowInputs?.vwap ?? 0;
+  const breakoutVolGrad = flowInputs?.breakoutVol ?? 0;
+  const liquidityGrad = flowInputs?.liquidity ?? 0;
+  const earningsGrad = flowInputs?.earnings ?? 0;
+
+  // Flow component weights (primary — heavy)
+  const W_RS_SPY = 120;
+  const W_RS_SECTOR = 90; // slightly lower than SPY
+  const W_VWAP = 90;
+  const W_BREAKOUT_VOL = 110;
+  const W_LIQUIDITY = 40;
+  const W_EARNINGS = 30;
+
+  // -- OSCILLATOR gradients (seasoning — light confirmation) --
+
+  // RSI in momentum zone (higher reading = positive flow confirmation)
+  const rsiGrad = linearGradient(indicators.rsi, gr.rsi.max, gr.rsi.mid, gr.rsi.zero);
+
+  // MACD crossover (decay-based, same helper)
+  const macdGrad = macdCrossoverGrad(recentMacdHistogram, 'positive');
+
+  // Stochastic K in momentum zone
+  const stochKGrad = linearGradient(
+    indicators.stochasticK,
+    gr.stochK.max,
+    gr.stochK.mid,
+    gr.stochK.zero
+  );
+
+  // Williams %R (momentum interpretation)
+  const williamsRGrad = linearGradient(
+    indicators.williamsR,
+    gr.williamsR.max,
+    gr.williamsR.mid,
+    gr.williamsR.zero
+  );
+
+  // Oscillator weights (light — confirmation only)
+  const W_RSI = 40;
+  const W_MACD = 35;
+  const W_STOCH = 25;
+  const W_WILLIAMS = 30;
+
+  const gradients: Record<string, number> = {
+    rsSpy: rsSpyGrad,
+    rsSector: rsSectorGrad,
+    vwap: vwapGrad,
+    breakoutVol: breakoutVolGrad,
+    liquidity: liquidityGrad,
+    earnings: earningsGrad,
+    rsi: rsiGrad,
+    macd: macdGrad,
+    stochK: stochKGrad,
+    williamsR: williamsRGrad,
+  };
+
+  const buyScore =
+    // Flow (primary)
+    rsSpyGrad * W_RS_SPY +
+    rsSectorGrad * W_RS_SECTOR +
+    vwapGrad * W_VWAP +
+    breakoutVolGrad * W_BREAKOUT_VOL +
+    liquidityGrad * W_LIQUIDITY +
+    earningsGrad * W_EARNINGS +
+    // Oscillators (seasoning)
+    rsiGrad * W_RSI +
+    macdGrad * W_MACD +
+    stochKGrad * W_STOCH +
+    williamsRGrad * W_WILLIAMS +
+    // Pattern contribution unchanged
+    patternScore;
+
+  // Sell side: breakdown signals
+  const bbRange = indicators.bbUpper - indicators.bbLower;
+  const bollingerPctB = bbRange > 0 ? (close - indicators.bbLower) / bbRange : 0.5;
+  const donchRange = indicators.donchUpper - indicators.donchLower;
+  const donchPosition = donchRange > 0 ? (close - indicators.donchLower) / donchRange : 0.5;
+
+  const rsiSellGrad = linearGradient(indicators.rsi, 90, 82, 75);
+  const macdSellGrad = macdCrossoverGrad(recentMacdHistogram, 'negative');
+  const bollingerSellGrad = linearGradient(bollingerPctB, 1.1, 1.0, 0.85);
+  const donchianSellGrad = linearGradient(donchPosition, 0.1, 0.25, 0.5);
+  // Flow reversal signals: price below vwap + high relative volume on downside
+  const vwapSellGrad = vwapGrad < 0.3 && indicators.volumeRatio >= 1.5 ? 0.8 : 0;
+
+  const sellScore =
+    rsiSellGrad * W_RSI +
+    macdSellGrad * W_MACD +
+    bollingerSellGrad * 50 +
+    donchianSellGrad * 50 +
+    vwapSellGrad * W_VWAP;
+
+  return { buyScore, sellScore, gradients };
+}
+
 // --- Public API ---
+
+export { institutionalGradientScore };
 
 export function gradientScore(params: {
   indicators: IndicatorValues;
@@ -276,7 +429,11 @@ export function gradientScore(params: {
   patternScore: number;
   recentMacdHistogram: number[];
   config: PipelineConfig;
+  flowInputs?: InstitutionalFlowInputs;
 }): { buyScore: number; sellScore: number; gradients: Record<string, number> } {
+  if (params.config.strategy === 'institutional') {
+    return institutionalGradientScore(params);
+  }
   if (params.config.strategy === 'momentum') {
     return momentumGradientScore(params);
   }

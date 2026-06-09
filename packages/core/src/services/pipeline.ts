@@ -1,6 +1,7 @@
 import { gradientScore } from '@/services/analysis';
 import { confluenceCheck } from '@/services/confluence';
 import type { BenchmarkCandle } from '@/services/data-fetcher';
+import { gaussianChannel } from '@/services/gaussian-channel';
 import { calcInstitutionalScore } from '@/services/institutional';
 import { reversalConfirm } from '@/services/reversal-confirm';
 import { trendGate } from '@/services/trend-gate';
@@ -99,24 +100,29 @@ export function evaluateSignal(params: {
   } = params;
 
   // Gate 1: Trend filter (buy-side only)
-  const trendResult = trendGate({
-    close,
-    sma50: indicators.sma50,
-    sma200: indicators.sma200,
-    config: config.trendGate,
-  });
+  // When trendGate.source === 'gaussian' we derive regime from the Gaussian Channel;
+  // otherwise we fall back to the classic SMA50/200 cross (existing behaviour).
+  let trendResult: TrendGateResult;
+  if (config.trendGate.source === 'gaussian' && allCloses.length >= 2) {
+    const gc = gaussianChannel(allCloses);
+    const regime: TrendGateResult['regime'] =
+      gc.direction === 'up' ? 'uptrend' : gc.direction === 'down' ? 'downtrend' : 'sideways';
+    trendResult = {
+      passed: regime === 'uptrend' || regime === 'sideways',
+      regime,
+      strength: gc.direction === 'up' ? 100 : gc.direction === 'down' ? 0 : 50,
+      reason: `Gaussian Channel: filter ${gc.direction}, isGreen=${gc.isGreen}`,
+    };
+  } else {
+    trendResult = trendGate({
+      close,
+      sma50: indicators.sma50,
+      sma200: indicators.sma200,
+      config: config.trendGate,
+    });
+  }
 
-  // Gate 2: Gradient scoring
-  const { buyScore, sellScore, gradients } = gradientScore({
-    indicators,
-    close,
-    fearGreed,
-    patternScore,
-    recentMacdHistogram,
-    config,
-  });
-
-  // Gate 2.5: Institutional score (pre-compute, gate inside BUY path)
+  // Gate 2.5: Institutional score (always compute when enabled — needed by both strategies)
   const instResult = config.institutional.enabled
     ? calcInstitutionalScore({
         close,
@@ -138,6 +144,19 @@ export function evaluateSignal(params: {
         passed: true,
         components: { rsSpy: 0, rsSector: 0, vwap: 0, breakoutVol: 0, liquidity: 0, earnings: 0 },
       };
+
+  // Gate 2: Gradient scoring
+  // For 'institutional' strategy, pass the pre-computed flow component gradients so
+  // institutionalGradientScore can use them as primary (flow-dominant) inputs.
+  const { buyScore, sellScore, gradients } = gradientScore({
+    indicators,
+    close,
+    fearGreed,
+    patternScore,
+    recentMacdHistogram,
+    config,
+    flowInputs: config.strategy === 'institutional' ? instResult.components : undefined,
+  });
 
   // Check BUY path
   if (buyScore >= config.thresholds.buy && buyScore >= sellScore) {
@@ -203,7 +222,10 @@ export function evaluateSignal(params: {
     }
 
     // Gate 2.5: Institutional score gate
-    if (config.institutional.enabled && !instResult.passed) {
+    // For the 'institutional' strategy the score is already BLENDED into buyScore
+    // via institutionalGradientScore — do NOT hard-gate here, allow the signal through.
+    // For legacy strategies (momentum/mean-reversion) keep the original hard-gate.
+    if (config.strategy !== 'institutional' && config.institutional.enabled && !instResult.passed) {
       return makeHold(
         ticker,
         buyScore,

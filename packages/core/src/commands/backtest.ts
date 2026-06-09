@@ -5,6 +5,7 @@
 import { BollingerBands, EMA, MACD, RSI, SMA, Stochastic, WilliamsR } from 'technicalindicators';
 import {
   DEFAULT_INSTITUTIONAL_CONFIG,
+  DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
   DEFAULT_PIPELINE_CONFIG,
   MEAN_REVERSION_GRADIENT_RANGES,
 } from '@/constants';
@@ -544,28 +545,37 @@ export async function backtest() {
     confidenceGate: { ...DEFAULT_PIPELINE_CONFIG.confidenceGate, enabled: false },
   };
 
+  // V5 = institutional (flow-primary + gaussian trend + blended institutional)
+  const v5Config: PipelineConfig = {
+    ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
+  };
+
   const v2Signals: BacktestSignal[] = [];
   const v3Signals: BacktestSignal[] = [];
   const v4Signals: BacktestSignal[] = [];
+  const v5Signals: BacktestSignal[] = [];
   for (const [ticker, data] of allData) {
     v2Signals.push(...runBacktestForTicker(data, ticker, v2Config));
     v3Signals.push(...runBacktestForTicker(data, ticker, v3Config));
     v4Signals.push(...runBacktestForTicker(data, ticker, v4Config));
+    v5Signals.push(...runBacktestForTicker(data, ticker, v5Config));
   }
 
   const v2Result = measure5DayWinRate(v2Signals, priceData);
   const v3Result = measure5DayWinRate(v3Signals, priceData);
   const v4Result = measure5DayWinRate(v4Signals, priceData);
+  const v5Result = measure5DayWinRate(v5Signals, priceData);
 
   console.log(
-    `\n${'Version'.padEnd(8)} | ${'WinRate'.padStart(8)} | ${'Signals'.padStart(8)} | ${'AvgRet'.padStart(8)} | ${'R/R'.padStart(6)} | ${'Sig/Mo'.padStart(6)}`
+    `\n${'Version'.padEnd(20)} | ${'WinRate'.padStart(8)} | ${'Signals'.padStart(8)} | ${'AvgRet'.padStart(8)} | ${'R/R'.padStart(6)} | ${'Sig/Mo'.padStart(6)}`
   );
-  console.log('-'.repeat(60));
+  console.log('-'.repeat(72));
   const fmtRow = (name: string, r: WinRateResult) =>
-    `${name.padEnd(8)} | ${(`${r.winRate5d.toFixed(1)}%`).padStart(8)} | ${String(r.totalSignals).padStart(8)} | ${(`${r.avgReturn.toFixed(2)}%`).padStart(8)} | ${r.rewardRisk.toFixed(2).padStart(6)} | ${r.signalsPerMonth.toFixed(1).padStart(6)}`;
+    `${name.padEnd(20)} | ${(`${r.winRate5d.toFixed(1)}%`).padStart(8)} | ${String(r.totalSignals).padStart(8)} | ${(`${r.avgReturn.toFixed(2)}%`).padStart(8)} | ${r.rewardRisk.toFixed(2).padStart(6)} | ${r.signalsPerMonth.toFixed(1).padStart(6)}`;
   console.log(fmtRow('V2', v2Result));
   console.log(fmtRow('V3', v3Result));
   console.log(fmtRow('V4 (momentum)', v4Result));
+  console.log(fmtRow('V5 (institutional)', v5Result));
   console.log('\nDelta (V4 - V2 baseline):');
   console.log(`  Win rate:    ${(v4Result.winRate5d - v2Result.winRate5d).toFixed(1)}pp`);
   console.log(
@@ -573,6 +583,13 @@ export async function backtest() {
   );
   console.log(`  Avg return:  ${(v4Result.avgReturn - v2Result.avgReturn).toFixed(2)}pp`);
   console.log(`  R/R ratio:   ${(v4Result.rewardRisk - v2Result.rewardRisk).toFixed(2)}`);
+  console.log('\nDelta (V5 - V2 baseline):');
+  console.log(`  Win rate:    ${(v5Result.winRate5d - v2Result.winRate5d).toFixed(1)}pp`);
+  console.log(
+    `  Signals:     ${v5Result.totalSignals - v2Result.totalSignals} (${v5Result.totalSignals > v2Result.totalSignals ? '+' : ''}${((v5Result.totalSignals / Math.max(v2Result.totalSignals, 1) - 1) * 100).toFixed(0)}%)`
+  );
+  console.log(`  Avg return:  ${(v5Result.avgReturn - v2Result.avgReturn).toFixed(2)}pp`);
+  console.log(`  R/R ratio:   ${(v5Result.rewardRisk - v2Result.rewardRisk).toFixed(2)}`);
 
   // Phase 1: Diagnostic — analyze signals from V4 momentum config
   const baseConfig: PipelineConfig = {

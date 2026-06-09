@@ -89,3 +89,25 @@ export async function getFearGreedIndex(): Promise<number | null> {
     return null;
   }
 }
+
+/**
+ * Batch-fetch human-readable company names for a list of symbols in a single
+ * quote() request. Non-critical: returns whatever resolves, {} on failure.
+ */
+export async function getQuoteNames(symbols: string[]): Promise<Record<string, string>> {
+  if (symbols.length === 0) return {};
+  try {
+    const quotes = await yahooFinance.quote(symbols);
+    const list = Array.isArray(quotes) ? quotes : [quotes];
+    const names: Record<string, string> = {};
+    for (const q of list) {
+      if (q?.symbol) {
+        names[q.symbol] = q.longName ?? q.shortName ?? q.symbol;
+      }
+    }
+    return names;
+  } catch (error) {
+    logger.error({ error }, 'Failed to fetch quote names');
+    return {};
+  }
+}
