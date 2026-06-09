@@ -173,13 +173,16 @@ export const DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG = {
 } satisfies import('@/types').PipelineConfig;
 
 /**
- * Entry-quality (pullback) gate parameters — the most robust config from the
- * Phase-4 goal search (backtest.ts): largest signal count among those that meet
- * the goal on BOTH train (≤2024) and holdout (≥2025).
- *   ibs<0.3, atr%<3.5, 0.8<volR<2.0  →  full-sample 5-day WR ~65.5% / R/R ~1.50
- *   vs institutional baseline 53.3% / 1.21.
+ * Entry-quality (pullback) gate parameters — tuned on the FULL 2023–2026 span
+ * (5y) through the real pipeline, not a post-hoc filter.
+ *   ibs<0.3, atr%<3.5, 0.8<volR<2.0, buyScore<380
+ *     → 5-day WR 59.8% / R/R 1.25 / N≈291  vs institutional baseline 52.1% / 1.16.
+ * Honest note: a robust ≥60% WR is NOT achievable in this universe once 2023 is
+ * included (the earlier 61% was a 2024-start data-window artifact). This config
+ * is the best win-rate/R-R trade-off that holds across years.
  * Essay-aligned: low IBS = 눌림목(intraday weakness) entry (essay #2);
- *   0.8<volR<2 = steady accumulation, not a blowoff spike (essay #1).
+ *   0.8<volR<2 = steady accumulation, not a blowoff (essay #1);
+ *   buyScore<380 = avoid chasing parabolic/extended names (essay #1).
  */
 export const DEFAULT_QUALITY_GATE = {
   enabled: true,
@@ -187,12 +190,13 @@ export const DEFAULT_QUALITY_GATE = {
   atrPctMax: 3.5,
   volRMin: 0.8,
   volRMax: 2.0,
+  scoreMax: 380,
 };
 
 /**
  * Institutional (flow-primary) strategy WITH the entry-quality gate enabled.
  * This is the recommended high-selectivity config: fewer, higher-quality entries
- * that hit the ≥60% win-rate / improved-R/R goal in backtest.
+ * — the best win-rate/R-R trade-off found in backtest (~59.8% / 1.25 over 5y).
  */
 export const DEFAULT_QUALITY_PIPELINE_CONFIG = {
   ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,

@@ -76,6 +76,14 @@ export function evaluateSignal(params: {
   avgDailyDollarVol?: number;
   earningsBeat?: boolean | null;
   earningsEstimateUp?: boolean | null;
+  /**
+   * Optional precomputed Gaussian Channel point for this bar. The Gaussian
+   * filter is purely causal, so the point computed from the full series at index
+   * i is identical to recomputing on closes[0..i]. Callers that evaluate many
+   * bars (e.g. the backtest) can precompute the series once and pass the point
+   * here to avoid the O(n²) per-bar recompute. When omitted, it is recomputed.
+   */
+  gaussianPoint?: { direction: 'up' | 'down' | 'flat'; isGreen: boolean };
 }): PipelineResult {
   const {
     ticker,
@@ -97,6 +105,7 @@ export function evaluateSignal(params: {
     avgDailyDollarVol = 0,
     earningsBeat = null,
     earningsEstimateUp = null,
+    gaussianPoint,
   } = params;
 
   // Gate 1: Trend filter (buy-side only)
@@ -104,7 +113,8 @@ export function evaluateSignal(params: {
   // otherwise we fall back to the classic SMA50/200 cross (existing behaviour).
   let trendResult: TrendGateResult;
   if (config.trendGate.source === 'gaussian' && allCloses.length >= 2) {
-    const gc = gaussianChannel(allCloses);
+    // Reuse a precomputed point when supplied (identical result, no O(n) recompute).
+    const gc = gaussianPoint ?? gaussianChannel(allCloses);
     const regime: TrendGateResult['regime'] =
       gc.direction === 'up' ? 'uptrend' : gc.direction === 'down' ? 'downtrend' : 'sideways';
     trendResult = {
@@ -232,7 +242,11 @@ export function evaluateSignal(params: {
       const atrPct = close > 0 ? (indicators.atr / close) * 100 : 0;
       const volR = indicators.volumeRatio;
       const qualified =
-        ibs < q.ibsMax && atrPct < q.atrPctMax && volR > q.volRMin && volR < q.volRMax;
+        ibs < q.ibsMax &&
+        atrPct < q.atrPctMax &&
+        volR > q.volRMin &&
+        volR < q.volRMax &&
+        (q.scoreMax === undefined || buyScore < q.scoreMax);
       if (!qualified) {
         return makeHold(
           ticker,

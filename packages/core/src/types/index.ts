@@ -234,6 +234,12 @@ export interface PipelineConfig {
     atrPctMax: number;
     volRMin: number;
     volRMax: number;
+    /**
+     * Upper buyScore cap (essay #1: avoid chasing parabolic/blowoff names — the
+     * highest-scoring extended setups have the worst forward reward/risk). A BUY
+     * with buyScore ≥ scoreMax is downgraded to HOLD. Undefined = no cap.
+     */
+    scoreMax?: number;
   };
   institutional: InstitutionalConfig;
 }

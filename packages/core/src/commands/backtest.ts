@@ -12,10 +12,14 @@ import {
 } from '@/constants';
 import { DataLoader } from '@/optimization/data-loader';
 import type { BenchmarkCandle } from '@/services/data-fetcher';
-import { gaussianChannel } from '@/services/gaussian-channel';
+import { type GaussianChannelPoint, gaussianChannel } from '@/services/gaussian-channel';
 import { detectPatterns } from '@/services/patterns';
 import { evaluateSignal } from '@/services/pipeline';
 import type { CandleData, IndicatorValues, PipelineConfig } from '@/types';
+
+// History window per ticker (calendar days). 5y so the 205-bar warm-up clears
+// before 2023, making 2023 a full entry year in the backtest.
+const HISTORY_DAYS = 1825;
 
 interface BacktestSignal {
   date: Date;
@@ -25,6 +29,11 @@ interface BacktestSignal {
   score: number;
   regime: string;
   confluenceRatio: number;
+  // Essay #1 (institutional flow) component gradients, each in [0, 1].
+  rsSpy: number;
+  rsSector: number;
+  vwap: number;
+  breakoutVol: number;
   rsi: number;
   stochK: number;
   williamsR: number;
@@ -187,14 +196,47 @@ function alignBenchmark(bench: BenchmarkCandle[], data: { date: Date }[]): numbe
   return idxForBar;
 }
 
-function runBacktestForTicker(
+/**
+ * Per-ticker, CONFIG-INDEPENDENT precomputed context. Indicators, benchmark
+ * alignment, and rolling dollar-volume do not depend on the pipeline config, so
+ * they are computed ONCE per ticker and reused across every config pass (the
+ * backtest runs ~140 passes). This is the single biggest backtest speedup and
+ * needs no GPU — the work was simply being recomputed 140×.
+ */
+interface TickerContext {
+  data: { date: Date; open: number; high: number; low: number; close: number; volume: number }[];
+  closes: number[];
+  highs: number[];
+  lows: number[];
+  volumes: number[];
+  spy: BenchmarkCandle[];
+  sector: BenchmarkCandle[];
+  spyIdxForBar: number[];
+  sectorIdxForBar: number[];
+  rsi2Arr: number[];
+  rsiArr: number[];
+  stochArr: { k: number; d: number }[];
+  bbArr: { lower: number; upper: number; middle: number }[];
+  sma20Arr: number[];
+  ema20Arr: number[];
+  sma50Arr: number[];
+  sma200Arr: number[];
+  williamsArr: number[];
+  atrArr: number[];
+  donchLowerArr: number[];
+  donchUpperArr: number[];
+  volMaArr: number[];
+  macdHistArr: number[];
+  avgDollarVolArr: number[];
+  gaussianSeries: GaussianChannelPoint[];
+}
+
+function buildTickerContext(
   data: { date: Date; open: number; high: number; low: number; close: number; volume: number }[],
-  ticker: string,
-  config: PipelineConfig,
   spy: BenchmarkCandle[] = [],
   sector: BenchmarkCandle[] = []
-): BacktestSignal[] {
-  if (data.length < 210) return [];
+): TickerContext | null {
+  if (data.length < 210) return null;
 
   const closes = data.map((d) => d.close);
   const highs = data.map((d) => d.high);
@@ -214,8 +256,12 @@ function runBacktestForTicker(
     close: closes,
     period: 14,
     signalPeriod: 3,
-  });
-  const bbArr = BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 });
+  }) as { k: number; d: number }[];
+  const bbArr = BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 }) as {
+    lower: number;
+    upper: number;
+    middle: number;
+  }[];
   const macdArr = MACD.calculate({
     values: closes,
     fastPeriod: 12,
@@ -278,6 +324,83 @@ function runBacktestForTicker(
     return mv - sv;
   });
 
+  // Rolling 20-bar average dollar volume (config-independent) — O(n) once.
+  const avgDollarVolArr: number[] = new Array(closes.length).fill(0);
+  for (let i = 0; i < closes.length; i++) {
+    const dvFrom = Math.max(0, i - 19);
+    let dollarVolSum = 0;
+    for (let k = dvFrom; k <= i; k++) dollarVolSum += data[k].close * data[k].volume;
+    avgDollarVolArr[i] = dollarVolSum / (i - dvFrom + 1);
+  }
+
+  // Gaussian Channel series — computed ONCE (causal filter ⇒ series[i] equals
+  // recomputing on closes[0..i]). Removes the O(n²) per-bar recompute that
+  // dominated the institutional/gaussian passes.
+  const gaussianSeries = gaussianChannel(closes).series;
+
+  return {
+    data,
+    closes,
+    highs,
+    lows,
+    volumes,
+    spy,
+    sector,
+    spyIdxForBar,
+    sectorIdxForBar,
+    rsi2Arr,
+    rsiArr,
+    stochArr,
+    bbArr,
+    sma20Arr,
+    ema20Arr,
+    sma50Arr,
+    sma200Arr,
+    williamsArr,
+    atrArr,
+    donchLowerArr,
+    donchUpperArr,
+    volMaArr,
+    macdHistArr,
+    avgDollarVolArr,
+    gaussianSeries,
+  };
+}
+
+/** Run the config-DEPENDENT signal loop against a precomputed ticker context. */
+function runSignalsWithContext(
+  ctx: TickerContext,
+  ticker: string,
+  config: PipelineConfig
+): BacktestSignal[] {
+  const {
+    data,
+    closes,
+    highs,
+    lows,
+    volumes,
+    spy,
+    sector,
+    spyIdxForBar,
+    sectorIdxForBar,
+    rsi2Arr,
+    rsiArr,
+    stochArr,
+    bbArr,
+    sma20Arr,
+    ema20Arr,
+    sma50Arr,
+    sma200Arr,
+    williamsArr,
+    atrArr,
+    donchLowerArr,
+    donchUpperArr,
+    volMaArr,
+    macdHistArr,
+    avgDollarVolArr,
+    gaussianSeries,
+  } = ctx;
+
   const signals: BacktestSignal[] = [];
   const recentBuyDates: Date[] = [];
 
@@ -288,8 +411,8 @@ function runBacktestForTicker(
       lows,
       volumes,
       rsiArr,
-      stochArr as { k: number; d: number }[],
-      bbArr as { lower: number; upper: number; middle: number }[],
+      stochArr,
+      bbArr,
       sma20Arr,
       ema20Arr,
       sma50Arr,
@@ -333,10 +456,7 @@ function runBacktestForTicker(
     const spyCandles = spyIdx >= 0 ? spy.slice(0, spyIdx + 1) : [];
     const sectorIdx = sectorIdxForBar[i];
     const sectorCandles = sectorIdx >= 0 ? sector.slice(0, sectorIdx + 1) : [];
-    const dvFrom = Math.max(0, i - 19);
-    let dollarVolSum = 0;
-    for (let k = dvFrom; k <= i; k++) dollarVolSum += data[k].close * data[k].volume;
-    const avgDailyDollarVol = dollarVolSum / (i - dvFrom + 1);
+    const avgDailyDollarVol = avgDollarVolArr[i];
 
     const result = evaluateSignal({
       ticker,
@@ -358,6 +478,7 @@ function runBacktestForTicker(
       spyCandles,
       sectorCandles,
       avgDailyDollarVol,
+      gaussianPoint: gaussianSeries[i],
     });
 
     if (result.finalDecision === 'BUY') {
@@ -373,6 +494,10 @@ function runBacktestForTicker(
         score: result.score,
         regime: result.gateResults.trend.regime,
         confluenceRatio: result.gateResults.confluence.ratio,
+        rsSpy: result.gateResults.institutional.components.rsSpy,
+        rsSector: result.gateResults.institutional.components.rsSector,
+        vwap: result.gateResults.institutional.components.vwap,
+        breakoutVol: result.gateResults.institutional.components.breakoutVol,
         rsi: indicators.rsi,
         stochK: indicators.stochasticK,
         williamsR: indicators.williamsR,
@@ -651,7 +776,7 @@ export async function backtest() {
 
   for (const ticker of tickers) {
     try {
-      const data = await DataLoader.loadHistoricalData(ticker, 1095);
+      const data = await DataLoader.loadHistoricalData(ticker, HISTORY_DAYS);
       if (data.length >= 210) {
         allData.set(ticker, data);
         console.log(
@@ -670,7 +795,7 @@ export async function backtest() {
   // Market benchmark (SPY) for relative strength (rsSpy) — loaded once, no lookahead.
   let spyData: BenchmarkCandle[] = [];
   try {
-    spyData = await DataLoader.loadHistoricalData('SPY', 1095);
+    spyData = await DataLoader.loadHistoricalData('SPY', HISTORY_DAYS);
     console.log(`SPY benchmark: ${spyData.length} bars\n`);
   } catch {
     console.log('SPY benchmark unavailable — relative strength stays 0\n');
@@ -683,7 +808,7 @@ export async function backtest() {
   ];
   for (const etf of neededEtfs) {
     try {
-      sectorData.set(etf, await DataLoader.loadHistoricalData(etf, 1095));
+      sectorData.set(etf, await DataLoader.loadHistoricalData(etf, HISTORY_DAYS));
     } catch {
       /* skip */
     }
@@ -698,6 +823,17 @@ export async function backtest() {
       data.map((d) => ({ date: d.date, close: d.close }))
     );
   }
+
+  // Build the config-INDEPENDENT context ONCE per ticker (indicators, benchmark
+  // alignment, dollar volume). Every config pass below reuses these — the heavy
+  // per-ticker math runs 59× total instead of 59× per pass.
+  const ctxMap = new Map<string, TickerContext>();
+  for (const [ticker, data] of allData) {
+    const sec = sectorData.get(TICKER_SECTOR_ETF[ticker]) ?? [];
+    const ctx = buildTickerContext(data, spyData, sec);
+    if (ctx) ctxMap.set(ticker, ctx);
+  }
+  console.log(`Built reusable indicator context for ${ctxMap.size} tickers\n`);
 
   // Phase 0: V2 vs V3 vs V4 comparison
   // V2 = mean-reversion, no new patterns, no institutional
@@ -798,13 +934,12 @@ export async function backtest() {
   const v4Signals: BacktestSignal[] = [];
   const v5Signals: BacktestSignal[] = [];
   const v7Signals: BacktestSignal[] = [];
-  for (const [ticker, data] of allData) {
-    const sec = sectorData.get(TICKER_SECTOR_ETF[ticker]) ?? [];
-    v2Signals.push(...runBacktestForTicker(data, ticker, v2Config, spyData, sec));
-    v3Signals.push(...runBacktestForTicker(data, ticker, v3Config, spyData, sec));
-    v4Signals.push(...runBacktestForTicker(data, ticker, v4Config, spyData, sec));
-    v5Signals.push(...runBacktestForTicker(data, ticker, v5Config, spyData, sec));
-    v7Signals.push(...runBacktestForTicker(data, ticker, v7Config, spyData, sec));
+  for (const [ticker, ctx] of ctxMap) {
+    v2Signals.push(...runSignalsWithContext(ctx, ticker, v2Config));
+    v3Signals.push(...runSignalsWithContext(ctx, ticker, v3Config));
+    v4Signals.push(...runSignalsWithContext(ctx, ticker, v4Config));
+    v5Signals.push(...runSignalsWithContext(ctx, ticker, v5Config));
+    v7Signals.push(...runSignalsWithContext(ctx, ticker, v7Config));
   }
 
   const v2Result = measure5DayWinRate(v2Signals, priceData);
@@ -881,23 +1016,83 @@ export async function backtest() {
       name: 'ibs.15 atr3.5 vol.8-2.0',
       gate: { enabled: true, ibsMax: 0.15, atrPctMax: 3.5, volRMin: 0.8, volRMax: 2.0 },
     },
+    // Essay #1 anti-blowoff: add a buyScore cap (every top generalizing config had scr<380/400).
+    {
+      name: 'ibs.30 atr3.5 vol.8-2.0 scr<400',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 2.0,
+        scoreMax: 400,
+      },
+    },
+    {
+      name: 'ibs.30 atr3.5 vol.8-2.0 scr<380',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 2.0,
+        scoreMax: 380,
+      },
+    },
+    {
+      name: 'ibs.30 atr3.5 vol.8-1.5 scr<400',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 1.5,
+        scoreMax: 400,
+      },
+    },
+    {
+      name: 'ibs.30 atr4 vol.8-1.5 scr<400',
+      gate: { enabled: true, ibsMax: 0.3, atrPctMax: 4, volRMin: 0.8, volRMax: 1.5, scoreMax: 400 },
+    },
   ];
   for (const variant of gateVariants) {
     const cfg: PipelineConfig = { ...DEFAULT_QUALITY_PIPELINE_CONFIG, qualityGate: variant.gate };
     const sigs: BacktestSignal[] = [];
-    for (const [ticker, data] of allData) {
-      const sec = sectorData.get(TICKER_SECTOR_ETF[ticker]) ?? [];
-      sigs.push(...runBacktestForTicker(data, ticker, cfg, spyData, sec));
+    for (const [ticker, ctx] of ctxMap) {
+      sigs.push(...runSignalsWithContext(ctx, ticker, cfg));
     }
     const r = measure5DayWinRate(sigs, priceData);
     let minYr = 100;
-    for (const yr of ['2024', '2025', '2026']) {
+    for (const yr of ['2023', '2024', '2025', '2026']) {
       const sub = sigs.filter((s) => s.date.toISOString().slice(0, 4) === yr);
       if (sub.length < 15) continue; // ignore tiny (partial-year) samples
       minYr = Math.min(minYr, measure5DayWinRate(sub, priceData).winRate5d);
     }
     console.log(
       `${variant.name.padEnd(34)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${String(r.totalSignals).padStart(5)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${minYr.toFixed(1)}%`.padStart(6)}`
+    );
+  }
+
+  // Essay #2 exit ("ride the trend, exit on the Gaussian flip") applied to the
+  // quality entries — does the essay-faithful exit raise R/R while keeping a
+  // respectable win rate vs the fixed 5-day exit?
+  console.log('\nV8 = quality entry + essay exit (Gaussian trend-hold), by entry year:');
+  console.log(
+    `${'Exit'.padEnd(22)} | ${'WinRate'.padStart(7)} | ${'AvgRet'.padStart(7)} | ${'PerBar'.padStart(7)} | ${'R/R'.padStart(5)} | ${'N'.padStart(5)} | ${'Hold'.padStart(5)}`
+  );
+  const v8Exits: { name: string; opts: Parameters<typeof measureTrendHoldWinRate>[2] }[] = [
+    { name: 'fixed 5-day (V7)', opts: undefined as never },
+    { name: 'trend-hold flip', opts: { exitRule: 'flip', stopPct: 8 } },
+    { name: 'trend-hold mid', opts: { exitRule: 'mid', stopPct: 8 } },
+  ];
+  for (const ex of v8Exits) {
+    const r =
+      ex.opts === undefined
+        ? measure5DayWinRate(v7Signals, priceData)
+        : measureTrendHoldWinRate(v7Signals, priceData, ex.opts);
+    const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
+    console.log(
+      `${ex.name.padEnd(22)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${String(r.totalSignals).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
     );
   }
 
@@ -984,8 +1179,8 @@ export async function backtest() {
 
   const diagSignals: (BacktestSignal & { ret5d: number; win: boolean })[] = [];
 
-  for (const [ticker, data] of allData) {
-    const sigs = runBacktestForTicker(data, ticker, baseConfig);
+  for (const [ticker, ctx] of ctxMap) {
+    const sigs = runSignalsWithContext(ctx, ticker, baseConfig);
     const prices = priceData.get(ticker)!;
     for (const sig of sigs) {
       if (sig.decision !== 'BUY') continue;
@@ -993,12 +1188,6 @@ export async function backtest() {
       if (idx === -1 || idx + 5 >= prices.length) continue;
       const futurePrice = prices[idx + 5].close;
       const ret5d = ((futurePrice - sig.close) / sig.close) * 100;
-
-      // Get detailed indicators for this bar
-      const closes = data
-        .slice(0, data.findIndex((d) => d.date.getTime() === sig.date.getTime()) + 1)
-        .map((d) => d.close);
-      const _barIdx = closes.length - 1;
 
       diagSignals.push({
         ...sig,
@@ -1354,9 +1543,8 @@ export async function backtest() {
 
   for (const { name, config } of configs) {
     const allSignals: BacktestSignal[] = [];
-    for (const [ticker, data] of allData) {
-      const sigs = runBacktestForTicker(data, ticker, config);
-      allSignals.push(...sigs);
+    for (const [ticker, ctx] of ctxMap) {
+      allSignals.push(...runSignalsWithContext(ctx, ticker, config));
     }
 
     const result = measure5DayWinRate(allSignals, priceData);
@@ -1446,6 +1634,9 @@ export async function backtest() {
     score: number;
     regime: string;
     sma50dist: number;
+    rsSpy: number; // essay #1: relative strength vs market
+    rsSector: number; // essay #1: relative strength vs sector
+    vwap: number; // essay #1: accumulation above VWAP
   }
   const enriched: Enriched[] = [];
   for (const sig of v5Signals) {
@@ -1465,6 +1656,9 @@ export async function backtest() {
       score: sig.score,
       regime: sig.regime,
       sma50dist: sig.sma50dist,
+      rsSpy: sig.rsSpy,
+      rsSector: sig.rsSector,
+      vwap: sig.vwap,
     });
   }
   const trainRows = enriched.filter((e) => e.year <= '2024');
@@ -1482,6 +1676,8 @@ export async function backtest() {
     scoreMax: number;
     regime: 'any' | 'uptrend' | 'notdown';
     sma50: 'any' | 'below' | 'above';
+    rsMin: number; // essay #1: require strength vs BOTH market and sector
+    vwapReq: boolean; // essay #1: require above-VWAP accumulation
   }
   const passes = (e: Enriched, f: Filt): boolean =>
     e.ibs < f.ibsMax &&
@@ -1490,6 +1686,9 @@ export async function backtest() {
     e.volR > f.volRMin &&
     e.score >= f.scoreMin &&
     e.score < f.scoreMax &&
+    e.rsSpy >= f.rsMin &&
+    e.rsSector >= f.rsMin &&
+    (!f.vwapReq || e.vwap >= 0.5) &&
     (f.regime === 'any' ||
       (f.regime === 'uptrend' ? e.regime === 'uptrend' : e.regime !== 'downtrend')) &&
     (f.sma50 === 'any' || (f.sma50 === 'below' ? e.sma50dist < 0 : e.sma50dist > 0));
@@ -1542,6 +1741,8 @@ export async function backtest() {
   const scoreMaxes = [380, 400, 9999];
   const regimeModes: Filt['regime'][] = ['any', 'uptrend', 'notdown'];
   const sma50Modes: Filt['sma50'][] = ['any', 'below', 'above'];
+  const rsMins = [0, 0.5, 0.7]; // essay #1: relative-strength thresholds (gradient ∈ [0,1])
+  const vwapReqs = [false, true];
 
   const describe = (f: Filt): string =>
     [
@@ -1551,6 +1752,8 @@ export async function backtest() {
       f.volRMin > 0 ? `volR>${f.volRMin}` : null,
       f.scoreMin > 0 ? `scr≥${f.scoreMin}` : null,
       f.scoreMax < 9999 ? `scr<${f.scoreMax}` : null,
+      f.rsMin > 0 ? `rs≥${f.rsMin}` : null,
+      f.vwapReq ? 'vwap+' : null,
       f.regime !== 'any' ? f.regime : null,
       f.sma50 !== 'any' ? `sma50${f.sma50}` : null,
     ]
@@ -1575,26 +1778,30 @@ export async function backtest() {
         for (const volRMin of volRMins)
           for (const scoreMin of scoreMins)
             for (const scoreMax of scoreMaxes)
-              for (const regime of regimeModes)
-                for (const sma50 of sma50Modes) {
-                  if (scoreMin >= scoreMax) continue;
-                  const f: Filt = {
-                    ibsMax,
-                    atrMax,
-                    volRMax,
-                    volRMin,
-                    scoreMin,
-                    scoreMax,
-                    regime,
-                    sma50,
-                  };
-                  evaluated++;
-                  const tr = statOf(trainRows.filter((e) => passes(e, f)));
-                  if (tr.n < MIN_TRAIN_N || tr.wr < 60 || tr.rr <= BASELINE_RR) continue;
-                  const te = statOf(testRows.filter((e) => passes(e, f)));
-                  const full = statOf(enriched.filter((e) => passes(e, f)));
-                  feasible.push({ f, train: tr, test: te, full });
-                }
+              for (const rsMin of rsMins)
+                for (const vwapReq of vwapReqs)
+                  for (const regime of regimeModes)
+                    for (const sma50 of sma50Modes) {
+                      if (scoreMin >= scoreMax) continue;
+                      const f: Filt = {
+                        ibsMax,
+                        atrMax,
+                        volRMax,
+                        volRMin,
+                        scoreMin,
+                        scoreMax,
+                        regime,
+                        sma50,
+                        rsMin,
+                        vwapReq,
+                      };
+                      evaluated++;
+                      const tr = statOf(trainRows.filter((e) => passes(e, f)));
+                      if (tr.n < MIN_TRAIN_N || tr.wr < 60 || tr.rr <= BASELINE_RR) continue;
+                      const te = statOf(testRows.filter((e) => passes(e, f)));
+                      const full = statOf(enriched.filter((e) => passes(e, f)));
+                      feasible.push({ f, train: tr, test: te, full });
+                    }
 
   console.log(`Enumerated ${evaluated} filter configs deterministically.\n`);
 
