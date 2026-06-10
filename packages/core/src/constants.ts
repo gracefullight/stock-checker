@@ -208,12 +208,20 @@ export const DEFAULT_QUALITY_GATE = {
 /**
  * Institutional (flow-primary) strategy WITH the entry-quality gate enabled.
  * This is the recommended high-selectivity config: fewer, higher-quality entries
- * — the best win-rate/R-R trade-off found in backtest (~59.8% / 1.25 over 5y).
+ * — the best win-rate/R-R trade-off found in backtest (61.3% / 1.52 over 8y,
+ * net of the round-trip transaction cost).
  */
 export const DEFAULT_QUALITY_PIPELINE_CONFIG = {
   ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
   qualityGate: DEFAULT_QUALITY_GATE,
 } satisfies import('@/types').PipelineConfig;
+
+/**
+ * Round-trip transaction cost (percent of notional) deducted from every
+ * backtested trade: ~5bps slippage per side on liquid US large caps, zero
+ * commission. Backtest WR/R-R numbers are NET of this unless stated otherwise.
+ */
+export const DEFAULT_ROUND_TRIP_COST_PCT = 0.1;
 
 export const RISK_MULTIPLIER = 1.5;
 export const REWARD_MULTIPLIER = 2;

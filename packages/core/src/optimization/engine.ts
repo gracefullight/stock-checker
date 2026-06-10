@@ -5,6 +5,7 @@
  * I/O: callers inject candles and benchmark series.
  */
 import { BollingerBands, EMA, MACD, RSI, SMA, Stochastic, WilliamsR } from 'technicalindicators';
+import { DEFAULT_ROUND_TRIP_COST_PCT } from '@/constants';
 import { type GaussianChannelPoint, gaussianChannel } from '@/services/gaussian-channel';
 import { detectPatterns } from '@/services/patterns';
 import { evaluateSignal } from '@/services/pipeline';
@@ -474,7 +475,8 @@ export function runSignalsWithContext(
 
 export function measure5DayWinRate(
   signals: BacktestSignal[],
-  allData: Map<string, { date: Date; close: number }[]>
+  allData: Map<string, { date: Date; close: number }[]>,
+  costPct: number = DEFAULT_ROUND_TRIP_COST_PCT
 ): WinRateResult {
   let wins = 0;
   let total = 0;
@@ -491,7 +493,9 @@ export function measure5DayWinRate(
     if (idx === -1 || idx + 5 >= prices.length) continue;
 
     const futurePrice = prices[idx + 5].close;
-    const ret = ((futurePrice - sig.close) / sig.close) * 100;
+    // Net return: round-trip transaction cost comes out of every trade, and a
+    // "win" means the trade made money AFTER costs.
+    const ret = ((futurePrice - sig.close) / sig.close) * 100 - costPct;
     returns.push(ret);
     total++;
 
@@ -499,7 +503,7 @@ export function measure5DayWinRate(
     if (!monthly[month]) monthly[month] = { wins: 0, total: 0 };
     monthly[month].total++;
 
-    if (futurePrice > sig.close) {
+    if (ret > 0) {
       wins++;
       monthly[month].wins++;
     }
@@ -559,7 +563,8 @@ export function buildEquityCurve(
   signals: BacktestSignal[],
   prices: { date: Date; close: number }[],
   holdBars = 5,
-  initialCapital = 10_000
+  initialCapital = 10_000,
+  costPct: number = DEFAULT_ROUND_TRIP_COST_PCT
 ): EquityCurveResult {
   const buySignals = signals
     .filter((s) => s.decision === 'BUY')
@@ -588,7 +593,7 @@ export function buildEquityCurve(
     const exitIdx = idx + holdBars;
     const entryPrice = sig.close;
     const exitPrice = prices[exitIdx].close;
-    const returnPct = ((exitPrice - entryPrice) / entryPrice) * 100;
+    const returnPct = ((exitPrice - entryPrice) / entryPrice) * 100 - costPct;
 
     equity *= 1 + returnPct / 100;
     peak = Math.max(peak, equity);

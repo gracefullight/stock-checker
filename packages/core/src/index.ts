@@ -179,9 +179,19 @@ program
 program
   .command('backtest')
   .description('Run backtest with Pipeline V2 against historical data')
-  .action(async () => {
+  .option(
+    '--cost-bps <number>',
+    'Round-trip transaction cost in basis points deducted from every trade',
+    '10'
+  )
+  .action(async (options) => {
     try {
-      await backtest();
+      const costBps = Number(options.costBps);
+      if (!Number.isFinite(costBps) || costBps < 0) {
+        logger.error('--cost-bps must be a non-negative number');
+        process.exit(1);
+      }
+      await backtest({ costBps });
     } catch (error) {
       logger.error({ err: error }, 'Backtest failed');
       process.exit(1);

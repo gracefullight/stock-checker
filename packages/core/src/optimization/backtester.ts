@@ -1,4 +1,5 @@
 import { BollingerBands, EMA, MACD, RSI, SMA, Stochastic, WilliamsR } from 'technicalindicators';
+import { DEFAULT_ROUND_TRIP_COST_PCT } from '@/constants';
 import type { BacktestMetrics } from '@/optimization/types';
 import { detectPatterns } from '@/services/patterns';
 import { evaluateSignal } from '@/services/pipeline';
@@ -245,8 +246,9 @@ export class Backtester {
       const date = dates[i];
 
       if (position && signal === 'SELL') {
-        const profit = price - position.price;
-        const profitPercent = (profit / position.price) * 100;
+        const profitPercent =
+          ((price - position.price) / position.price) * 100 - DEFAULT_ROUND_TRIP_COST_PCT;
+        const profit = position.price * (profitPercent / 100);
         trades.push({
           entryDate: position.date,
           exitDate: date,
@@ -267,8 +269,9 @@ export class Backtester {
       const i = signals.length - 1;
       const price = closes[i];
       const date = dates[i];
-      const profit = price - position.price;
-      const profitPercent = (profit / position.price) * 100;
+      const profitPercent =
+        ((price - position.price) / position.price) * 100 - DEFAULT_ROUND_TRIP_COST_PCT;
+      const profit = position.price * (profitPercent / 100);
       trades.push({
         entryDate: position.date,
         exitDate: date,

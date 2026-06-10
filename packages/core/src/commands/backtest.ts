@@ -7,6 +7,7 @@ import {
   DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
   DEFAULT_PIPELINE_CONFIG,
   DEFAULT_QUALITY_PIPELINE_CONFIG,
+  DEFAULT_ROUND_TRIP_COST_PCT,
   MEAN_REVERSION_GRADIENT_RANGES,
 } from '@/constants';
 import { DataLoader } from '@/optimization/data-loader';
@@ -21,9 +22,11 @@ import {
 import { gaussianChannel } from '@/services/gaussian-channel';
 import type { BenchmarkCandle, PipelineConfig } from '@/types';
 
-// History window per ticker (calendar days). 5y so the 205-bar warm-up clears
-// before 2023, making 2023 a full entry year in the backtest.
-const HISTORY_DAYS = 1825;
+// History window per ticker (calendar days). 8y so the 205-bar warm-up clears
+// mid-2019, making 2020 (COVID crash) and 2022 (rate-hike bear) full entry
+// years — the edge must survive bear regimes, not just the 2023-26 bull.
+// Tickers that IPO'd later simply contribute shorter series.
+const HISTORY_DAYS = 2920;
 
 // Ticker → sector ETF (for sector relative strength, rsSector). Unmapped → no sector.
 const TICKER_SECTOR_ETF: Record<string, string> = {
@@ -243,6 +246,7 @@ function measureTrendHoldWinRate(
     exitRule?: 'flip' | 'mid';
     trailPct?: number;
     tpPct?: number;
+    costPct?: number;
   } = {}
 ): WinRateResult {
   const maxHold = opts.maxHold ?? 60;
@@ -250,6 +254,7 @@ function measureTrendHoldWinRate(
   const exitRule = opts.exitRule ?? 'flip';
   const trailPct = opts.trailPct;
   const tpPct = opts.tpPct;
+  const costPct = opts.costPct ?? DEFAULT_ROUND_TRIP_COST_PCT;
   const gcCache = new Map<string, ReturnType<typeof gaussianChannel>['series']>();
 
   let holdBarsTotal = 0;
@@ -295,13 +300,13 @@ function measureTrendHoldWinRate(
     }
     holdBarsTotal += exitBar - idx;
 
-    const ret = ((exitPrice - entry) / entry) * 100;
+    const ret = ((exitPrice - entry) / entry) * 100 - costPct;
     returns.push(ret);
     total++;
     const month = sig.date.toISOString().slice(0, 7);
     if (!monthly[month]) monthly[month] = { wins: 0, total: 0 };
     monthly[month].total++;
-    if (exitPrice > entry) {
+    if (ret > 0) {
       wins++;
       monthly[month].wins++;
     }
@@ -330,7 +335,13 @@ function measureTrendHoldWinRate(
   };
 }
 
-export async function backtest() {
+export async function backtest(opts: { costBps?: number } = {}) {
+  // Round-trip transaction cost applied to every simulated trade. All WR/R-R
+  // numbers below are NET of this cost; a "win" means profitable after costs.
+  const COST_PCT = opts.costBps != null ? opts.costBps / 100 : DEFAULT_ROUND_TRIP_COST_PCT;
+  console.log(
+    `Transaction cost model: ${(COST_PCT * 100).toFixed(0)}bps round-trip deducted from every trade\n`
+  );
   const tickers = [
     // Original
     'TSLA',
@@ -659,14 +670,18 @@ export async function backtest() {
     v7Signals.push(...runSignalsWithContext(ctx, ticker, v7Config));
   }
 
-  const v2Result = measure5DayWinRate(v2Signals, priceData);
-  const v3Result = measure5DayWinRate(v3Signals, priceData);
-  const v4Result = measure5DayWinRate(v4Signals, priceData);
-  const v5Result = measure5DayWinRate(v5Signals, priceData);
+  // Entry years actually present in the signal set — derived, not hardcoded,
+  // so widening HISTORY_DAYS automatically extends every per-year breakdown.
+  const ENTRY_YEARS = [...new Set(v5Signals.map((s) => s.date.toISOString().slice(0, 4)))].sort();
+
+  const v2Result = measure5DayWinRate(v2Signals, priceData, COST_PCT);
+  const v3Result = measure5DayWinRate(v3Signals, priceData, COST_PCT);
+  const v4Result = measure5DayWinRate(v4Signals, priceData, COST_PCT);
+  const v5Result = measure5DayWinRate(v5Signals, priceData, COST_PCT);
   // V6 = same institutional entries as V5, but exit on Gaussian Channel flip (trend-hold).
-  const v6Result = measureTrendHoldWinRate(v5Signals, priceData);
+  const v6Result = measureTrendHoldWinRate(v5Signals, priceData, { costPct: COST_PCT });
   // V7 = institutional + entry-quality gate, through the real pipeline (the shipped improvement).
-  const v7Result = measure5DayWinRate(v7Signals, priceData);
+  const v7Result = measure5DayWinRate(v7Signals, priceData, COST_PCT);
 
   console.log(
     `\n${'Version'.padEnd(20)} | ${'WinRate'.padStart(8)} | ${'Signals'.padStart(8)} | ${'AvgRet'.padStart(8)} | ${'R/R'.padStart(6)} | ${'Sig/Mo'.padStart(6)}`
@@ -691,10 +706,10 @@ export async function backtest() {
     `  ${v7GoalMet ? '✅ GOAL MET' : '⚠️ goal NOT met'}: WR ≥ 60% AND R/R > baseline (${v5Result.rewardRisk.toFixed(2)})`
   );
   console.log('  V7 by entry year:');
-  for (const yr of ['2023', '2024', '2025', '2026']) {
+  for (const yr of ENTRY_YEARS) {
     const sub = v7Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
     if (sub.length === 0) continue;
-    const r = measure5DayWinRate(sub, priceData);
+    const r = measure5DayWinRate(sub, priceData, COST_PCT);
     console.log(
       `    ${yr}: WR=${r.winRate5d.toFixed(1)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.totalSignals}  AvgRet=${r.avgReturn.toFixed(2)}%`
     );
@@ -840,12 +855,12 @@ export async function backtest() {
     for (const [ticker, ctx] of ctxMap) {
       sigs.push(...runSignalsWithContext(ctx, ticker, cfg));
     }
-    const r = measure5DayWinRate(sigs, priceData);
+    const r = measure5DayWinRate(sigs, priceData, COST_PCT);
     let minYr = 100;
-    for (const yr of ['2023', '2024', '2025', '2026']) {
+    for (const yr of ENTRY_YEARS) {
       const sub = sigs.filter((s) => s.date.toISOString().slice(0, 4) === yr);
       if (sub.length < 15) continue; // ignore tiny (partial-year) samples
-      minYr = Math.min(minYr, measure5DayWinRate(sub, priceData).winRate5d);
+      minYr = Math.min(minYr, measure5DayWinRate(sub, priceData, COST_PCT).winRate5d);
     }
     console.log(
       `${variant.name.padEnd(34)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${String(r.totalSignals).padStart(5)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${minYr.toFixed(1)}%`.padStart(6)}`
@@ -867,8 +882,8 @@ export async function backtest() {
   for (const ex of v8Exits) {
     const r =
       ex.opts === undefined
-        ? measure5DayWinRate(v7Signals, priceData)
-        : measureTrendHoldWinRate(v7Signals, priceData, ex.opts);
+        ? measure5DayWinRate(v7Signals, priceData, COST_PCT)
+        : measureTrendHoldWinRate(v7Signals, priceData, { ...ex.opts, costPct: COST_PCT });
     const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
     console.log(
       `${ex.name.padEnd(22)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${String(r.totalSignals).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
@@ -906,7 +921,7 @@ export async function backtest() {
       );
     }
     console.log('  By entry year (5d):');
-    for (const yr of ['2023', '2024', '2025', '2026']) {
+    for (const yr of ENTRY_YEARS) {
       const sub = sellSignals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
       if (sub.length === 0) continue;
       const r = measureSellAccuracy(sub, priceData, 5);
@@ -1016,10 +1031,10 @@ export async function backtest() {
   console.log(
     `${'Year'.padEnd(6)} | ${'Signals'.padStart(7)} | ${'WinRate'.padStart(7)} | ${'AvgRet'.padStart(7)} | ${'PerBar'.padStart(7)} | ${'R/R'.padStart(5)} | ${'Hold'.padStart(5)}`
   );
-  for (const yr of ['2023', '2024', '2025', '2026']) {
+  for (const yr of ENTRY_YEARS) {
     const sub = v5Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
     if (sub.length === 0) continue;
-    const r = measureTrendHoldWinRate(sub, priceData);
+    const r = measureTrendHoldWinRate(sub, priceData, { costPct: COST_PCT });
     const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
     console.log(
       `${yr.padEnd(6)} | ${String(r.totalSignals).padStart(7)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
@@ -1043,7 +1058,7 @@ export async function backtest() {
     { name: 'flip + trail15', opts: { exitRule: 'flip', stopPct: 8, trailPct: 15 } },
   ];
   for (const v of exitVariants) {
-    const r = measureTrendHoldWinRate(v5Signals, priceData, v.opts);
+    const r = measureTrendHoldWinRate(v5Signals, priceData, { ...v.opts, costPct: COST_PCT });
     const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
     console.log(
       `${v.name.padEnd(20)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
@@ -1090,12 +1105,12 @@ export async function backtest() {
       const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
       if (idx === -1 || idx + 5 >= prices.length) continue;
       const futurePrice = prices[idx + 5].close;
-      const ret5d = ((futurePrice - sig.close) / sig.close) * 100;
+      const ret5d = ((futurePrice - sig.close) / sig.close) * 100 - COST_PCT;
 
       diagSignals.push({
         ...sig,
         ret5d,
-        win: futurePrice > sig.close,
+        win: ret5d > 0,
       });
     }
   }
@@ -1366,7 +1381,8 @@ export async function backtest() {
       const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
       if (idx === -1 || idx + period >= prices.length) continue;
       total++;
-      if (prices[idx + period].close > sig.close) wins++;
+      const ret = ((prices[idx + period].close - sig.close) / sig.close) * 100 - COST_PCT;
+      if (ret > 0) wins++;
     }
     const wr = total > 0 ? ((wins / total) * 100).toFixed(1) : 'N/A';
     console.log(`  ${String(period).padStart(2)}d: ${wr}% (${wins}/${total})`);
@@ -1385,7 +1401,8 @@ export async function backtest() {
       const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
       if (idx === -1 || idx + period >= prices.length) continue;
       total++;
-      if (prices[idx + period].close > sig.close) wins++;
+      const ret = ((prices[idx + period].close - sig.close) / sig.close) * 100 - COST_PCT;
+      if (ret > 0) wins++;
     }
     const wr = total > 0 ? ((wins / total) * 100).toFixed(1) : 'N/A';
     console.log(`  ${String(period).padStart(2)}d: ${wr}% (${wins}/${total})`);
@@ -1450,7 +1467,7 @@ export async function backtest() {
       allSignals.push(...runSignalsWithContext(ctx, ticker, config));
     }
 
-    const result = measure5DayWinRate(allSignals, priceData);
+    const result = measure5DayWinRate(allSignals, priceData, COST_PCT);
     results.push({ name, result });
 
     if (result.totalSignals >= 3) {
@@ -1548,7 +1565,7 @@ export async function backtest() {
     if (!prices) continue;
     const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
     if (idx === -1 || idx + 5 >= prices.length) continue;
-    const ret5d = ((prices[idx + 5].close - sig.close) / sig.close) * 100;
+    const ret5d = ((prices[idx + 5].close - sig.close) / sig.close) * 100 - COST_PCT;
     enriched.push({
       ret5d,
       win: ret5d > 0,
@@ -1748,7 +1765,7 @@ export async function backtest() {
       `  FULL        : WR=${best.full.wr.toFixed(1)}%  R/R=${best.full.rr.toFixed(2)}  N=${best.full.n}  avgRet=${best.full.avgRet.toFixed(2)}%`
     );
     console.log('  By entry year:');
-    for (const yr of ['2023', '2024', '2025', '2026']) {
+    for (const yr of ENTRY_YEARS) {
       const ys = statOf(enriched.filter((e) => e.year === yr && passes(e, best.f)));
       if (ys.n === 0) continue;
       console.log(
