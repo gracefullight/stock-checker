@@ -161,6 +161,8 @@ export interface TickerContext {
   macdHistArr: number[];
   avgDollarVolArr: number[];
   gaussianSeries: GaussianChannelPoint[];
+  /** SPY Gaussian Channel green per SPY bar (causal) — market-level regime. */
+  spyUptrend: boolean[];
 }
 
 export function buildTickerContext(
@@ -270,6 +272,10 @@ export function buildTickerContext(
   // dominated the institutional/gaussian passes.
   const gaussianSeries = gaussianChannel(closes).series;
 
+  // Market-level regime: SPY Gaussian green per SPY bar (same causal property).
+  const spyUptrend =
+    spy.length > 0 ? gaussianChannel(spy.map((c) => c.close)).series.map((p) => p.isGreen) : [];
+
   return {
     data,
     closes,
@@ -296,6 +302,7 @@ export function buildTickerContext(
     macdHistArr,
     avgDollarVolArr,
     gaussianSeries,
+    spyUptrend,
   };
 }
 
@@ -411,6 +418,7 @@ export function runSignalsWithContext(
       sectorCandles,
       avgDailyDollarVol,
       gaussianPoint: gaussianSeries[i],
+      marketUptrend: spyIdx >= 0 ? (ctx.spyUptrend[spyIdx] ?? null) : null,
     });
 
     // Record BUYs and quality-blocked setups into the cluster window: a setup is

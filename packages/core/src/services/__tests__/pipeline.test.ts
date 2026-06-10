@@ -448,6 +448,54 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
     expect(result.qualityBlocked).toBe(true);
   });
 
+  // --- Market kill-switch (qualityGate.requireMarketUptrend) ---
+  // Same qualifying-bar scenario as Q_PASS; only the market regime input varies.
+  const killSwitchGate: PipelineConfig = {
+    ...instConfig,
+    qualityGate: {
+      enabled: true,
+      ibsMax: 0.7,
+      atrPctMax: 5,
+      volRMin: 0.8,
+      volRMax: 2,
+      requireMarketUptrend: true,
+    },
+  };
+  const killSwitchParams = {
+    ticker: 'MKT_TEST',
+    indicators,
+    close,
+    open: 104,
+    fearGreed: 50,
+    patternScore: 0,
+    recentCandles,
+    recentMacdHistogram: [-0.2, -0.1, 0.1],
+    config: killSwitchGate,
+    allCloses,
+    allHighs,
+    allLows,
+    allVolumes,
+    spyCandles: shortBenchmark,
+    sectorCandles: shortBenchmark,
+    avgDailyDollarVol: 0,
+  };
+
+  it('blocks BUY when the market kill-switch is on and SPY regime is down', () => {
+    const result = evaluateSignal({ ...killSwitchParams, marketUptrend: false });
+    expect(result.finalDecision).toBe('HOLD');
+    expect(result.qualityBlocked).toBe(true);
+  });
+
+  it('preserves BUY when the market kill-switch is on and SPY regime is up', () => {
+    const result = evaluateSignal({ ...killSwitchParams, marketUptrend: true });
+    expect(result.finalDecision).toBe('BUY');
+  });
+
+  it('never blocks on the kill-switch when the market regime is unknown', () => {
+    const result = evaluateSignal(killSwitchParams);
+    expect(result.finalDecision).toBe('BUY');
+  });
+
   // --- SELL = exit discipline, regime-gated for the institutional strategy ---
   // A distribution-day scenario (heavy volume below VWAP + Donchian breakdown +
   // MACD dead cross → sellScore ≥ 130). Backtest showed these SELLs have

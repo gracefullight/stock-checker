@@ -268,6 +268,26 @@ export interface PipelineConfig {
      * within a (Gaussian-confirmed) uptrend rather than a chase. Undefined/false = off.
      */
     requireBelowSma50?: boolean;
+    /**
+     * Market kill-switch (essay #2 applied at the index level): require the SPY
+     * Gaussian Channel to be green before any BUY. Individual-name pullback
+     * entries lose their edge in market-wide liquidity panics (2020-03); this
+     * blocks them. Only blocks when the market regime is explicitly known to be
+     * down (callers that cannot supply `marketUptrend` are never blocked).
+     */
+    requireMarketUptrend?: boolean;
+    /**
+     * Stage filter (essay #1: price vs key MAs): require the entry close to be
+     * ABOVE the 200-day SMA — pullbacks within a long-term uptrend only. Skipped
+     * when SMA200 is unavailable. Undefined/false = off.
+     */
+    requireAboveSma200?: boolean;
+    /**
+     * Accumulation filter (essay #1: VWAP — institutions execute against it).
+     * Requires the institutional vwap component gradient ≥ vwapMin, i.e. the
+     * name keeps absorbing supply above the session average price. Undefined = off.
+     */
+    vwapMin?: number;
   };
   institutional: InstitutionalConfig;
 }

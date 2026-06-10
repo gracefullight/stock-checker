@@ -25,6 +25,7 @@ import {
 import { formatDividendInfo, getDividendInfo } from '@/services/dividends';
 import { formatEarningsData, getEarningsData } from '@/services/earnings';
 import { getFundamentals } from '@/services/fundamentals';
+import { gaussianChannel } from '@/services/gaussian-channel';
 import { calcRecentMacdHistogram, calculateAllIndicators } from '@/services/indicators';
 import { getStockNews } from '@/services/news';
 import { formatOptionsData, getOptionsChain } from '@/services/options';
@@ -102,6 +103,11 @@ async function processTicker(
 
   // Benchmark prices for institutional scoring
   const spyCandles = await fetchBenchmarkPrices(MARKET_BENCHMARK);
+  // Market-level regime for the quality gate's kill-switch (essay #2 at the
+  // index level). null when SPY data is unavailable — the gate never blocks
+  // on an unknown regime.
+  const marketUptrend =
+    spyCandles.length >= 2 ? gaussianChannel(spyCandles.map((c) => c.close)).isGreen : null;
   let sectorETF = MARKET_BENCHMARK;
   try {
     const fund = await getFundamentals(ticker);
@@ -156,6 +162,7 @@ async function processTicker(
     avgDailyDollarVol,
     earningsBeat,
     earningsEstimateUp,
+    marketUptrend,
   });
 
   const { finalDecision: decision, score, buyScore, sellScore } = pipelineResult;

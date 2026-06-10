@@ -84,6 +84,11 @@ export function evaluateSignal(params: {
    * here to avoid the O(n²) per-bar recompute. When omitted, it is recomputed.
    */
   gaussianPoint?: { direction: 'up' | 'down' | 'flat'; isGreen: boolean };
+  /**
+   * Market-level trend regime (SPY Gaussian Channel green = true), consumed by
+   * qualityGate.requireMarketUptrend. null/undefined = unknown — never blocks.
+   */
+  marketUptrend?: boolean | null;
 }): PipelineResult {
   const {
     ticker,
@@ -106,6 +111,7 @@ export function evaluateSignal(params: {
     earningsBeat = null,
     earningsEstimateUp = null,
     gaussianPoint,
+    marketUptrend = null,
   } = params;
 
   // Gate 1: Trend filter (buy-side only)
@@ -245,6 +251,12 @@ export function evaluateSignal(params: {
         q.rsMin === undefined ||
         (instResult.components.rsSpy >= q.rsMin && instResult.components.rsSector >= q.rsMin);
       const pullbackOk = !q.requireBelowSma50 || close < indicators.sma50;
+      const stageOk =
+        !q.requireAboveSma200 || Number.isNaN(indicators.sma200) || close > indicators.sma200;
+      const vwapOk = q.vwapMin === undefined || instResult.components.vwap >= q.vwapMin;
+      // Market kill-switch: block only when the market regime is explicitly
+      // known to be down — callers without SPY data are never blocked.
+      const marketOk = !q.requireMarketUptrend || marketUptrend !== false;
       const qualified =
         ibs < q.ibsMax &&
         atrPct < q.atrPctMax &&
@@ -252,7 +264,10 @@ export function evaluateSignal(params: {
         volR < q.volRMax &&
         (q.scoreMax === undefined || buyScore < q.scoreMax) &&
         rsOk &&
-        pullbackOk;
+        pullbackOk &&
+        stageOk &&
+        vwapOk &&
+        marketOk;
       if (!qualified) {
         // Setup consumed: the score fired and the quality judgment is made once.
         // Callers should record this date in their cluster window so the same
