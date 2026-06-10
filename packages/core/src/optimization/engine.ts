@@ -566,7 +566,9 @@ export function buildEquityCurve(
     .sort((a, b) => a.date.getTime() - b.date.getTime());
 
   const idxByTime = new Map<number, number>();
-  prices.forEach((p, i) => idxByTime.set(p.date.getTime(), i));
+  prices.forEach((p, i) => {
+    idxByTime.set(p.date.getTime(), i);
+  });
 
   const points: EquityPoint[] = [];
   const trades: BacktestTrade[] = [];
