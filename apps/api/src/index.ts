@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import { marketRoutes } from '@/routes/market';
 import { portfolioRoutes } from '@/routes/portfolio';
 import { screenerRoutes } from '@/routes/screener';
+import { watchlistRoutes } from '@/routes/watchlist';
 
 const app = Fastify({ logger: true });
 
@@ -12,6 +13,7 @@ await app.register(cors, {
 
 await app.register(screenerRoutes, { prefix: '/api' });
 await app.register(portfolioRoutes, { prefix: '/api' });
+await app.register(watchlistRoutes, { prefix: '/api' });
 await app.register(marketRoutes, { prefix: '/api' });
 
 const port = Number(process.env.PORT ?? 3001);

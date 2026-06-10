@@ -182,6 +182,28 @@ export function removeFromPortfolio(ticker: string): Promise<void> {
 }
 
 /**
+ * GET /api/watchlist
+ */
+export async function getWatchlist(): Promise<string[]> {
+  const res = await apiFetch<{ tickers: string[]; createdAt: string }>('/api/watchlist');
+  return res.tickers;
+}
+
+/**
+ * POST /api/watchlist/:ticker
+ */
+export function addToWatchlist(ticker: string): Promise<void> {
+  return apiFetch<void>(`/api/watchlist/${encodeURIComponent(ticker)}`, { method: 'POST' });
+}
+
+/**
+ * DELETE /api/watchlist/:ticker
+ */
+export function removeFromWatchlist(ticker: string): Promise<void> {
+  return apiFetch<void>(`/api/watchlist/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
+}
+
+/**
  * GET /api/screener/:ticker/ohlcv?days=180
  */
 export function getOHLCV(ticker: string, days = 180): Promise<OHLCVCandle[]> {
