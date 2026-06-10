@@ -31,22 +31,24 @@ export async function getStockNews(ticker: string, limit = 5): Promise<NewsItem[
     const items: NewsItem[] = [];
     const xml = res.data as string;
 
-    const titleMatch = /<title>(.*?)<\/title>/g;
-    const linkMatch = /<link>(.*?)<\/link>/g;
-    const dateMatch = /<pubDate>(.*?)<\/pubDate>/g;
-    const descMatch = /<description>(.*?)<\/description>/g;
+    // Parse per <item> block: the feed-level <title>/<link> (channel header)
+    // must not leak in as the first headline.
+    const itemBlocks = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
 
-    const titles = xml.match(titleMatch) || [];
-    const links = xml.match(linkMatch) || [];
-    const dates = xml.match(dateMatch) || [];
-    const descs = xml.match(descMatch) || [];
+    const extract = (block: string, tag: string): string => {
+      const m = block.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+      return (m?.[1] ?? '')
+        .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+    };
 
-    for (let i = 0; i < Math.min(titles.length, limit); i++) {
+    for (const block of itemBlocks.slice(0, limit)) {
       items.push({
-        title: titles[i]?.replace(/<[^>]+>/g, '').trim() || '',
-        url: links[i]?.replace(/<[^>]+>/g, '').trim() || '',
-        publishedAt: dates[i]?.replace(/<[^>]+>/g, '').trim() || '',
-        summary: (descs[i]?.replace(/<[^>]+>/g, '').substring(0, 200) || '').trim(),
+        title: extract(block, 'title'),
+        url: extract(block, 'link'),
+        publishedAt: extract(block, 'pubDate'),
+        summary: extract(block, 'description').substring(0, 200).trim(),
       });
     }
 
