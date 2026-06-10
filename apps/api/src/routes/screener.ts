@@ -2,8 +2,9 @@ import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
 import {
   getFearGreedIndex,
   getHistoricalPrices,
-  getQuoteNames,
+  getQuoteSnapshots,
 } from '@stock-checker/core/src/services/data-fetcher';
+import { getDividendInfo } from '@stock-checker/core/src/services/dividends';
 import { getEarningsData } from '@stock-checker/core/src/services/earnings';
 import { getFundamentals } from '@stock-checker/core/src/services/fundamentals';
 import { gaussianChannel } from '@stock-checker/core/src/services/gaussian-channel';
@@ -45,17 +46,25 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const fearGreed = await getFearGreedIndex();
-      // Analysis (slow, per-ticker) and company-name lookup (one batch call) run together.
-      const [settled, names] = await Promise.all([
+      // Analysis (slow, per-ticker) and quote snapshot lookup (one batch call) run together.
+      const [settled, snapshots] = await Promise.all([
         Promise.allSettled(tickers.map((ticker) => analyzeTicker(ticker, fearGreed))),
-        getQuoteNames(tickers),
+        getQuoteSnapshots(tickers),
       ]);
 
-      const nameMap = names ?? {};
+      const snapshotMap = snapshots ?? {};
       const results = settled
         .map((r) => (r.status === 'fulfilled' ? r.value : null))
         .filter((r) => r !== null)
-        .map((r) => ({ ...r, name: nameMap[r.ticker] ?? r.name }));
+        .map((r) => {
+          const snap = snapshotMap[r.ticker];
+          return {
+            ...r,
+            name: snap?.name ?? r.name,
+            marketCap: snap?.marketCap ?? null,
+            dayChangePct: snap?.dayChangePct ?? null,
+          };
+        });
 
       return reply.send({
         results,
@@ -87,8 +96,13 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         const extras: Record<string, unknown> = {};
 
         await Promise.all([
-          Promise.resolve(getQuoteNames([ticker])).then((n) => {
-            extras.name = n?.[ticker];
+          Promise.resolve(getQuoteSnapshots([ticker])).then((snaps) => {
+            const snap = snaps?.[ticker];
+            if (snap) {
+              extras.name = snap.name;
+              extras.marketCap = snap.marketCap;
+              extras.dayChangePct = snap.dayChangePct;
+            }
           }),
           includeFields.includes('fundamentals')
             ? getFundamentals(ticker).then((d) => {
@@ -103,6 +117,11 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
           includeFields.includes('earnings')
             ? getEarningsData(ticker).then((d) => {
                 extras.earnings = d;
+              })
+            : Promise.resolve(),
+          includeFields.includes('dividends')
+            ? getDividendInfo(ticker).then((d) => {
+                extras.dividends = d;
               })
             : Promise.resolve(),
         ]);

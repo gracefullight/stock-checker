@@ -21,6 +21,7 @@ import { detectPatterns } from '@stock-checker/core/src/services/patterns';
 import { evaluateSignal } from '@stock-checker/core/src/services/pipeline';
 import { calculateProbabilities } from '@stock-checker/core/src/services/probability';
 import type { CandleData, PipelineConfig, TickerResult } from '@stock-checker/core/src/types/index';
+import { tradingDaysUntil } from '@stock-checker/core/src/utils/trading-days';
 
 /**
  * Live signal config = the backtest-validated quality pipeline, used VERBATIM.
@@ -70,8 +71,10 @@ export async function analyzeTicker(
   // rsSpy/rsSector stay 0 and the leader-pullback gate would block everything).
   const spyCandles = await fetchBenchmarkPrices(MARKET_BENCHMARK);
   let sectorETF = MARKET_BENCHMARK;
+  let sector: string | null = null;
   try {
     const fund = await getFundamentals(ticker);
+    sector = fund?.sector ?? null;
     if (fund?.sector && SECTOR_ETF_MAP[fund.sector]) {
       sectorETF = SECTOR_ETF_MAP[fund.sector];
     }
@@ -85,8 +88,10 @@ export async function analyzeTicker(
 
   let earningsBeat: boolean | null = null;
   let earningsEstimateUp: boolean | null = null;
+  let nextEarningsDate: Date | null = null;
   try {
     const earningsInfo = await getEarningsData(ticker);
+    nextEarningsDate = earningsInfo?.nextEarningsDate ?? null;
     const hist = earningsInfo?.earningsHistory;
     if (hist && hist.length > 0) {
       const last = hist[hist.length - 1];
@@ -173,5 +178,8 @@ export async function analyzeTicker(
     volumeRatio: indicators.volumeRatio,
     trendRegime: pipelineResult.gateResults.trend.regime,
     confluenceRatio: pipelineResult.gateResults.confluence.ratio,
+    sector,
+    nextEarningsDate: nextEarningsDate ? nextEarningsDate.toISOString().split('T')[0] : null,
+    daysToEarnings: nextEarningsDate ? tradingDaysUntil(nextEarningsDate) : null,
   };
 }

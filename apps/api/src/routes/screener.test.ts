@@ -10,7 +10,11 @@ vi.mock('@stock-checker/core/src/portfolio/manager', () => ({
 vi.mock('@stock-checker/core/src/services/data-fetcher', () => ({
   getFearGreedIndex: vi.fn(),
   getHistoricalPrices: vi.fn(),
-  getQuoteNames: vi.fn().mockResolvedValue({}),
+  getQuoteSnapshots: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock('@stock-checker/core/src/services/dividends', () => ({
+  getDividendInfo: vi.fn(),
 }));
 
 vi.mock('@stock-checker/core/src/services/earnings', () => ({
