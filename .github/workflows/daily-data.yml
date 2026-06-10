@@ -20,6 +20,9 @@ jobs:
       - name: Run prediction
         run: bun src/index.ts predict --ticker="ABCL,BE,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST" --sort=asc
         working-directory: packages/core
+        env:
+          # OHLCV fallback when Yahoo is rate-limited (see services/tiingo.ts)
+          TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
       - name: Pull latest changes before commit
         # --autostash: the predict step leaves updated CSVs unstaged, which a
         # plain pull --rebase refuses to run on.

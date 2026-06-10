@@ -23,6 +23,9 @@ jobs:
         # non-TTY CI runner — the job was green while doing nothing.
         run: bun src/index.ts optimize TSLA --trials 50
         working-directory: packages/core
+        env:
+          # OHLCV fallback when Yahoo is rate-limited (see services/tiingo.ts)
+          TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
 
       - name: Upload results as artifacts
         if: always()
