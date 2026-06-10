@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/services/yahoo-finance', () => ({
-  default: { historical: vi.fn(), quote: vi.fn() },
+  default: { quote: vi.fn() },
+  fetchYahooDaily: vi.fn(),
 }));
 vi.mock('@/services/tiingo', () => ({
   isTiingoConfigured: vi.fn(),
@@ -10,9 +11,9 @@ vi.mock('@/services/tiingo', () => ({
 
 import { getHistoricalPrices } from '@/services/data-fetcher';
 import { fetchTiingoDaily, isTiingoConfigured } from '@/services/tiingo';
-import yahooFinance from '@/services/yahoo-finance';
+import { fetchYahooDaily } from '@/services/yahoo-finance';
 
-const mockedHistorical = vi.mocked(yahooFinance.historical);
+const mockedHistorical = vi.mocked(fetchYahooDaily);
 const mockedIsConfigured = vi.mocked(isTiingoConfigured);
 const mockedFetchTiingo = vi.mocked(fetchTiingoDaily);
 

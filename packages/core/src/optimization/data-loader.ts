@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { parse } from 'csv-parse/sync';
 import pino from 'pino';
-import yahooFinance from '@/services/yahoo-finance';
+import { fetchYahooDaily } from '@/services/yahoo-finance';
 
 const logger = pino({
   level: 'info',
@@ -25,12 +25,7 @@ export const DataLoader = {
     start.setDate(start.getDate() - days);
 
     try {
-      const result = await yahooFinance.historical(symbol, {
-        period1: start,
-        period2: end,
-        interval: '1d',
-        includeAdjustedClose: true,
-      });
+      const result = await fetchYahooDaily(symbol, start, end);
 
       return result.map((q) => ({
         date: q.date,

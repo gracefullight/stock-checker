@@ -2,12 +2,19 @@ import axios, { type AxiosRequestConfig, isAxiosError } from 'axios';
 import { DateTime } from 'luxon';
 import pino from 'pino';
 import { fetchTiingoDaily, isTiingoConfigured } from '@/services/tiingo';
-import yahooFinance from '@/services/yahoo-finance';
+import yahooFinance, { fetchYahooDaily } from '@/services/yahoo-finance';
 import type { BenchmarkCandle } from '@/types';
+
+/**
+ * Axios errors carry the full request config, including the Tiingo API token
+ * in query params — censor it before it reaches log sinks (CI logs persist).
+ */
+export const LOG_REDACT_PATHS = ['error.config.params.token', 'err.config.params.token'];
 
 const logger = pino({
   level: 'debug',
   timestamp: pino.stdTimeFunctions.isoTime,
+  redact: { paths: LOG_REDACT_PATHS, censor: '[REDACTED]' },
   transport: { target: 'pino-pretty' },
 });
 
@@ -41,13 +48,7 @@ export async function getHistoricalPrices(symbol: string, daysAgo = 365) {
   const start = end.minus({ days: daysAgo });
 
   try {
-    const rows = await yahooFinance.historical(symbol, {
-      period1: start.toJSDate(),
-      period2: end.toJSDate(),
-      interval: '1d',
-      events: 'history',
-      includeAdjustedClose: true,
-    });
+    const rows = await fetchYahooDaily(symbol, start.toJSDate(), end.toJSDate());
     if (rows.length > 0) return rows;
     logger.warn({ symbol }, 'Yahoo returned no historical prices');
   } catch (error) {
