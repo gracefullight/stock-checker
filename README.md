@@ -40,6 +40,31 @@ revisions over oscillator soup.
 - Volatility-adjusted risk levels per signal: 1.5×ATR stop loss, 2× reward
   take profit, trailing stop that activates after a 0.5×ATR move.
 
+## Validated results
+
+8-year window (entry years 2019–2026, incl. the 2020 COVID crash and the 2022
+rate-hike bear), 122-ticker diversified universe, fixed 5-day exit, evaluated
+through the real pipeline, **net of a 10bps round-trip transaction cost** (a
+"win" = profitable after costs). Full context and hard-won validation rules in
+[docs/TRADING_PRINCIPLES.md](docs/TRADING_PRINCIPLES.md).
+
+| Config | WR (5d) | R/R | N | Avg ret/trade |
+|---|---|---|---|---|
+| **V10 — shipped gate** (`rs≥0.7` + `scr<400` + market kill-switch + 200d stage) | **71.7%** | **1.75** | 46 | 1.86% |
+| `rs≥0.7` + `scr<400` only (higher-N family member) | 69.7% | 1.58 | 66 | 1.75% |
+| V7 legacy gate (`rs≥0.5`, `scr<380`) | 61.3% | 1.52 | 106 | 1.17% |
+| V5 institutional baseline (no quality gate) | 52.2% | 1.09 | 18,788 | 0.36% |
+
+V10 by entry year (WR / N): 2019 70%/10 · 2020 60%/5 · 2021 78%/9 · 2022 67%/3 ·
+2023 86%/7 · 2024 67%/6 · 2025 75%/4 · 2026 50%/2 — every year ≥ 50%.
+Train ≤2024: 72.5% / 1.51 (N=40) · holdout ≥2025: 66.7% (N=6, thin).
+
+Honest caveats: trade count is low (~6/yr) and the holdout split is thin, so
+the higher-N family member above is the statistically sturdiest config; the
+universe is defined as-of-today (survivorship bias), and there is no live
+forward track record yet. The two regime filters only *remove* trades from the
+validated base — they never add exposure.
+
 ## Usage
 
 Tooling is managed by [mise](https://mise.jdx.dev); tasks wrap every common
