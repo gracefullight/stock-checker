@@ -14,6 +14,7 @@ SERENA_LOG_LEVEL = "info"
 goals = true
 child_agents_md = true
 
+hooks = true
 [analytics]
 enabled = false
 

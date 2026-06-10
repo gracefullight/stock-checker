@@ -1,0 +1,61 @@
+{
+  "oma-keyword-detector": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/keyword-detector.ts\"",
+        "timeout": 5
+      }
+    ]
+  },
+  "oma-state-boundary": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/state-boundary.ts\"",
+        "timeout": 5
+      }
+    ]
+  },
+  "oma-skill-injector": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/skill-injector.ts\"",
+        "timeout": 3
+      }
+    ]
+  },
+  "oma-serena-primer": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/serena-primer.ts\"",
+        "timeout": 3
+      }
+    ]
+  },
+  "oma-test-filter": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/test-filter.ts\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "oma-persistent-mode": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/persistent-mode.ts\"",
+        "timeout": 5
+      }
+    ]
+  }
+}

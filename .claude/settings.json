@@ -17,5 +17,56 @@
   "attribution": {
     "commit": "Generated with oh-my-agent\n\nCo-Authored-By: First Fluke <our.first.fluke@gmail.com>",
     "pr": "Generated with [oh-my-agent](https://github.com/first-fluke/oh-my-agent)"
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-UserPromptSubmit",
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/oma-hook.sh\" --vendor 'claude' --event 'UserPromptSubmit'",
+            "timeout": 21
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-PreToolUse",
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/oma-hook.sh\" --vendor 'claude' --event 'PreToolUse' --matcher 'Bash'",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-Stop",
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/oma-hook.sh\" --vendor 'claude' --event 'Stop'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "'bun' \"$CLAUDE_PROJECT_DIR/.claude/hooks/hud.ts\""
+  },
+  "permissions": {
+    "allow": [
+      "Bash(bun run:*)",
+      "Bash(bunx tsx:*)",
+      "Bash(git add:*)",
+      "mcp__serena__*"
+    ]
   }
 }

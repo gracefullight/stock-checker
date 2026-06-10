@@ -22,5 +22,44 @@
         "false"
       ]
     }
+  },
+  "hooks": {
+    "userPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-userPromptSubmit",
+            "type": "command",
+            "command": "'.kiro/hooks/oma-hook.sh' --vendor 'kiro' --event 'userPromptSubmit'",
+            "timeout": 21
+          }
+        ]
+      }
+    ],
+    "preToolUse": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-preToolUse",
+            "type": "command",
+            "command": "'.kiro/hooks/oma-hook.sh' --vendor 'kiro' --event 'preToolUse' --matcher 'shell'",
+            "timeout": 10
+          }
+        ],
+        "matcher": "shell"
+      }
+    ],
+    "stop": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-stop",
+            "type": "command",
+            "command": "'.kiro/hooks/oma-hook.sh' --vendor 'kiro' --event 'stop'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

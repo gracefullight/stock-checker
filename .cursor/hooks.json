@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-UserPromptSubmit",
+            "type": "command",
+            "command": "'.cursor/hooks/oma-hook.sh' --vendor 'cursor' --event 'UserPromptSubmit'",
+            "timeout": 21
+          }
+        ]
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-beforeSubmitPrompt",
+            "type": "command",
+            "command": "'.cursor/hooks/oma-hook.sh' --vendor 'cursor' --event 'beforeSubmitPrompt'",
+            "timeout": 21
+          }
+        ]
+      }
+    ]
+  },
+  "version": 1
+}

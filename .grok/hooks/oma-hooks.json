@@ -1,0 +1,41 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-UserPromptSubmit",
+            "type": "command",
+            "command": "\"$GROK_WORKSPACE_ROOT/.grok/hooks/oma-hook.sh\" --vendor 'grok' --event 'UserPromptSubmit'",
+            "timeout": 21
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-PreToolUse",
+            "type": "command",
+            "command": "\"$GROK_WORKSPACE_ROOT/.grok/hooks/oma-hook.sh\" --vendor 'grok' --event 'PreToolUse' --matcher 'run_terminal_cmd'",
+            "timeout": 10
+          }
+        ],
+        "matcher": "run_terminal_cmd"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-Stop",
+            "type": "command",
+            "command": "\"$GROK_WORKSPACE_ROOT/.grok/hooks/oma-hook.sh\" --vendor 'grok' --event 'Stop'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
