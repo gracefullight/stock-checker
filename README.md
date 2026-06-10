@@ -10,6 +10,10 @@ with a backtest.
 | `apps/api` | Fastify API server (screener, ticker detail, OHLCV) — port 3001 |
 | `apps/web` | Next.js 16 screener UI (candlestick + Gaussian Channel band charts, portfolio, light/dark) — port 3000 |
 
+| Screener | Ticker detail (Gaussian Channel band) |
+|---|---|
+| ![Equity screener table with composite scores, signals, and detected chart patterns](docs/images/screener.png) | ![TSLA detail page: candlestick chart with SMA 20/50/200, Bollinger Bands, and trend-colored Gaussian Channel band](docs/images/ticker-detail.png) |
+
 ## Signal philosophy
 
 The engine follows the principles in [docs/TRADING_PRINCIPLES.md](docs/TRADING_PRINCIPLES.md):
