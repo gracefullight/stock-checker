@@ -18,7 +18,10 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Run optimization
-        run: bun src/index.ts optimize --trials 50
+        # Symbol must be passed positionally: without it the CLI opens an
+        # interactive prompt, which exits immediately (and silently) on a
+        # non-TTY CI runner — the job was green while doing nothing.
+        run: bun src/index.ts optimize TSLA --trials 50
         working-directory: packages/core
 
       - name: Upload results as artifacts
