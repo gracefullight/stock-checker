@@ -108,6 +108,12 @@ export default async function TickerDetailPage({ params }: PageProps) {
             ${data.close.toFixed(2)}
           </span>
           <span className="text-xs font-mono text-muted-foreground ml-auto">{data.date}</span>
+          <Link
+            href={`/${symbol}/backtest`}
+            className="text-xs font-mono text-primary hover:underline"
+          >
+            [BACKTEST]
+          </Link>
         </div>
         {data.name && (
           <div className="mt-1 font-mono text-sm text-muted-foreground">{data.name}</div>

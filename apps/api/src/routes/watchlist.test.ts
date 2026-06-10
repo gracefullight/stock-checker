@@ -9,11 +9,7 @@ vi.mock('@stock-checker/core/src/watchlist/manager', () => ({
   removeTicker: vi.fn(),
 }));
 
-import {
-  addTicker,
-  getWatchlist,
-  removeTicker,
-} from '@stock-checker/core/src/watchlist/manager';
+import { addTicker, getWatchlist, removeTicker } from '@stock-checker/core/src/watchlist/manager';
 
 const mockedGetWatchlist = vi.mocked(getWatchlist);
 const mockedAddTicker = vi.mocked(addTicker);

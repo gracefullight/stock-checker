@@ -203,6 +203,32 @@ export function removeFromWatchlist(ticker: string): Promise<void> {
   return apiFetch<void>(`/api/watchlist/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
 }
 
+export interface BacktestDataResponse {
+  ticker: string;
+  candles: Array<{
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }>;
+  spy: Array<{ date: string; close: number; volume: number; high: number; low: number }>;
+  sector: {
+    etf: string;
+    candles: Array<{ date: string; close: number; volume: number; high: number; low: number }>;
+  } | null;
+}
+
+/**
+ * GET /api/screener/:ticker/backtest-data?days=1825
+ */
+export function getBacktestData(ticker: string, days = 1825): Promise<BacktestDataResponse> {
+  return apiFetch<BacktestDataResponse>(
+    `/api/screener/${encodeURIComponent(ticker)}/backtest-data?days=${days}`
+  );
+}
+
 /**
  * GET /api/screener/:ticker/ohlcv?days=180
  */
