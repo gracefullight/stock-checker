@@ -25,12 +25,10 @@ revisions over oscillator soup.
   VWAP accumulation, breakout volume, dollar-volume liquidity, earnings revisions.
 - **Strong-leader pullback entry (주도주 눌림목)** — BUY only when a name that
   is STRONGLY outperforming both the market and its sector (`rs ≥ 0.7`) pulls
-  back below its 50-day SMA — while still above its 200-day SMA and while the
-  SPY Gaussian Channel is green (market kill-switch) — on a calm, weak-close
-  bar with real participation. Backtested (8y incl. the 2020 crash and the
-  2022 bear, 122 tickers, real pipeline, net of a 10bps round-trip cost):
-  **71.7% 5-day win rate / 1.75 reward-risk** vs the 52.2% / 1.09 ungated
-  baseline, every entry year ≥ 50%.
+  back below its 50-day SMA on a calm, weak-close bar with real participation.
+  Backtested (8y incl. the 2020 crash and the 2022 bear, **408 tickers**, real
+  pipeline, net of a 10bps round-trip cost): **59.1% 5-day win rate / 1.13
+  reward-risk / N=279** vs the 51.6% / 1.03 ungated baseline (z≈2.5, p≈0.006).
 - **SELL = exit discipline, not a downside prediction** — distribution-day
   SELLs are suppressed inside intact uptrends and only fire when the trend
   itself is broken.
@@ -43,27 +41,30 @@ revisions over oscillator soup.
 ## Validated results
 
 8-year window (entry years 2019–2026, incl. the 2020 COVID crash and the 2022
-rate-hike bear), 122-ticker diversified universe, fixed 5-day exit, evaluated
-through the real pipeline, **net of a 10bps round-trip transaction cost** (a
-"win" = profitable after costs). Full context and hard-won validation rules in
-[docs/TRADING_PRINCIPLES.md](docs/TRADING_PRINCIPLES.md).
+rate-hike bear), **408-ticker** diversified universe, fixed 5-day exit,
+evaluated through the real pipeline, **net of a 10bps round-trip transaction
+cost** (a "win" = profitable after costs). Full context and hard-won
+validation rules in [docs/TRADING_PRINCIPLES.md](docs/TRADING_PRINCIPLES.md).
 
 | Config | WR (5d) | R/R | N | Avg ret/trade |
 |---|---|---|---|---|
-| **V10 — shipped gate** (`rs≥0.7` + `scr<400` + market kill-switch + 200d stage) | **71.7%** | **1.75** | 46 | 1.86% |
-| `rs≥0.7` + `scr<400` only (higher-N family member) | 69.7% | 1.58 | 66 | 1.75% |
-| V7 legacy gate (`rs≥0.5`, `scr<380`) | 61.3% | 1.52 | 106 | 1.17% |
-| V5 institutional baseline (no quality gate) | 52.2% | 1.09 | 18,788 | 0.36% |
+| **Shipped gate** (`rs≥0.7` + `scr<400` + below-50d pullback) | **59.1%** | **1.13** | 279 | 0.81% |
+| Legacy V7 gate (`rs≥0.5`, `scr<380`) | 57.3% | 1.22 | 419 | 0.79% |
+| Shipped gate + SPY kill-switch + 200d stage (NOT shipped) | 56.5% | 1.09 | 191 | 0.57% |
+| V5 institutional baseline (no quality gate) | 51.6% | 1.03 | 65,698 | 0.17% |
 
-V10 by entry year (WR / N): 2019 70%/10 · 2020 60%/5 · 2021 78%/9 · 2022 67%/3 ·
-2023 86%/7 · 2024 67%/6 · 2025 75%/4 · 2026 50%/2 — every year ≥ 50%.
-Train ≤2024: 72.5% / 1.51 (N=40) · holdout ≥2025: 66.7% (N=6, thin).
+Shipped gate by entry year (WR / N): 2019 67%/45 · 2020 50%/26 · 2021 63%/38 ·
+2022 56%/59 · 2023 47%/36 · 2024 55%/20 · 2025 67%/33 · 2026 68%/22.
+Train ≤2024: 57.1% / 1.05 (N=224) · holdout ≥2025: 67.3% / 1.67 (N=55).
+The edge over baseline is statistically significant (z≈2.5, p≈0.006).
 
-Honest caveats: trade count is low (~6/yr) and the holdout split is thin, so
-the higher-N family member above is the statistically sturdiest config; the
-universe is defined as-of-today (survivorship bias), and there is no live
-forward track record yet. The two regime filters only *remove* trades from the
-validated base — they never add exposure.
+**Falsification record.** On the original 122-ticker growth-heavy universe the
+same family printed up to **71.7% WR / 1.75 R/R (N=46)** — expanding the
+universe 3.3× collapsed it to the table above. The 70%+ readings were small-N
+universe artifacts, not edge ("universe shapes conclusions"). The SPY-Gaussian
+market kill-switch helped at 122 tickers and consistently *hurt* at 408, so it
+ships as an optional gate param, off by default. Remaining caveats: as-of-today
+universe (survivorship bias), no live forward track record.
 
 ## Usage
 

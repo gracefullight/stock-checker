@@ -50,8 +50,8 @@ plus RSI/MACD only as seasoning. RSI is *not* important.
 | Gaussian trend regime | `trendGate.source: 'gaussian'` (pipeline Gate 1); chart band in web UI |
 | Relative strength (market & sector) | `institutional.components.rsSpy/rsSector` vs SPY + sector ETF |
 | VWAP / breakout volume / liquidity / earnings | institutional flow score components (blended, not hard-gated) |
-| Leader pullback entry (주도주 눌림목) | `qualityGate` (Gate 1.7): `rsMin 0.7` + `requireBelowSma50` + `requireAboveSma200` + `ibs<0.3` + `atr%<3.5` + `volR>0.8` + `scoreMax 400` |
-| Market kill-switch (essay #2 at the index level) | `qualityGate.requireMarketUptrend`: no BUY while the SPY Gaussian Channel is red (wired into `predict` via `marketUptrend`) |
+| Leader pullback entry (주도주 눌림목) | `qualityGate` (Gate 1.7): `rsMin 0.7` + `requireBelowSma50` + `ibs<0.3` + `atr%<3.5` + `volR>0.8` + `scoreMax 400` |
+| Market kill-switch (essay #2 at the index level) | `qualityGate.requireMarketUptrend` (optional, OFF by default — helped on 122 tickers, hurt at 408; wired into `predict` via `marketUptrend`) |
 | Anti-parabolic (don't chase) | `qualityGate.scoreMax` — extreme composite scores have the worst forward R/R |
 | One setup, one decision | Setup-consumed cluster semantics (`PipelineResult.qualityBlocked`): a pullback that keeps closing weak for days is a breakdown, not an entry |
 | Oscillators as seasoning only | institutional strategy caps oscillator contribution; flow components dominate |
@@ -59,33 +59,45 @@ plus RSI/MACD only as seasoning. RSI is *not* important.
 ## Validated results (don't regress these without a better backtest)
 
 8y (entry years 2019–2026, incl. the 2020 COVID crash and the 2022 rate-hike
-bear), 122-ticker diversified universe, fixed 5-day exit, real pipeline,
+bear), **408-ticker** diversified universe, fixed 5-day exit, real pipeline,
 **net of a 10bps round-trip transaction cost** (a "win" = profitable after
 costs; `mise run backtest -- --cost-bps=N` to vary):
 
-- **V10 (shipped default — strong-leader pullback `rs≥0.7` + `scr<400` +
-  market kill-switch + 200d stage filter): 71.7% WR / R/R 1.75 / N=46 /
-  avgRet 1.86%** (train ≤2024: 72.5% / 1.51 / N=40; holdout ≥2025: 66.7% /
-  N=6 — thin; by year: 2019 70% / 2020 60% / 2021 78% / 2022 67% / 2023 86% /
-  2024 67% / 2025 75% / 2026 50% partial — every year ≥ 50%)
-- The higher-N family member (`rs.7` + `scr<400` only, no market/stage filter):
-  **69.7% / 1.58 / N=66**, holdout 69.2% on N=13, 2022 bear 64% on N=14 —
-  statistically the sturdiest config; the shipped V10 adds two subtractive
-  regime filters on top of it.
-- V7 legacy gate (`rs.5`, `scr<380`): 61.3% / 1.52 / N=106. The single lever
-  that lifted WR *without* giving back R/R was `rsMin 0.5 → 0.7` (essay #1 §5:
-  "is it stronger than everything else?"); the market kill-switch added R/R
-  (1.52 → 1.77 on the legacy gate) at roughly flat WR.
-- V5 baseline (institutional, no gate): 52.2% / 1.09 (N=18,788)
-- Essay-#2 trend-hold exit on the same entries: lower WR (41.5%) but R/R 2.6 —
-  a different objective, kept as a documented option, not the default.
+- **Shipped gate (strong-leader pullback `rs≥0.7` + `scr<400` + below-50d):
+  59.1% WR / R/R 1.13 / N=279 / avgRet 0.81%** — train ≤2024: 57.1%/1.05
+  (N=224), holdout ≥2025: 67.3%/1.67 (N=55); by year: 2019 67% / 2020 50% /
+  2021 63% / 2022 56% / 2023 47% / 2024 55% / 2025 67% / 2026 68%. Edge over
+  baseline is statistically significant (z≈2.5, p≈0.006).
+- V7 legacy gate (`rs.5`, `scr<380`): 57.3% / 1.22 / N=419 — equal expectancy
+  (~0.8%/trade), slightly lower WR, slightly higher R/R. Also significant.
+- V5 baseline (institutional, no gate): 51.6% / 1.03 (N=65,698)
+- Essay-#2 trend-hold exit: lower WR but higher R/R per cycle — a different
+  objective, kept as a documented option, not the default.
+
+### Falsification record (2026-06, the 75%-greed episode)
+
+On the original 122-ticker growth-heavy universe, the rs.7 family printed
+**66–72% WR / R/R 1.45–1.75** (N=46–66, train/holdout both confirming), and
+the SPY-Gaussian market kill-switch + 200d stage filter looked WR/R-R
+dominant (71.7%/1.75). Expanding the universe 3.3× to 408 tickers collapsed
+all of it: the same configs measured 54–59% WR / R/R ≈1.1, and every
++kill-switch variant did WORSE than its sibling (59.1%→55.7%). Lessons,
+now codified:
+
+1. Rule #2 (universe shapes conclusions) applies to WIN RATES, not just
+   lever selection — a WR claim is only as broad as the universe it was
+   measured on. Hand-picked growth universes inflate pullback win rates.
+2. Index-level regime filters transfer poorly to individual-stock entries —
+   consistent with the published split evidence (QuantifiedStrategies SPY
+   76→81% WR with a 200d filter vs Decoding Markets finding no stock-level
+   benefit). `requireMarketUptrend` / `requireAboveSma200` stay available as
+   gate params, OFF by default.
+3. Realistic ceiling: at N in the hundreds, the leader-pullback edge at a
+   5-day fixed exit is **~57–59% WR with R/R ~1.1–1.2** in this universe
+   class. 70%+ WR claims at N<100 should be treated as unvalidated.
 - Pre-cost 5y numbers previously here (65.1% / 1.36 / N=63) were measured
-  gross on 2023–2026 only; the net 8y figures above supersede them.
-- External cross-check: index-level regime filters raising pullback WR ~5pp
-  and cutting drawdown roughly in half is consistent with published SPY
-  mean-reversion backtests (QuantifiedStrategies 200d-MA filter: 76→81% WR,
-  MDD 29→14%), while stock-level evidence is mixed (Decoding Markets) — which
-  matches what we measured: the kill-switch's main gift is R/R, not WR.
+  gross on 2023–2026 only; superseded twice since (costs+8y, then 408-ticker
+  universe).
 
 ## SELL signals are EXIT discipline, not downside predictions
 
