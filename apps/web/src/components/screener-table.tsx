@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { EarningsWarningBadge } from '@/components/common/earnings-warning-badge';
 import { PatternList } from '@/components/pattern-list';
 import { ScoreBar } from '@/components/score-bar';
 import { SignalBadge } from '@/components/signal-badge';
@@ -161,7 +162,12 @@ export function ScreenerTable({ results }: ScreenerTableProps) {
                   <ScoreBar value={row.score} />
                 </TableCell>
                 <TableCell>
-                  <SignalBadge signal={row.opinion as 'BUY' | 'SELL' | 'HOLD'} />
+                  <span className="inline-flex items-center gap-1">
+                    <SignalBadge signal={row.opinion as 'BUY' | 'SELL' | 'HOLD'} />
+                    {row.opinion === 'BUY' && (
+                      <EarningsWarningBadge daysToEarnings={row.daysToEarnings} />
+                    )}
+                  </span>
                 </TableCell>
                 <TableCell className="max-w-[300px]">
                   <PatternList patterns={row.patterns} />
@@ -213,7 +219,12 @@ export function ScreenerTable({ results }: ScreenerTableProps) {
                   name={row.name}
                   className="font-bold font-mono text-sm text-foreground hover:text-primary"
                 />
-                <SignalBadge signal={row.opinion as 'BUY' | 'SELL' | 'HOLD'} />
+                <span className="inline-flex items-center gap-1">
+                  <SignalBadge signal={row.opinion as 'BUY' | 'SELL' | 'HOLD'} />
+                  {row.opinion === 'BUY' && (
+                    <EarningsWarningBadge daysToEarnings={row.daysToEarnings} />
+                  )}
+                </span>
               </div>
               <div className="mt-2 flex items-center justify-between font-mono text-xs text-muted-foreground">
                 <span>

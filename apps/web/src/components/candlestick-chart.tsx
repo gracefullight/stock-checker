@@ -9,6 +9,7 @@ import {
 } from 'lightweight-charts';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
+import { type ChartEvent, EventLinesPrimitive } from '@/components/event-lines-primitive';
 import { GaussianBandSeries } from '@/components/gaussian-band-series';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { OHLCVCandle } from '@/lib/api';
@@ -33,10 +34,21 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
 }
 
+export interface ChartEventInput {
+  /** YYYY-MM-DD */
+  date: string;
+  kind: 'earnings' | 'exDividend';
+}
+
 interface Props {
   ticker: string;
   days?: number;
+  /** Upcoming events drawn as vertical dashed lines (capped at +30 days). */
+  events?: ChartEventInput[];
 }
+
+/** Calendar days the time scale is extended past the last candle for future events. */
+const EVENT_HORIZON_DAYS = 30;
 
 type LinePoint = { time: string; value: number } | { time: string };
 
@@ -73,13 +85,15 @@ function readToken(name: string): string {
   return `#${[r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('')}`;
 }
 
-export function CandlestickChart({ ticker, days = 180 }: Props) {
+export function CandlestickChart({ ticker, days = 180, events }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const dataRef = useRef<OHLCVCandle[]>([]);
+  const eventsRef = useRef<ChartEventInput[] | undefined>(events);
+  eventsRef.current = events;
   const { resolvedTheme } = useTheme();
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: chart is fully recreated on ticker/days/theme change; resolvedTheme re-reads CSS tokens for light/dark. Other refs are intentionally excluded to avoid redundant rebuilds.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: chart is fully recreated on ticker/days/theme change; resolvedTheme re-reads CSS tokens for light/dark. Other refs (incl. eventsRef — events are static per page load) are intentionally excluded to avoid redundant rebuilds.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -203,7 +217,42 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
     });
 
     const applyData = (data: OHLCVCandle[]) => {
-      candleSeries.setData(data);
+      // Future events need coordinates past the last candle: append weekday
+      // whitespace points to extend the time scale (capped at EVENT_HORIZON_DAYS).
+      const dayMs = 86_400_000;
+      const lastTime = data[data.length - 1]?.time;
+      const chartEvents: ChartEvent[] = [];
+      const whitespace: Array<{ time: string }> = [];
+      if (lastTime && eventsRef.current && eventsRef.current.length > 0) {
+        const lastMs = Date.parse(`${lastTime}T00:00:00Z`);
+        const horizonMs = lastMs + EVENT_HORIZON_DAYS * dayMs;
+        for (const ev of eventsRef.current) {
+          const evMs = Date.parse(`${ev.date}T00:00:00Z`);
+          if (Number.isNaN(evMs) || evMs > horizonMs) continue;
+          chartEvents.push({ time: ev.date, kind: ev.kind });
+        }
+        const furthestMs = chartEvents.reduce(
+          (max, ev) => Math.max(max, Date.parse(`${ev.time}T00:00:00Z`)),
+          lastMs
+        );
+        for (let t = lastMs + dayMs; t <= furthestMs; t += dayMs) {
+          const dow = new Date(t).getUTCDay();
+          if (dow !== 0 && dow !== 6) {
+            whitespace.push({ time: new Date(t).toISOString().slice(0, 10) });
+          }
+        }
+      }
+
+      candleSeries.setData([...data, ...whitespace]);
+      if (chartEvents.length > 0) {
+        candleSeries.attachPrimitive(
+          new EventLinesPrimitive({
+            events: chartEvents,
+            earningsColor: warningColor,
+            exDividendColor: primaryColor,
+          })
+        );
+      }
       sma20Series.setData(toLineData(data, 'sma20'));
       sma50Series.setData(toLineData(data, 'sma50'));
       sma200Series.setData(toLineData(data, 'sma200'));
@@ -291,6 +340,12 @@ export function CandlestickChart({ ticker, days = 180 }: Props) {
     { tokenVar: '--chart-1', label: 'SMA200' },
     { tokenVar: '--muted-foreground', label: 'BB', dashed: true },
     { tokenVar: '--success', label: 'GC (trend)' },
+    ...(events?.some((e) => e.kind === 'earnings')
+      ? [{ tokenVar: '--warning', label: 'E EARNINGS', dashed: true }]
+      : []),
+    ...(events?.some((e) => e.kind === 'exDividend')
+      ? [{ tokenVar: '--primary', label: 'D EX-DIV', dashed: true }]
+      : []),
   ];
 
   if (status === 'error') {

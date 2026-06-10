@@ -1,10 +1,15 @@
 import Link from 'next/link';
+import { EarningsWarningBadge } from '@/components/common/earnings-warning-badge';
+import { EarningsPanel } from '@/components/earnings-panel';
+import { FundamentalsCard } from '@/components/fundamentals-card';
 import { IndicatorRow } from '@/components/indicator-row';
+import { NewsPanel } from '@/components/news-panel';
 import { PatternList } from '@/components/pattern-list';
 import { ScoreBar } from '@/components/score-bar';
 import { SignalBadge } from '@/components/signal-badge';
 import { TickerCharts } from '@/components/ticker-charts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { UpcomingEventsCard } from '@/components/upcoming-events-card';
 import { getTickerDetail } from '@/lib/api';
 
 interface PageProps {
@@ -42,7 +47,7 @@ export default async function TickerDetailPage({ params }: PageProps) {
   let error: string | null = null;
 
   try {
-    data = await getTickerDetail(symbol, ['fundamentals', 'earnings']);
+    data = await getTickerDetail(symbol, ['fundamentals', 'earnings', 'news', 'dividends']);
   } catch (err) {
     error = err instanceof Error ? err.message : 'Failed to fetch ticker data';
   }
@@ -75,6 +80,15 @@ export default async function TickerDetailPage({ params }: PageProps) {
 
   const signal = data.opinion as 'BUY' | 'SELL' | 'HOLD';
 
+  const nextEarningsDate = data.nextEarningsDate ?? data.fundamentals?.nextEarningsDate ?? null;
+  const exDividendDate = data.fundamentals?.exDividendDate ?? null;
+  const chartEvents: Array<{ date: string; kind: 'earnings' | 'exDividend' }> = [
+    ...(nextEarningsDate
+      ? [{ date: nextEarningsDate.slice(0, 10), kind: 'earnings' as const }]
+      : []),
+    ...(exDividendDate ? [{ date: exDividendDate.slice(0, 10), kind: 'exDividend' as const }] : []),
+  ];
+
   return (
     <div className="space-y-4">
       {/* Breadcrumb */}
@@ -89,6 +103,7 @@ export default async function TickerDetailPage({ params }: PageProps) {
         <div className="flex items-center gap-4 flex-wrap">
           <h1 className="text-3xl font-bold font-mono text-foreground tracking-widest">{symbol}</h1>
           <SignalBadge signal={signal} />
+          {signal === 'BUY' && <EarningsWarningBadge daysToEarnings={data.daysToEarnings} />}
           <span className="text-2xl font-mono font-bold tabular-nums text-warning">
             ${data.close.toFixed(2)}
           </span>
@@ -114,8 +129,38 @@ export default async function TickerDetailPage({ params }: PageProps) {
           confidence={data.confidence}
           rsi={data.rsi}
           stochasticK={data.stochasticK}
+          events={chartEvents}
         />
       </Section>
+
+      {/* Fundamentals + events / earnings + news */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-4">
+          {data.fundamentals && (
+            <Section title="FUNDAMENTALS">
+              <FundamentalsCard fundamentals={data.fundamentals} />
+            </Section>
+          )}
+          <Section title="UPCOMING EVENTS">
+            <UpcomingEventsCard
+              nextEarningsDate={nextEarningsDate ? nextEarningsDate.slice(0, 10) : null}
+              daysToEarnings={data.daysToEarnings ?? null}
+              exDividendDate={exDividendDate}
+              dividendDate={data.fundamentals?.dividendDate ?? null}
+            />
+          </Section>
+        </div>
+        <div className="space-y-4">
+          {data.earnings && (
+            <Section title="EARNINGS">
+              <EarningsPanel earnings={data.earnings} />
+            </Section>
+          )}
+          <Section title="NEWS">
+            <NewsPanel news={data.news ?? []} />
+          </Section>
+        </div>
+      </div>
 
       {/* 2-column grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

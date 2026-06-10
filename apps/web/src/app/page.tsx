@@ -1,3 +1,4 @@
+import { MarketHeatmap } from '@/components/market-heatmap';
 import { ScreenerTable } from '@/components/screener-table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -85,16 +86,29 @@ export default async function ScreenerPage() {
       ) : results.length === 0 ? (
         <div className="p-4 font-mono text-xs text-muted-foreground">NO DATA AVAILABLE</div>
       ) : (
-        <Card className="overflow-hidden">
-          <CardHeader className="border-b border-border py-1.5 px-3">
-            <span className="text-[10px] font-mono text-muted-foreground">
-              {results.length} RESULTS
-            </span>
-          </CardHeader>
-          <CardContent className="p-0">
-            <ScreenerTable results={results} />
-          </CardContent>
-        </Card>
+        <div className="space-y-4">
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b border-border py-1.5 px-3">
+              <span className="text-[10px] font-mono font-bold tracking-widest text-primary">
+                SECTOR HEATMAP
+              </span>
+            </CardHeader>
+            <CardContent className="p-3">
+              <MarketHeatmap results={results} />
+            </CardContent>
+          </Card>
+
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b border-border py-1.5 px-3">
+              <span className="text-[10px] font-mono text-muted-foreground">
+                {results.length} RESULTS
+              </span>
+            </CardHeader>
+            <CardContent className="p-0">
+              <ScreenerTable results={results} />
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );

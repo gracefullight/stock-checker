@@ -9,7 +9,8 @@
     ],
     "paths": {
       "@/*": [
-        "./src/*"
+        "./src/*",
+        "../../packages/core/src/*"
       ]
     },
     "plugins": [

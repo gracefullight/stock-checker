@@ -14,10 +14,71 @@ export interface FearGreedResult {
   timestamp: Date;
 }
 
+// DTO shapes mirror the core service interfaces, with Date fields serialized
+// to ISO strings by Fastify's JSON encoder.
+export interface FundamentalsDTO {
+  ticker: string;
+  pe: number | null;
+  dividendYield: number | null;
+  nextEarningsDate: string | null;
+  exDividendDate: string | null;
+  dividendDate: string | null;
+  marketCap: number | null;
+  sector: string | null;
+}
+
+export interface EarningsHistoryRowDTO {
+  reportDate: string;
+  epsActual: number | null;
+  epsEstimate: number | null;
+  epsDifference: number | null;
+  surprisePercent: number | null;
+}
+
+export interface EstimateRevisionsDTO {
+  up30: number | null;
+  down30: number | null;
+  current: number | null;
+  thirtyDaysAgo: number | null;
+  direction: 'up' | 'down' | 'flat' | null;
+}
+
+export interface EarningsDTO {
+  ticker: string;
+  nextEarningsDate: string | null;
+  nextEarningsEstimate: {
+    avg: number;
+    low: number;
+    high: number;
+    yearAgoEps: number;
+    numberOfAnalysts: number;
+  } | null;
+  earningsHistory: EarningsHistoryRowDTO[];
+  estimateRevisions: EstimateRevisionsDTO | null;
+}
+
+export interface NewsItemDTO {
+  title: string;
+  url: string;
+  publishedAt: string;
+  summary: string;
+}
+
+export interface DividendsDTO {
+  ticker: string;
+  dividendYield: number | null;
+  payoutRatio: number | null;
+  annualDividendRate: number | null;
+  lastDividendDate: string | null;
+  nextDividendDate: string | null;
+  dividendHistory: Array<{ date: string; amount: number }>;
+}
+
 export interface TickerDetailResult extends TickerResult {
-  fundamentals?: Record<string, unknown>;
-  news?: Array<{ title: string; url: string; publishedAt: string }>;
-  earnings?: Record<string, unknown>;
+  fundamentals?: FundamentalsDTO;
+  news?: NewsItemDTO[];
+  earnings?: EarningsDTO;
+  dividends?: DividendsDTO;
 }
 
 export interface OHLCVCandle {

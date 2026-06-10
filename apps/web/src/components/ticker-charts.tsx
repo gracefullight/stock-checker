@@ -30,6 +30,7 @@ interface Props {
   confidence?: string;
   rsi: number;
   stochasticK: number;
+  events?: Array<{ date: string; kind: 'earnings' | 'exDividend' }>;
 }
 
 export function TickerCharts({
@@ -40,6 +41,7 @@ export function TickerCharts({
   confidence,
   rsi,
   stochasticK,
+  events,
 }: Props) {
   return (
     <>
@@ -47,7 +49,7 @@ export function TickerCharts({
         <CardContent className="p-0">
           {/* key forces a fresh instance per ticker so the chart's data cache
               never bleeds a previous symbol's candles into a new one. */}
-          <CandlestickChart key={ticker} ticker={ticker} days={180} />
+          <CandlestickChart key={ticker} ticker={ticker} days={180} events={events} />
         </CardContent>
       </Card>
 
