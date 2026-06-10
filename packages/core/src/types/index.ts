@@ -107,6 +107,15 @@ export interface PredictionRecord {
   };
 }
 
+/** Benchmark (SPY / sector ETF) daily candle used for relative-strength inputs. */
+export interface BenchmarkCandle {
+  date: Date;
+  close: number;
+  volume: number;
+  high: number;
+  low: number;
+}
+
 // Pipeline V2 Types
 
 export interface CandleData {

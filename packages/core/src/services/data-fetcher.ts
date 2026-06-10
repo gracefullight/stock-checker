@@ -2,6 +2,11 @@ import axios, { type AxiosRequestConfig, isAxiosError } from 'axios';
 import { DateTime } from 'luxon';
 import pino from 'pino';
 import yahooFinance from '@/services/yahoo-finance';
+import type { BenchmarkCandle } from '@/types';
+
+// Re-export: BenchmarkCandle moved to @/types so pure modules can use it
+// without touching this I/O module; existing imports keep working.
+export type { BenchmarkCandle };
 
 const logger = pino({
   level: 'debug',
@@ -50,14 +55,6 @@ export async function getHistoricalPrices(symbol: string, daysAgo = 365) {
     logger.error({ error, symbol }, 'Failed to fetch historical prices');
     return [];
   }
-}
-
-export interface BenchmarkCandle {
-  date: Date;
-  close: number;
-  volume: number;
-  high: number;
-  low: number;
 }
 
 const benchmarkCache = new Map<string, BenchmarkCandle[]>();
