@@ -57,22 +57,34 @@ plus RSI/MACD only as seasoning. RSI is *not* important.
 
 ## Validated results (don't regress these without a better backtest)
 
-5y (2023–2026), 121-ticker diversified universe, fixed 5-day exit, real pipeline:
+8y (entry years 2019–2026, incl. the 2020 COVID crash and the 2022 rate-hike
+bear), 122-ticker diversified universe, fixed 5-day exit, real pipeline,
+**net of a 10bps round-trip transaction cost** (a "win" = profitable after
+costs; `mise run backtest -- --cost-bps=N` to vary):
 
-- **V7 (institutional + leader-pullback gate): 65.1% WR / R/R 1.36 / N=63**
-  (by year: 2023 71.4% / 2024 66.7% / 2025 75.0% / 2026 58.3% partial)
-- V5 baseline (institutional, no gate): 52.5% / 1.09
-- Essay-#2 trend-hold exit on the same entries: lower WR (~40-50%) but R/R 2-3 —
+- **V7 (institutional + leader-pullback gate): 61.3% WR / R/R 1.52 / N=106**
+  (by year: 2019 66.7% / 2020 **37.5%, N=8** / 2021 71.4% / 2022 60.0% /
+  2023 71.4% / 2024 50.0% / 2025 62.5% / 2026 58.3% partial)
+- V5 baseline (institutional, no gate): 52.2% / 1.09 (N=18,788)
+- The 2022 bear held the gate's edge (60.0%); the 2020 crash did NOT (37.5%,
+  avgRet −0.49%, tiny N). Pullback entries during a liquidity panic are the
+  known weak regime — position sizing / market-level kill-switch is the open
+  item, not gate re-tuning on 8 samples.
+- Essay-#2 trend-hold exit on the same entries: lower WR (41.5%) but R/R 2.6 —
   a different objective, kept as a documented option, not the default.
+- Pre-cost 5y numbers previously here (65.1% / 1.36 / N=63) were measured
+  gross on 2023–2026 only; the net 8y figures above supersede them.
 
 ## SELL signals are EXIT discipline, not downside predictions
 
-Validated 2026-06 on the same universe: SELL signals (distribution day = heavy
-volume below VWAP + Donchian breakdown + MACD dead cross) have **negative
-directional edge** — 41.9% 5-day accuracy vs a 47.6% all-bars base down-rate,
-with +1.8%/5d and +4.2%/20d average forward returns. Panic days mean-revert;
-nothing we tested (distribution days, weak-RS subsets, Gaussian red-flips)
-predicts lower prices ahead with positive edge in this universe.
+Validated 2026-06 on the same universe (re-confirmed on the 8y window): SELL
+signals (distribution day = heavy volume below VWAP + Donchian breakdown +
+MACD dead cross) have **negative directional edge** — 45.2% 5-day accuracy vs
+a 46.5% all-bars base down-rate, with +1.3%/5d and +4.2%/20d average forward
+returns (N=555). Panic days mean-revert; nothing we tested (distribution days,
+weak-RS subsets, Gaussian red-flips) predicts lower prices ahead with positive
+edge in this universe. Even the 2022 bear year shows only 36.5% accuracy —
+SELLs cluster on capitulation days that bounce.
 
 Therefore:
 
@@ -97,7 +109,12 @@ Therefore:
    power on a tech-only universe (everything was the same high-beta bet) and became
    the top lever on a diversified one. Test levers on the universe you'll trade.
 3. **Data window shapes conclusions.** A 2024-start window inflated win rates
-   (strong bull regime). Include 2023+ and check per-year robustness; reject
-   configs whose edge lives in one year.
+   (strong bull regime). The backtest window is 8y so 2020 (crash) and 2022
+   (bear) are full entry years; check per-year robustness and reject configs
+   whose edge lives in one year or one regime.
 4. **Train/holdout split** (≤2024 / ≥2025) before believing any searched config,
    and prefer stable *families* of configs over lone spikes.
+5. **Costs are part of the edge.** Every backtested trade pays a 10bps
+   round-trip cost (slippage on liquid large caps; zero commission), and a
+   "win" means profitable net of that cost. A gate that only clears the bar
+   gross is not an edge.

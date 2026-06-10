@@ -25,9 +25,10 @@ revisions over oscillator soup.
   VWAP accumulation, breakout volume, dollar-volume liquidity, earnings revisions.
 - **Leader-pullback entry (주도주 눌림목)** — BUY only when a name that is
   outperforming both the market and its sector pulls back below its 50-day SMA
-  on a calm, weak-close bar with real participation. Backtested (5y, 121
-  tickers, real pipeline): **65.1% 5-day win rate / 1.36 reward-risk** vs the
-  52.5% / 1.09 ungated baseline.
+  on a calm, weak-close bar with real participation. Backtested (8y incl. the
+  2020 crash and the 2022 bear, 122 tickers, real pipeline, net of a 10bps
+  round-trip transaction cost): **61.3% 5-day win rate / 1.52 reward-risk**
+  vs the 52.2% / 1.09 ungated baseline.
 - **SELL = exit discipline, not a downside prediction** — distribution-day
   SELLs are suppressed inside intact uptrends and only fire when the trend
   itself is broken.
@@ -67,6 +68,7 @@ mise run predict -- --ticker=TSLA,PLTR --slack-webhook=https://hooks.slack.com/s
 
 # Strategy validation & tuning
 mise run backtest        # version comparison, goal search, SELL validation
+mise run backtest -- --cost-bps=20   # vary the round-trip cost (default 10bps)
 mise run optimize        # parameter optimizer (positional symbol, e.g. TSLA)
 mise run learn           # learn from prediction feedback
 ```
