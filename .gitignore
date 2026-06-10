@@ -41,3 +41,6 @@ docs/plans/
 
 # oma docs generated artifacts
 docs/generated/
+
+.agents/backup/
+.migration-backup/

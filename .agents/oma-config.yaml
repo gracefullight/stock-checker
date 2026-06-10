@@ -6,9 +6,9 @@ model_preset: claude
 vendors:
   - claude
   - codex
-  - copilot
   - cursor
   - grok
   - kiro
-  - qwen
   - antigravity
+  - qwen
+  - copilot

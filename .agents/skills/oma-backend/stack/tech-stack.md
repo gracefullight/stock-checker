@@ -1,43 +1,32 @@
-# Backend Agent - Tech Stack Reference
+# Backend Agent - Tech Stack Reference (Node.js)
 
-## Python (Preferred)
-- **Framework**: FastAPI 0.110+
-- **ORM**: SQLAlchemy 2.0 (async)
-- **Validation**: Pydantic v2
-- **Database**: PostgreSQL 16+, Redis 7+
-- **Auth**: python-jose (JWT), passlib (bcrypt)
-- **Testing**: pytest, httpx (async test client)
-- **Migrations**: Alembic
-
-## Node.js (Alternative)
-- **Framework**: Express.js, NestJS, Hono
-- **ORM**: Prisma, Drizzle
+## Primary Stack
+- **Runtime**: Node.js 22+ / Bun 1.2+
+- **Language**: TypeScript 5.x (strict mode)
+- **Framework**: NestJS 11+ or Hono 4+
+- **ORM**: Prisma 6+ or Drizzle ORM
 - **Validation**: Zod
+- **Database**: PostgreSQL 16+, Redis 7+
 - **Auth**: jsonwebtoken, bcrypt
-- **Testing**: Jest, Supertest
+- **Testing**: Vitest, Supertest
+- **Migrations**: Prisma Migrate or Drizzle Kit
 
 ## Architecture
-
 ```
-backend/
-  domain/           # Business logic (pure Python, no framework deps)
-  application/      # Use cases, services
-  infrastructure/   # Database, cache, external APIs
-  presentation/     # API endpoints, middleware
+src/
+  modules/          # Feature modules (NestJS) or routes (Hono)
+  common/           # Shared guards, pipes, interceptors
+  prisma/           # Prisma client and schema
 ```
 
 ## Security Requirements
 - Password hashing: bcrypt (cost factor 10-12)
 - JWT: 15min access tokens, 7 day refresh tokens
 - Rate limiting on auth endpoints
-- Input validation with Pydantic/Zod
-- Parameterized queries (never string interpolation)
+- Input validation with Zod schemas
+- Parameterized queries via ORM (never raw string interpolation)
 
-## ORM Guidance
-- Cross-ORM operational rules and official vendor references: `resources/orm-reference.md`
-- Primary references covered there: Prisma, SQLAlchemy, TypeORM, Sequelize, Hibernate
-
-## Serena MCP Shortcuts
-- `find_symbol("create_todo")`: Locate existing function
-- `get_symbols_overview("app/api")`: List all endpoints
-- `find_referencing_symbols("User")`: Find all usages of a model
+## Linter/Formatter
+- **ESLint**: with @typescript-eslint
+- **Prettier**: consistent formatting
+- **Biome**: alternative all-in-one (lint + format)
