@@ -1,39 +1,78 @@
-# Multi-Ticker Stock Checker
+# Stock Checker
 
-This project fetches daily stock data for multiple tickers using `yahoo-finance2`, computes several technical indicators, and writes a dated CSV to the `public` directory.
+A bun-workspaces monorepo that screens US equities with an institutional-flow
+signal engine, visualizes them in a web UI, and validates every strategy change
+with a backtest.
 
-## Indicators
-- Close price & volume
-- Relative Strength Index (RSI)
-- Stochastic oscillator %K
-- Bollinger Bands (20-day, 2 standard deviations)
-- Donchian Channels (20-day)
-- Williams %R (14-day)
-- Fear & Greed Index (alternative.me)
-- Derived BUY/HOLD/SELL opinion weighted by indicator reliability and basic pattern detection
-- Basic detection of bullish chart patterns (ascending triangle, bullish flag, double bottom, falling wedge, island reversal)
-- Volatility-adjusted stop loss, take profit, and trailing stop suggestions (1.5×ATR stop, trailing activates after a 0.5×ATR move and never tightens beyond the initial stop)
+| Package | What it is |
+|---|---|
+| `packages/core` | Signal engine, backtest, and CLI (`predict` / `learn` / `optimize` / `backtest`) |
+| `apps/api` | Fastify API server (screener, ticker detail, OHLCV) — port 3001 |
+| `apps/web` | Next.js 16 screener UI (candlestick + Gaussian Channel band charts, portfolio, light/dark) — port 3000 |
+
+## Signal philosophy
+
+The engine follows the principles in [docs/TRADING_PRINCIPLES.md](docs/TRADING_PRINCIPLES.md):
+price, volume, VWAP, moving averages, liquidity, relative strength, and earnings
+revisions over oscillator soup.
+
+- **Trend regime** — Gaussian Channel (green = uptrend, red = downtrend) gates all buys.
+- **Institutional flow score** — relative strength vs SPY and the sector ETF,
+  VWAP accumulation, breakout volume, dollar-volume liquidity, earnings revisions.
+- **Leader-pullback entry (주도주 눌림목)** — BUY only when a name that is
+  outperforming both the market and its sector pulls back below its 50-day SMA
+  on a calm, weak-close bar with real participation. Backtested (5y, 121
+  tickers, real pipeline): **65.1% 5-day win rate / 1.36 reward-risk** vs the
+  52.5% / 1.09 ungated baseline.
+- **SELL = exit discipline, not a downside prediction** — distribution-day
+  SELLs are suppressed inside intact uptrends and only fire when the trend
+  itself is broken.
+- Classic indicators (RSI, Stochastic %K, Bollinger, Donchian, Williams %R,
+  MACD, ATR, volume ratio, Fear & Greed) are still computed and displayed, but
+  they season the score rather than drive it.
+- Volatility-adjusted risk levels per signal: 1.5×ATR stop loss, 2× reward
+  take profit, trailing stop that activates after a 0.5×ATR move.
 
 ## Usage
-1. **Install & run**
 
-    ```bash
-    bun install
-    bun start --ticker=ABCL,BE,BMNR,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST --sort=desc
-    ```
+Tooling is managed by [mise](https://mise.jdx.dev); tasks wrap every common
+operation (run `mise tasks` to see them all).
 
-    Pass any comma-separated list of tickers via `--ticker`. If omitted, the script exits with an error message. Argument parsing is handled by [commander](https://github.com/tj/commander.js).
+```bash
+mise install        # pin runtimes (node 24, bun)
+bun install         # install workspace deps + git pre-commit hook
+mise run dev        # API (3001) + Web (3000) dev servers in parallel
+```
 
-    To send Slack notifications for tickers that return a **BUY** or **SELL** opinion, provide a webhook URL either via the `--slack-webhook` option or the `SLACK_WEBHOOK_URL` environment variable:
+### CLI (packages/core)
 
-    ```bash
-    SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX bun start --ticker=TSLA,PLTR
-    # or
-    bun start --ticker=TSLA,PLTR --slack-webhook=https://hooks.slack.com/services/XXX
-    ```
+```bash
+# Daily prediction for a ticker list (default command)
+mise run predict -- --ticker=TSLA,PLTR --sort=asc
 
-    Each Slack message starts with the date, ticker, and opinion followed by bullet-pointed indicator values.
+# Slack notification for BUY/SELL opinions (either form)
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX mise run predict -- --ticker=TSLA,PLTR
+mise run predict -- --ticker=TSLA,PLTR --slack-webhook=https://hooks.slack.com/services/XXX
 
-Each run appends data to a file named `public/stock_data_YYYYMMDD.csv`, with tickers written in alphabetical order by default. Use `--sort=desc` to write them in reverse order.
+# Strategy validation & tuning
+mise run backtest        # version comparison, goal search, SELL validation
+mise run optimize        # parameter optimizer (positional symbol, e.g. TSLA)
+mise run learn           # learn from prediction feedback
+```
 
-A scheduled GitHub Action (`.github/workflows/daily-data.yml`) executes the script daily and commits new CSV files automatically.
+Each `predict` run appends rows to a monthly CSV in `packages/core/public/`
+(e.g. `stock_data_202511.csv`), tickers in alphabetical order (`--sort=desc`
+reverses).
+
+### Quality gate
+
+```bash
+mise run ci          # lint → typecheck → test → build
+```
+
+## Automation
+
+- `.github/workflows/daily-data.yml` — runs `predict` after US market close and
+  auto-commits the monthly CSV.
+- `.github/workflows/weekly-optimize.yml` — weekly parameter optimization,
+  results uploaded as a build artifact.
