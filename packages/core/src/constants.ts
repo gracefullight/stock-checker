@@ -58,6 +58,9 @@ export const SECTOR_ETF_MAP: Record<string, string> = {
 };
 export const MARKET_BENCHMARK = 'SPY';
 
+/** BUY signals within this many trading days of earnings get a warning badge. */
+export const EARNINGS_PROXIMITY_DAYS = 3;
+
 export const DEFAULT_INSTITUTIONAL_CONFIG: InstitutionalConfig = {
   enabled: true,
   weights: {

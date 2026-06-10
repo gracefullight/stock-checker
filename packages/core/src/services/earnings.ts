@@ -33,12 +33,21 @@ export interface EarningsTrend {
   yearAgoEps: number;
 }
 
+export interface EstimateRevisions {
+  up30: number | null;
+  down30: number | null;
+  current: number | null;
+  thirtyDaysAgo: number | null;
+  direction: 'up' | 'down' | 'flat' | null;
+}
+
 export interface EarningsData {
   ticker: string;
   nextEarningsDate: Date | null;
   nextEarningsEstimate: EarningsEstimate | null;
   earningsHistory: EarningsActual[];
   earningsTrend: EarningsTrend[];
+  estimateRevisions: EstimateRevisions | null;
   currentQuarterEstimate: number | null;
   currentYearEstimate: number | null;
 }
@@ -57,6 +66,36 @@ interface RawEarningsTrend {
   estimateHigh: number;
   estimateCount: number;
   yearAgoEps: number;
+  epsTrend?: {
+    current?: number;
+    '30daysAgo'?: number;
+  };
+  epsRevisions?: {
+    upLast30days?: number;
+    downLast30days?: number;
+  };
+}
+
+function extractEstimateRevisions(trend: RawEarningsTrend | undefined): EstimateRevisions | null {
+  if (!trend || (!trend.epsTrend && !trend.epsRevisions)) return null;
+
+  const current = trend.epsTrend?.current ?? null;
+  const thirtyDaysAgo = trend.epsTrend?.['30daysAgo'] ?? null;
+
+  let direction: EstimateRevisions['direction'] = null;
+  if (current !== null && thirtyDaysAgo !== null) {
+    if (current > thirtyDaysAgo) direction = 'up';
+    else if (current < thirtyDaysAgo) direction = 'down';
+    else direction = 'flat';
+  }
+
+  return {
+    up30: trend.epsRevisions?.upLast30days ?? null,
+    down30: trend.epsRevisions?.downLast30days ?? null,
+    current,
+    thirtyDaysAgo,
+    direction,
+  };
 }
 
 export async function getEarningsData(ticker: string): Promise<EarningsData> {
@@ -91,9 +130,10 @@ export async function getEarningsData(ticker: string): Promise<EarningsData> {
       };
     });
 
-    const earningsTrend: EarningsTrend[] = (
-      (trend?.trend || []) as unknown as RawEarningsTrend[]
-    ).map((t) => ({
+    const rawTrend = (trend?.trend || []) as unknown as RawEarningsTrend[];
+    const estimateRevisions = extractEstimateRevisions(rawTrend[0]);
+
+    const earningsTrend: EarningsTrend[] = rawTrend.map((t) => ({
       endDate: new Date(t.endDate),
       estimate: t.estimate,
       estimateAvg: t.estimateAvg,
@@ -123,6 +163,7 @@ export async function getEarningsData(ticker: string): Promise<EarningsData> {
       nextEarningsEstimate,
       earningsHistory,
       earningsTrend,
+      estimateRevisions,
       currentQuarterEstimate,
       currentYearEstimate,
     };
@@ -134,6 +175,7 @@ export async function getEarningsData(ticker: string): Promise<EarningsData> {
       nextEarningsEstimate: null,
       earningsHistory: [],
       earningsTrend: [],
+      estimateRevisions: null,
       currentQuarterEstimate: null,
       currentYearEstimate: null,
     };

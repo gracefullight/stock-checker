@@ -75,6 +75,13 @@ export interface TickerResult {
   confluenceRatio?: number;
   institutionalScore?: number;
   institutionalPassed?: boolean;
+  sector?: string | null;
+  /** ISO date (YYYY-MM-DD) of the next scheduled earnings report. */
+  nextEarningsDate?: string | null;
+  /** Trading days until next earnings; negative when the date has passed. */
+  daysToEarnings?: number | null;
+  marketCap?: number | null;
+  dayChangePct?: number | null;
 }
 
 export interface PredictionRecord {

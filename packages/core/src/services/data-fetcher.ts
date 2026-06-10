@@ -90,24 +90,39 @@ export async function getFearGreedIndex(): Promise<number | null> {
   }
 }
 
+export interface QuoteSnapshot {
+  name: string;
+  marketCap: number | null;
+  dayChangePct: number | null;
+}
+
 /**
- * Batch-fetch human-readable company names for a list of symbols in a single
+ * Batch-fetch name + market cap + day change for a list of symbols in a single
  * quote() request. Non-critical: returns whatever resolves, {} on failure.
  */
-export async function getQuoteNames(symbols: string[]): Promise<Record<string, string>> {
+export async function getQuoteSnapshots(symbols: string[]): Promise<Record<string, QuoteSnapshot>> {
   if (symbols.length === 0) return {};
   try {
     const quotes = await yahooFinance.quote(symbols);
     const list = Array.isArray(quotes) ? quotes : [quotes];
-    const names: Record<string, string> = {};
+    const snapshots: Record<string, QuoteSnapshot> = {};
     for (const q of list) {
       if (q?.symbol) {
-        names[q.symbol] = q.longName ?? q.shortName ?? q.symbol;
+        snapshots[q.symbol] = {
+          name: q.longName ?? q.shortName ?? q.symbol,
+          marketCap: q.marketCap ?? null,
+          dayChangePct: q.regularMarketChangePercent ?? null,
+        };
       }
     }
-    return names;
+    return snapshots;
   } catch (error) {
-    logger.error({ error }, 'Failed to fetch quote names');
+    logger.error({ error }, 'Failed to fetch quote snapshots');
     return {};
   }
+}
+
+export async function getQuoteNames(symbols: string[]): Promise<Record<string, string>> {
+  const snapshots = await getQuoteSnapshots(symbols);
+  return Object.fromEntries(Object.entries(snapshots).map(([sym, s]) => [sym, s.name]));
 }

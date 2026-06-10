@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getFundamentals } from '@/services/fundamentals';
 import yahooFinance from '@/services/yahoo-finance';
 
-vi.mock('../yahoo-finance', () => ({
+vi.mock('@/services/yahoo-finance', () => ({
   default: {
     quoteSummary: vi.fn(),
   },

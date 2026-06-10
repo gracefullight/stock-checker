@@ -4,7 +4,7 @@ import type { CliOptions } from '@/types';
 
 // Mock external services — declared at module top level so the (hoisted)
 // vi.mock calls reflect their actual execution order.
-vi.mock('../services/data-fetcher', () => ({
+vi.mock('@/services/data-fetcher', () => ({
   getHistoricalPrices: vi.fn().mockResolvedValue([
     {
       date: new Date('2026-01-24'),
@@ -28,17 +28,17 @@ vi.mock('../services/data-fetcher', () => ({
     },
   ]),
 }));
-vi.mock('../services/fundamentals', () => ({
+vi.mock('@/services/fundamentals', () => ({
   getFundamentals: vi.fn().mockResolvedValue({ sector: 'Technology' }),
 }));
-vi.mock('../services/earnings', () => ({
+vi.mock('@/services/earnings', () => ({
   getEarningsData: vi.fn().mockResolvedValue(null),
   formatEarningsData: vi.fn().mockReturnValue(''),
 }));
-vi.mock('../utils/csv-writer', () => ({
+vi.mock('@/utils/csv-writer', () => ({
   writeToCsv: vi.fn(),
 }));
-vi.mock('../utils/slack', () => ({
+vi.mock('@/utils/slack', () => ({
   sendSlackNotification: vi.fn(),
 }));
 vi.mock('node:fs', () => ({

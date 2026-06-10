@@ -12,6 +12,8 @@ export interface FundamentalData {
   pe: number | null;
   dividendYield: number | null;
   nextEarningsDate: Date | null;
+  exDividendDate: Date | null;
+  dividendDate: Date | null;
   marketCap: number | null;
   sector: string | null;
 }
@@ -40,6 +42,10 @@ export async function getFundamentals(ticker: string): Promise<FundamentalData> 
       pe: summaryDetail?.trailingPE ?? null,
       dividendYield: summaryDetail?.trailingAnnualDividendYield ?? null,
       nextEarningsDate,
+      exDividendDate: calendarEvents?.exDividendDate
+        ? new Date(calendarEvents.exDividendDate)
+        : null,
+      dividendDate: calendarEvents?.dividendDate ? new Date(calendarEvents.dividendDate) : null,
       marketCap: price?.marketCap ?? null,
       sector: profile?.sector ?? null,
     };
@@ -50,6 +56,8 @@ export async function getFundamentals(ticker: string): Promise<FundamentalData> 
       pe: null,
       dividendYield: null,
       nextEarningsDate: null,
+      exDividendDate: null,
+      dividendDate: null,
       marketCap: null,
       sector: null,
     };

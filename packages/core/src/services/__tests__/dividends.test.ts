@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { calculateAnnualizedDividend, getDividendInfo } from '@/services/dividends';
 import yahooFinance from '@/services/yahoo-finance';
 
-vi.mock('../yahoo-finance', () => ({
+vi.mock('@/services/yahoo-finance', () => ({
   default: {
     quoteSummary: vi.fn(),
     historical: vi.fn(),

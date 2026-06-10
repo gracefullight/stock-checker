@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAtTheMoneyOptions, getOptionsChain } from '@/services/options';
 import yahooFinance from '@/services/yahoo-finance';
 
-vi.mock('../yahoo-finance', () => ({
+vi.mock('@/services/yahoo-finance', () => ({
   default: {
     options: vi.fn(),
   },
