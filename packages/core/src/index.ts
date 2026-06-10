@@ -184,6 +184,7 @@ program
     'Round-trip transaction cost in basis points deducted from every trade',
     '10'
   )
+  .option('--quick', 'Stop after the version comparison and gate tuning (fast iteration)')
   .action(async (options) => {
     try {
       const costBps = Number(options.costBps);
@@ -191,7 +192,7 @@ program
         logger.error('--cost-bps must be a non-negative number');
         process.exit(1);
       }
-      await backtest({ costBps });
+      await backtest({ costBps, quick: Boolean(options.quick) });
     } catch (error) {
       logger.error({ err: error }, 'Backtest failed');
       process.exit(1);

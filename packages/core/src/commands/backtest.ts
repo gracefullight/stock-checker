@@ -335,7 +335,7 @@ function measureTrendHoldWinRate(
   };
 }
 
-export async function backtest(opts: { costBps?: number } = {}) {
+export async function backtest(opts: { costBps?: number; quick?: boolean } = {}) {
   // Round-trip transaction cost applied to every simulated trade. All WR/R-R
   // numbers below are NET of this cost; a "win" means profitable after costs.
   const COST_PCT = opts.costBps != null ? opts.costBps / 100 : DEFAULT_ROUND_TRIP_COST_PCT;
@@ -650,10 +650,36 @@ export async function backtest(opts: { costBps?: number } = {}) {
     ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
   };
 
-  // V7 = institutional + entry-quality (pullback) gate, evaluated through the REAL
-  // pipeline (Gate 1.7). Validates that the wired gate reproduces the Phase-4
-  // search edge (~65% WR / ~1.5 R/R) rather than being a post-hoc backtest artifact.
+  // V7 = institutional + the LEGACY entry-quality gate (rs.5, scr<380, no
+  // market/stage filter) — pinned explicitly so the comparison row stays stable
+  // even as the shipped default gate evolves. Evaluated through the REAL
+  // pipeline (Gate 1.7), not as a post-hoc filter.
+  const LEGACY_V7_GATE = {
+    enabled: true,
+    ibsMax: 0.3,
+    atrPctMax: 3.5,
+    volRMin: 0.8,
+    volRMax: 99,
+    scoreMax: 380,
+    rsMin: 0.5,
+    requireBelowSma50: true,
+  };
   const v7Config: PipelineConfig = {
+    ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
+    qualityGate: LEGACY_V7_GATE,
+  };
+
+  // V9 = V7 + market kill-switch (essay #2 at the index level): no new BUYs
+  // while the SPY Gaussian Channel is red. Targets the 2020-type crash regime
+  // where leader-pullback entries lose their edge.
+  const v9Config: PipelineConfig = {
+    ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
+    qualityGate: { ...LEGACY_V7_GATE, requireMarketUptrend: true },
+  };
+
+  // V10 = the SHIPPED default gate (strong-leader pullback: rs.7 + scr<400 +
+  // market kill-switch + above-200d stage filter) — the WR+R/R dominance config.
+  const v10Config: PipelineConfig = {
     ...DEFAULT_QUALITY_PIPELINE_CONFIG,
   };
 
@@ -662,12 +688,16 @@ export async function backtest(opts: { costBps?: number } = {}) {
   const v4Signals: BacktestSignal[] = [];
   const v5Signals: BacktestSignal[] = [];
   const v7Signals: BacktestSignal[] = [];
+  const v9Signals: BacktestSignal[] = [];
+  const v10Signals: BacktestSignal[] = [];
   for (const [ticker, ctx] of ctxMap) {
     v2Signals.push(...runSignalsWithContext(ctx, ticker, v2Config));
     v3Signals.push(...runSignalsWithContext(ctx, ticker, v3Config));
     v4Signals.push(...runSignalsWithContext(ctx, ticker, v4Config));
     v5Signals.push(...runSignalsWithContext(ctx, ticker, v5Config));
     v7Signals.push(...runSignalsWithContext(ctx, ticker, v7Config));
+    v9Signals.push(...runSignalsWithContext(ctx, ticker, v9Config));
+    v10Signals.push(...runSignalsWithContext(ctx, ticker, v10Config));
   }
 
   // Entry years actually present in the signal set — derived, not hardcoded,
@@ -682,6 +712,10 @@ export async function backtest(opts: { costBps?: number } = {}) {
   const v6Result = measureTrendHoldWinRate(v5Signals, priceData, { costPct: COST_PCT });
   // V7 = institutional + entry-quality gate, through the real pipeline (the shipped improvement).
   const v7Result = measure5DayWinRate(v7Signals, priceData, COST_PCT);
+  // V9 = V7 + SPY-Gaussian market kill-switch, through the real pipeline.
+  const v9Result = measure5DayWinRate(v9Signals, priceData, COST_PCT);
+  // V10 = the shipped default gate (strong-leader pullback + market/stage filters).
+  const v10Result = measure5DayWinRate(v10Signals, priceData, COST_PCT);
 
   console.log(
     `\n${'Version'.padEnd(20)} | ${'WinRate'.padStart(8)} | ${'Signals'.padStart(8)} | ${'AvgRet'.padStart(8)} | ${'R/R'.padStart(6)} | ${'Sig/Mo'.padStart(6)}`
@@ -695,6 +729,8 @@ export async function backtest(opts: { costBps?: number } = {}) {
   console.log(fmtRow('V5 (institutional)', v5Result));
   console.log(fmtRow('V6 (V5 + trend-hold)', v6Result));
   console.log(fmtRow('V7 (V5 + quality)', v7Result));
+  console.log(fmtRow('V9 (V7 + mkt switch)', v9Result));
+  console.log(fmtRow('V10 (shipped gate)', v10Result));
   console.log(
     '\n🎯 V7 = shipped improvement (institutional + entry-quality gate, via real pipeline):'
   );
@@ -708,6 +744,40 @@ export async function backtest(opts: { costBps?: number } = {}) {
   console.log('  V7 by entry year:');
   for (const yr of ENTRY_YEARS) {
     const sub = v7Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+    if (sub.length === 0) continue;
+    const r = measure5DayWinRate(sub, priceData, COST_PCT);
+    console.log(
+      `    ${yr}: WR=${r.winRate5d.toFixed(1)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.totalSignals}  AvgRet=${r.avgReturn.toFixed(2)}%`
+    );
+  }
+  console.log(
+    `\n🎯 V9 = V7 + market kill-switch (no BUY while SPY Gaussian is red), via real pipeline:`
+  );
+  console.log(
+    `  WR ${v9Result.winRate5d.toFixed(1)}% (vs V7 ${v7Result.winRate5d.toFixed(1)}%)  |  R/R ${v9Result.rewardRisk.toFixed(2)} (vs V7 ${v7Result.rewardRisk.toFixed(2)})  |  N ${v9Result.totalSignals}  |  AvgRet ${v9Result.avgReturn.toFixed(2)}%`
+  );
+  console.log('  V9 by entry year:');
+  for (const yr of ENTRY_YEARS) {
+    const sub = v9Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+    if (sub.length === 0) continue;
+    const r = measure5DayWinRate(sub, priceData, COST_PCT);
+    console.log(
+      `    ${yr}: WR=${r.winRate5d.toFixed(1)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.totalSignals}  AvgRet=${r.avgReturn.toFixed(2)}%`
+    );
+  }
+  console.log(
+    '\n🎯 V10 = SHIPPED default gate (rs.7 + scr<400 + market kill-switch + 200d stage), via real pipeline:'
+  );
+  console.log(
+    `  WR ${v10Result.winRate5d.toFixed(1)}% (vs V7 ${v7Result.winRate5d.toFixed(1)}%)  |  R/R ${v10Result.rewardRisk.toFixed(2)} (vs V7 ${v7Result.rewardRisk.toFixed(2)})  |  N ${v10Result.totalSignals}  |  AvgRet ${v10Result.avgReturn.toFixed(2)}%`
+  );
+  const v10GoalMet = v10Result.winRate5d >= 70 && v10Result.rewardRisk >= v7Result.rewardRisk;
+  console.log(
+    `  ${v10GoalMet ? '✅ DOMINANCE GOAL MET' : '⚠️ dominance goal NOT met'}: WR ≥ 70% AND R/R ≥ V7 (${v7Result.rewardRisk.toFixed(2)})`
+  );
+  console.log('  V10 by entry year:');
+  for (const yr of ENTRY_YEARS) {
+    const sub = v10Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
     if (sub.length === 0) continue;
     const r = measure5DayWinRate(sub, priceData, COST_PCT);
     console.log(
@@ -848,13 +918,242 @@ export async function backtest(opts: { costBps?: number } = {}) {
         requireBelowSma50: true,
       },
     },
+    // Strong-leader family (rs ≥ 0.7): the highest real-pipeline WR-with-R/R
+    // lever found so far (essay #1 — "is it stronger than everything else?").
+    // Crossed with the market kill-switch and the stage filter.
+    {
+      name: 'LDR7 + mktUp',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+      },
+    },
+    {
+      name: 'LDR7 + 200a',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireAboveSma200: true,
+      },
+    },
+    {
+      name: 'LDR7 + mktUp + 200a',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        requireAboveSma200: true,
+      },
+    },
+    {
+      name: 'LDR7 + scr400',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 400,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR8 (rs.8)',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.8,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR7 + ibs.25',
+      gate: {
+        enabled: true,
+        ibsMax: 0.25,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR7 + scr400 + mktUp',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 400,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+      },
+    },
+    {
+      name: 'LDR7 + scr400 + 200a',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 400,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireAboveSma200: true,
+      },
+    },
+    {
+      name: 'LDR7 + scr400 + mktUp + 200a',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 400,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        requireAboveSma200: true,
+      },
+    },
+    {
+      name: 'LDR7 + scr380',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+      },
+    },
+    // Market kill-switch (essay #2 at the index level) and VWAP accumulation
+    // (essay #1) variants — the WR+R/R dominance candidates from the goal search,
+    // re-validated through the REAL pipeline.
+    {
+      name: 'LDR + mktUp (V9)',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+      },
+    },
+    {
+      name: 'LDR + mktUp + vwap.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        vwapMin: 0.5,
+      },
+    },
+    {
+      name: 'LDR + mktUp + 200a',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        requireAboveSma200: true,
+      },
+    },
+    {
+      name: 'LDR + mktUp + 200a + vwap.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        requireAboveSma200: true,
+        vwapMin: 0.5,
+      },
+    },
+    {
+      name: 'deepIBS.12 scr<400 50b + mktUp',
+      gate: {
+        enabled: true,
+        ibsMax: 0.12,
+        atrPctMax: 3.5,
+        volRMin: 0,
+        volRMax: 2.0,
+        scoreMax: 400,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+      },
+    },
+    {
+      name: 'vwap+ rs.5 vR.8-1.2 + mktUp',
+      gate: {
+        enabled: true,
+        ibsMax: 99,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 1.2,
+        scoreMax: 400,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        vwapMin: 0.5,
+      },
+    },
   ];
+  const sigsByVariant = new Map<string, BacktestSignal[]>();
   for (const variant of gateVariants) {
     const cfg: PipelineConfig = { ...DEFAULT_QUALITY_PIPELINE_CONFIG, qualityGate: variant.gate };
     const sigs: BacktestSignal[] = [];
     for (const [ticker, ctx] of ctxMap) {
       sigs.push(...runSignalsWithContext(ctx, ticker, cfg));
     }
+    sigsByVariant.set(variant.name, sigs);
     const r = measure5DayWinRate(sigs, priceData, COST_PCT);
     let minYr = 100;
     for (const yr of ENTRY_YEARS) {
@@ -865,6 +1164,52 @@ export async function backtest(opts: { costBps?: number } = {}) {
     console.log(
       `${variant.name.padEnd(34)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${String(r.totalSignals).padStart(5)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${minYr.toFixed(1)}%`.padStart(6)}`
     );
+  }
+
+  // Deep-dive on the strong-leader (rs ≥ 0.7) family — the WR+R/R dominance
+  // candidates. Train/holdout split (hard-won rule #4) + per-year robustness,
+  // all through the real pipeline, net of costs.
+  console.log('\n🔬 Strong-leader family deep-dive (train ≤2024 / holdout ≥2025, real pipeline):');
+  for (const name of [
+    'LDR rs.7+50b ibs.3 atr3.5',
+    'LDR7 + mktUp',
+    'LDR7 + 200a',
+    'LDR7 + mktUp + 200a',
+    'LDR7 + scr400',
+    'LDR7 + scr400 + mktUp',
+    'LDR7 + scr400 + 200a',
+    'LDR7 + scr400 + mktUp + 200a',
+    'LDR7 + scr380',
+    'LDR8 (rs.8)',
+    'LDR7 + ibs.25',
+  ]) {
+    const sigs = sigsByVariant.get(name);
+    if (!sigs) continue;
+    const train = sigs.filter((s) => s.date.toISOString().slice(0, 4) <= '2024');
+    const test = sigs.filter((s) => s.date.toISOString().slice(0, 4) >= '2025');
+    const a = measure5DayWinRate(sigs, priceData, COST_PCT);
+    const tr = measure5DayWinRate(train, priceData, COST_PCT);
+    const te = measure5DayWinRate(test, priceData, COST_PCT);
+    console.log(`  ${name}`);
+    console.log(
+      `    FULL : WR=${a.winRate5d.toFixed(1)}%  R/R=${a.rewardRisk.toFixed(2)}  N=${a.totalSignals}  avgRet=${a.avgReturn.toFixed(2)}%`
+    );
+    console.log(
+      `    TRAIN: WR=${tr.winRate5d.toFixed(1)}%  R/R=${tr.rewardRisk.toFixed(2)}  N=${tr.totalSignals}   HOLDOUT: WR=${te.winRate5d.toFixed(1)}%  R/R=${te.rewardRisk.toFixed(2)}  N=${te.totalSignals}`
+    );
+    const years: string[] = [];
+    for (const yr of ENTRY_YEARS) {
+      const sub = sigs.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+      if (sub.length === 0) continue;
+      const r = measure5DayWinRate(sub, priceData, COST_PCT);
+      years.push(`${yr} ${r.winRate5d.toFixed(0)}%/${r.totalSignals}`);
+    }
+    console.log(`    BY YR: ${years.join('  ')}`);
+  }
+
+  if (opts.quick) {
+    console.log('\n(quick mode — skipping diagnostics, post-hoc filters, grid and goal search)');
+    return;
   }
 
   // Essay #2 exit ("ride the trend, exit on the Gaussian flip") applied to the
@@ -1557,7 +1902,17 @@ export async function backtest(opts: { costBps?: number } = {}) {
     rsSpy: number; // essay #1: relative strength vs market
     rsSector: number; // essay #1: relative strength vs sector
     vwap: number; // essay #1: accumulation above VWAP
+    spyUp: boolean; // essay #2 at the index level: SPY Gaussian green
+    sma200Above: boolean; // essay #1: pullback within a long-term uptrend
   }
+  // SPY Gaussian regime by date (causal series) — the market kill-switch lever.
+  const spyGaussSeries =
+    spyData.length > 0 ? gaussianChannel(spyData.map((d) => d.close)).series : [];
+  const spyUpByTime = new Map<number, boolean>();
+  spyData.forEach((d, i) => {
+    spyUpByTime.set(d.date.getTime(), spyGaussSeries[i].isGreen);
+  });
+
   const enriched: Enriched[] = [];
   for (const sig of v5Signals) {
     if (sig.decision !== 'BUY') continue;
@@ -1579,6 +1934,8 @@ export async function backtest(opts: { costBps?: number } = {}) {
       rsSpy: sig.rsSpy,
       rsSector: sig.rsSector,
       vwap: sig.vwap,
+      spyUp: spyUpByTime.get(sig.date.getTime()) ?? true,
+      sma200Above: sig.sma200dist > 0,
     });
   }
   const trainRows = enriched.filter((e) => e.year <= '2024');
@@ -1598,6 +1955,8 @@ export async function backtest(opts: { costBps?: number } = {}) {
     sma50: 'any' | 'below' | 'above';
     rsMin: number; // essay #1: require strength vs BOTH market and sector
     vwapReq: boolean; // essay #1: require above-VWAP accumulation
+    spyReq: boolean; // essay #2 index-level: SPY Gaussian green only
+    sma200: 'any' | 'above'; // essay #1: long-term uptrend (stage) filter
   }
   const passes = (e: Enriched, f: Filt): boolean =>
     e.ibs < f.ibsMax &&
@@ -1609,6 +1968,8 @@ export async function backtest(opts: { costBps?: number } = {}) {
     e.rsSpy >= f.rsMin &&
     e.rsSector >= f.rsMin &&
     (!f.vwapReq || e.vwap >= 0.5) &&
+    (!f.spyReq || e.spyUp) &&
+    (f.sma200 === 'any' || e.sma200Above) &&
     (f.regime === 'any' ||
       (f.regime === 'uptrend' ? e.regime === 'uptrend' : e.regime !== 'downtrend')) &&
     (f.sma50 === 'any' || (f.sma50 === 'below' ? e.sma50dist < 0 : e.sma50dist > 0));
@@ -1663,6 +2024,8 @@ export async function backtest(opts: { costBps?: number } = {}) {
   const sma50Modes: Filt['sma50'][] = ['any', 'below', 'above'];
   const rsMins = [0, 0.5, 0.7]; // essay #1: relative-strength thresholds (gradient ∈ [0,1])
   const vwapReqs = [false, true];
+  const spyReqs = [false, true]; // market kill-switch lever
+  const sma200Modes: Filt['sma200'][] = ['any', 'above']; // stage filter lever
 
   const describe = (f: Filt): string =>
     [
@@ -1674,6 +2037,8 @@ export async function backtest(opts: { costBps?: number } = {}) {
       f.scoreMax < 9999 ? `scr<${f.scoreMax}` : null,
       f.rsMin > 0 ? `rs≥${f.rsMin}` : null,
       f.vwapReq ? 'vwap+' : null,
+      f.spyReq ? 'mktUp' : null,
+      f.sma200 !== 'any' ? 'sma200above' : null,
       f.regime !== 'any' ? f.regime : null,
       f.sma50 !== 'any' ? `sma50${f.sma50}` : null,
     ]
@@ -1690,38 +2055,96 @@ export async function backtest(opts: { costBps?: number } = {}) {
     test: Stat;
     full: Stat;
   }
+  // Filter-pushdown enumeration. The naive shape — re-scanning every row for
+  // every config — is O(configs × rows) (~544k × 15k ≈ 8×10⁹ predicate evals).
+  // Every dimension is a monotone threshold (or a fixed subset), so instead each
+  // loop level narrows the SURVIVING row array once per value and passes it
+  // down; the leaf computes stats on rows that already passed every earlier
+  // dimension. Cost becomes O(Σ per-level subset sizes) — about 20-50× less
+  // work — and the leaf needs no passes() call at all. `passAll` values (e.g.
+  // ibs<2, atr<99) reuse the parent array without copying.
+  const narrow = (rows: Enriched[], passAll: boolean, pred: (e: Enriched) => boolean) =>
+    passAll ? rows : rows.filter(pred);
+
   const feasible: Cand[] = [];
   let evaluated = 0;
-  for (const ibsMax of ibsMaxes)
-    for (const atrMax of atrMaxes)
-      for (const volRMax of volRMaxes)
-        for (const volRMin of volRMins)
-          for (const scoreMin of scoreMins)
-            for (const scoreMax of scoreMaxes)
-              for (const rsMin of rsMins)
-                for (const vwapReq of vwapReqs)
-                  for (const regime of regimeModes)
-                    for (const sma50 of sma50Modes) {
-                      if (scoreMin >= scoreMax) continue;
-                      const f: Filt = {
-                        ibsMax,
-                        atrMax,
-                        volRMax,
-                        volRMin,
-                        scoreMin,
-                        scoreMax,
-                        regime,
-                        sma50,
-                        rsMin,
-                        vwapReq,
-                      };
-                      evaluated++;
-                      const tr = statOf(trainRows.filter((e) => passes(e, f)));
-                      if (tr.n < MIN_TRAIN_N || tr.wr < 60 || tr.rr <= BASELINE_RR) continue;
-                      const te = statOf(testRows.filter((e) => passes(e, f)));
-                      const full = statOf(enriched.filter((e) => passes(e, f)));
-                      feasible.push({ f, train: tr, test: te, full });
+  for (const spyReq of spyReqs)
+    for (const sma200 of sma200Modes) {
+      const subPass = (e: Enriched) => (!spyReq || e.spyUp) && (sma200 === 'any' || e.sma200Above);
+      const trainSub = trainRows.filter(subPass);
+      const testSub = testRows.filter(subPass);
+      const fullSub = enriched.filter(subPass);
+      for (const ibsMax of ibsMaxes) {
+        const r1 = narrow(trainSub, ibsMax >= 2, (e) => e.ibs < ibsMax);
+        if (r1.length < MIN_TRAIN_N) continue; // prune: subsets only shrink below
+        for (const atrMax of atrMaxes) {
+          const r2 = narrow(r1, atrMax >= 99, (e) => e.atrPct < atrMax);
+          if (r2.length < MIN_TRAIN_N) continue;
+          for (const volRMax of volRMaxes) {
+            const r3 = narrow(r2, volRMax >= 99, (e) => e.volR < volRMax);
+            if (r3.length < MIN_TRAIN_N) continue;
+            for (const volRMin of volRMins) {
+              const r4 = narrow(r3, volRMin <= 0, (e) => e.volR > volRMin);
+              if (r4.length < MIN_TRAIN_N) continue;
+              for (const scoreMin of scoreMins) {
+                const r5 = narrow(r4, scoreMin <= 0, (e) => e.score >= scoreMin);
+                if (r5.length < MIN_TRAIN_N) continue;
+                for (const scoreMax of scoreMaxes) {
+                  if (scoreMin >= scoreMax) continue;
+                  const r6 = narrow(r5, scoreMax >= 9999, (e) => e.score < scoreMax);
+                  if (r6.length < MIN_TRAIN_N) continue;
+                  for (const rsMin of rsMins) {
+                    const r7 = narrow(
+                      r6,
+                      rsMin <= 0,
+                      (e) => e.rsSpy >= rsMin && e.rsSector >= rsMin
+                    );
+                    if (r7.length < MIN_TRAIN_N) continue;
+                    for (const vwapReq of vwapReqs) {
+                      const r8 = narrow(r7, !vwapReq, (e) => e.vwap >= 0.5);
+                      if (r8.length < MIN_TRAIN_N) continue;
+                      for (const regime of regimeModes) {
+                        const r9 = narrow(r8, regime === 'any', (e) =>
+                          regime === 'uptrend' ? e.regime === 'uptrend' : e.regime !== 'downtrend'
+                        );
+                        if (r9.length < MIN_TRAIN_N) continue;
+                        for (const sma50 of sma50Modes) {
+                          const r10 = narrow(r9, sma50 === 'any', (e) =>
+                            sma50 === 'below' ? e.sma50dist < 0 : e.sma50dist > 0
+                          );
+                          evaluated++;
+                          // Early skip: a subset can only shrink down the tree.
+                          if (r10.length < MIN_TRAIN_N) continue;
+                          const tr = statOf(r10);
+                          if (tr.wr < 60 || tr.rr <= BASELINE_RR) continue;
+                          const f: Filt = {
+                            ibsMax,
+                            atrMax,
+                            volRMax,
+                            volRMin,
+                            scoreMin,
+                            scoreMax,
+                            regime,
+                            sma50,
+                            rsMin,
+                            vwapReq,
+                            spyReq,
+                            sma200,
+                          };
+                          const te = statOf(testSub.filter((e) => passes(e, f)));
+                          const full = statOf(fullSub.filter((e) => passes(e, f)));
+                          feasible.push({ f, train: tr, test: te, full });
+                        }
+                      }
                     }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
 
   console.log(`Enumerated ${evaluated} filter configs deterministically.\n`);
 
@@ -1785,5 +2208,69 @@ export async function backtest(opts: { costBps?: number } = {}) {
       .sort((a, b) => b.test.wr - a.test.wr || b.full.rr - a.full.rr)
       .slice(0, 20))
       console.log(rowOf(c));
+  }
+
+  // ==========================================================================
+  // Dominance goal — beat V7 on BOTH axes at once, net of costs:
+  //   WR ≥ 70% AND R/R ≥ V7's, independently on train AND holdout.
+  // A higher WR bought by giving back R/R is a re-allocation, not an edge.
+  // ==========================================================================
+  const V7_RR = v7Result.rewardRisk;
+  const dominant = feasible
+    .filter(
+      (c) =>
+        c.test.n >= MIN_TEST_N &&
+        c.train.wr >= 65 &&
+        c.test.wr >= 65 &&
+        c.train.rr >= V7_RR * 0.9 &&
+        c.test.rr >= V7_RR * 0.9 &&
+        c.full.wr >= 68 &&
+        c.full.rr >= V7_RR
+    )
+    .sort(
+      (a, b) =>
+        Math.min(b.train.wr, b.test.wr) - Math.min(a.train.wr, a.test.wr) ||
+        b.full.rr - a.full.rr ||
+        b.full.n - a.full.n
+    );
+
+  console.log(
+    `\n🥊 Dominance candidates — WR ≥ 68 full / ≥ 65 both splits AND R/R ≥ V7 (${V7_RR.toFixed(2)}):`
+  );
+  if (dominant.length === 0) {
+    console.log('  None. The WR↑-without-R/R↓ region is empty in this lever space —');
+    console.log('  the closest R/R-preserving configs are listed above; raising WR further');
+    console.log('  currently buys win frequency by selling payoff size.');
+  } else {
+    console.log(hdr);
+    console.log('-'.repeat(hdr.length));
+    for (const c of dominant.slice(0, 15)) console.log(rowOf(c));
+    const champ = dominant[0];
+    console.log('\n👑 DOMINANCE CHAMPION:');
+    console.log(`  Filter: ${describe(champ.f)}`);
+    console.log(
+      `  TRAIN ≤2024 : WR=${champ.train.wr.toFixed(1)}%  R/R=${champ.train.rr.toFixed(2)}  N=${champ.train.n}  avgRet=${champ.train.avgRet.toFixed(2)}%`
+    );
+    console.log(
+      `  HOLDOUT ≥2025: WR=${champ.test.wr.toFixed(1)}%  R/R=${champ.test.rr.toFixed(2)}  N=${champ.test.n}  avgRet=${champ.test.avgRet.toFixed(2)}%`
+    );
+    console.log(
+      `  FULL        : WR=${champ.full.wr.toFixed(1)}%  R/R=${champ.full.rr.toFixed(2)}  N=${champ.full.n}  avgRet=${champ.full.avgRet.toFixed(2)}%`
+    );
+    console.log('  By entry year:');
+    for (const yr of ENTRY_YEARS) {
+      const ys = statOf(enriched.filter((e) => e.year === yr && passes(e, champ.f)));
+      if (ys.n === 0) continue;
+      console.log(
+        `    ${yr}: WR=${ys.wr.toFixed(1)}%  R/R=${ys.rr.toFixed(2)}  N=${ys.n}  avgRet=${ys.avgRet.toFixed(2)}%`
+      );
+    }
+    const domGoalMet = champ.full.wr >= 70 && champ.full.rr >= V7_RR;
+    console.log(
+      `\n  ${domGoalMet ? '✅ DOMINANCE GOAL MET' : '⚠️ partial'}: WR ${champ.full.wr.toFixed(1)}% (target 70), R/R ${champ.full.rr.toFixed(2)} (floor ${V7_RR.toFixed(2)})`
+    );
+    console.log(
+      '  NOTE: post-hoc numbers — wire the gate and re-validate through the real pipeline before believing them (hard-won rule #1).'
+    );
   }
 }

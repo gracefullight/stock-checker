@@ -178,21 +178,33 @@ export const DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG = {
 /**
  * Entry-quality gate — the "leader pullback" (주도주 눌림목) setup from the two
  * institutional-flow essays, validated through the REAL pipeline (with
- * setup-consumed cluster semantics) on a diversified 121-ticker, 2023–2026 span:
+ * setup-consumed cluster semantics) on a diversified 122-ticker, 8-year span
+ * (entry years 2019–2026, incl. the 2020 crash and 2022 bear), NET of a 10bps
+ * round-trip transaction cost:
  *
- *   rsMin 0.5            — outperforming the market AND its sector (상대강도:
- *                          leaders fall less, rise first — essay #1 §5)
+ *   rsMin 0.7            — STRONGLY outperforming the market AND its sector
+ *                          (상대강도: "is it stronger than everything else?" —
+ *                          essay #1 §5; raising 0.5→0.7 was the single lever
+ *                          that lifted WR without giving back R/R)
  *   requireBelowSma50    — pulled back below the 50-day line: buy leaders on
  *                          weakness within a Gaussian-confirmed trend, never chase
+ *   requireAboveSma200   — but still above the 200-day line: a pullback within
+ *                          a long-term uptrend, not a downtrend rally (essay #1 §1)
+ *   requireMarketUptrend — SPY Gaussian green only (essay #2 at the index
+ *                          level): no pullback buys inside a market-wide panic
  *   ibs<0.3              — entry bar closed in the bottom 30% of its range
  *   atr%<3.5             — calm name, not a volatility blowup
  *   volR>0.8 (no upper)  — real participation; pullback bars rarely blow off
- *   buyScore<380         — anti-parabolic cap (essay #1 §6: extension ≠ entry)
+ *   buyScore<400         — anti-parabolic cap (essay #1 §6: extension ≠ entry)
  *
- *   → 5-day WR 65.1% / R/R 1.36 / N≈63 (weakest year 58.3%)
- *     vs institutional baseline 52.5% / 1.09.
- * The same family (rs .5–.7 × with/without scoreMax) sits at 65–68% WR — a
- * stable region, not a lone overfit spike.
+ *   → 5-day WR 71.7% / R/R 1.75 / N=46 / avgRet 1.86% (train ≤2024: 72.5%/1.51,
+ *     holdout ≥2025: 66.7%, every entry year ≥ 50%, 2020 60% / 2022 67%)
+ *     vs V7 (rs .5, scr<380, no market/stage filter): 61.3% / 1.52 / N=106
+ *     vs institutional baseline 52.2% / 1.09.
+ * The same family (rs.7 × scr380/400 × ±mktUp × ±200a) sits at 66–72% WR with
+ * R/R 1.45–1.75 — a stable region, not a lone overfit spike. The higher-N
+ * member of the family (rs.7 + scr<400 only) holds 69.7%/1.58 at N=66 with the
+ * best bear-year samples (2022: 64% on N=14).
  */
 export const DEFAULT_QUALITY_GATE = {
   enabled: true,
@@ -200,15 +212,17 @@ export const DEFAULT_QUALITY_GATE = {
   atrPctMax: 3.5,
   volRMin: 0.8,
   volRMax: 99, // effectively unbounded — see note above
-  scoreMax: 380,
-  rsMin: 0.5,
+  scoreMax: 400,
+  rsMin: 0.7,
   requireBelowSma50: true,
+  requireAboveSma200: true,
+  requireMarketUptrend: true,
 };
 
 /**
  * Institutional (flow-primary) strategy WITH the entry-quality gate enabled.
  * This is the recommended high-selectivity config: fewer, higher-quality entries
- * — the best win-rate/R-R trade-off found in backtest (61.3% / 1.52 over 8y,
+ * — the best win-rate/R-R trade-off found in backtest (71.7% / 1.75 over 8y,
  * net of the round-trip transaction cost).
  */
 export const DEFAULT_QUALITY_PIPELINE_CONFIG = {
