@@ -21,7 +21,7 @@ const TICKERS = [
   'DDOG',
   'COIN',
   'SOFI',
-  'SQ',
+  'XYZ',
   'SHOP',
   'UBER',
   'SNAP',

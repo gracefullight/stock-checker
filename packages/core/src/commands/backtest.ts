@@ -384,7 +384,7 @@ export async function backtest() {
     'CRSP',
     'NVAX',
     // Fintech
-    'SQ',
+    'XYZ', // Block, Inc. — formerly SQ; Yahoo serves history under the new symbol only
     'COIN',
     'SOFI',
     'AFRM',
