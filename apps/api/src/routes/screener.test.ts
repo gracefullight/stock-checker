@@ -10,6 +10,7 @@ vi.mock('@stock-checker/core/src/portfolio/manager', () => ({
 vi.mock('@stock-checker/core/src/services/data-fetcher', () => ({
   getFearGreedIndex: vi.fn(),
   getHistoricalPrices: vi.fn(),
+  fetchBenchmarkPrices: vi.fn(),
   getQuoteSnapshots: vi.fn().mockResolvedValue({}),
 }));
 
@@ -45,6 +46,7 @@ vi.mock('@/lib/analyze', () => ({
 import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
 import { getFearGreedIndex } from '@stock-checker/core/src/services/data-fetcher';
 import { analyzeTicker } from '@/lib/analyze';
+import { clearCache } from '@/lib/cache';
 
 const mockedGetPortfolio = vi.mocked(getPortfolio);
 const mockedGetFearGreedIndex = vi.mocked(getFearGreedIndex);
@@ -100,6 +102,7 @@ describe('screenerRoutes', () => {
   beforeEach(async () => {
     app = await build();
     vi.resetAllMocks();
+    clearCache();
   });
 
   afterEach(async () => {

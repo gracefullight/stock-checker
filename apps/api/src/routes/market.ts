@@ -1,5 +1,5 @@
-import { getFearGreedIndex } from '@stock-checker/core/src/services/data-fetcher';
 import type { FastifyPluginAsync } from 'fastify';
+import { cachedFearGreed } from '@/lib/cached-data';
 
 function fearGreedLabel(v: number | null): string {
   if (v === null) return 'Unknown';
@@ -13,7 +13,7 @@ function fearGreedLabel(v: number | null): string {
 export const marketRoutes: FastifyPluginAsync = async (app) => {
   app.get('/market/fear-greed', async (req, reply) => {
     try {
-      const value = await getFearGreedIndex();
+      const value = await cachedFearGreed();
       const label = fearGreedLabel(value);
       return reply.send({ value, label });
     } catch (error) {

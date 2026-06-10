@@ -1,20 +1,21 @@
 import { SECTOR_ETF_MAP } from '@stock-checker/core/src/constants';
 import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
-import {
-  fetchBenchmarkPrices,
-  getFearGreedIndex,
-  getHistoricalPrices,
-  getQuoteSnapshots,
-} from '@stock-checker/core/src/services/data-fetcher';
-import { getDividendInfo } from '@stock-checker/core/src/services/dividends';
-import { getEarningsData } from '@stock-checker/core/src/services/earnings';
-import { getFundamentals } from '@stock-checker/core/src/services/fundamentals';
 import { gaussianChannel } from '@stock-checker/core/src/services/gaussian-channel';
-import { getStockNews } from '@stock-checker/core/src/services/news';
 import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
 import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
 import type { FastifyPluginAsync } from 'fastify';
-import { analyzeTicker } from '@/lib/analyze';
+import {
+  cachedAnalyzeTicker,
+  cachedBacktestPrices,
+  cachedBenchmarkPrices,
+  cachedDividends,
+  cachedEarnings,
+  cachedFearGreed,
+  cachedFundamentals,
+  cachedHistoricalPrices,
+  cachedNews,
+  cachedQuoteSnapshots,
+} from '@/lib/cached-data';
 
 interface ScreenerQuery {
   tickers?: string;
@@ -47,11 +48,11 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         return reply.send({ results: [], fearGreed: null, generatedAt: new Date().toISOString() });
       }
 
-      const fearGreed = await getFearGreedIndex();
+      const fearGreed = await cachedFearGreed();
       // Analysis (slow, per-ticker) and quote snapshot lookup (one batch call) run together.
       const [settled, snapshots] = await Promise.all([
-        Promise.allSettled(tickers.map((ticker) => analyzeTicker(ticker, fearGreed))),
-        getQuoteSnapshots(tickers),
+        Promise.allSettled(tickers.map((ticker) => cachedAnalyzeTicker(ticker, fearGreed))),
+        cachedQuoteSnapshots(tickers),
       ]);
 
       const snapshotMap = snapshots ?? {};
@@ -88,8 +89,8 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
           ? req.query.include.split(',').map((s) => s.trim())
           : [];
 
-        const fearGreed = await getFearGreedIndex();
-        const result = await analyzeTicker(ticker, fearGreed);
+        const fearGreed = await cachedFearGreed();
+        const result = await cachedAnalyzeTicker(ticker, fearGreed);
 
         if (!result) {
           return reply.status(404).send({ error: `No data found for ticker: ${ticker}` });
@@ -98,7 +99,7 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         const extras: Record<string, unknown> = {};
 
         await Promise.all([
-          Promise.resolve(getQuoteSnapshots([ticker])).then((snaps) => {
+          Promise.resolve(cachedQuoteSnapshots([ticker])).then((snaps) => {
             const snap = snaps?.[ticker];
             if (snap) {
               extras.name = snap.name;
@@ -107,22 +108,22 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
             }
           }),
           includeFields.includes('fundamentals')
-            ? getFundamentals(ticker).then((d) => {
+            ? cachedFundamentals(ticker).then((d) => {
                 extras.fundamentals = d;
               })
             : Promise.resolve(),
           includeFields.includes('news')
-            ? getStockNews(ticker, 5).then((d) => {
+            ? cachedNews(ticker, 5).then((d) => {
                 extras.news = d;
               })
             : Promise.resolve(),
           includeFields.includes('earnings')
-            ? getEarningsData(ticker).then((d) => {
+            ? cachedEarnings(ticker).then((d) => {
                 extras.earnings = d;
               })
             : Promise.resolve(),
           includeFields.includes('dividends')
-            ? getDividendInfo(ticker).then((d) => {
+            ? cachedDividends(ticker).then((d) => {
                 extras.dividends = d;
               })
             : Promise.resolve(),
@@ -146,7 +147,7 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         const days = Math.min(Number(req.query.days ?? 1825), 1825);
 
         const toCandles = (
-          data: Awaited<ReturnType<typeof getHistoricalPrices>>
+          data: Awaited<ReturnType<typeof cachedBacktestPrices>>
         ): Array<{
           date: string;
           open: number;
@@ -165,9 +166,9 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
           }));
 
         const [data, spy, fund] = await Promise.all([
-          getHistoricalPrices(ticker, days),
-          fetchBenchmarkPrices('SPY', days),
-          getFundamentals(ticker).catch(() => null),
+          cachedBacktestPrices(ticker, days),
+          cachedBenchmarkPrices('SPY', days),
+          cachedFundamentals(ticker).catch(() => null),
         ]);
 
         if (data.length === 0) {
@@ -175,7 +176,7 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         }
 
         const sectorEtf = fund?.sector ? (SECTOR_ETF_MAP[fund.sector] ?? null) : null;
-        const sectorCandles = sectorEtf ? await fetchBenchmarkPrices(sectorEtf, days) : [];
+        const sectorCandles = sectorEtf ? await cachedBenchmarkPrices(sectorEtf, days) : [];
 
         return reply.send({
           ticker,
@@ -214,7 +215,7 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
       try {
         const ticker = req.params.ticker.toUpperCase();
         const days = Math.min(Number(req.query.days ?? 180), 730);
-        const data = await getHistoricalPrices(ticker, days);
+        const data = await cachedHistoricalPrices(ticker, days);
 
         const closes = data.map((d) => d.close);
         const sma20 = calcSMA(closes, 20);

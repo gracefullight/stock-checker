@@ -5,9 +5,18 @@ import { marketRoutes } from '@/routes/market';
 
 vi.mock('@stock-checker/core/src/services/data-fetcher', () => ({
   getFearGreedIndex: vi.fn(),
+  getHistoricalPrices: vi.fn(),
+  fetchBenchmarkPrices: vi.fn(),
+  getQuoteSnapshots: vi.fn(),
 }));
+vi.mock('@stock-checker/core/src/services/dividends', () => ({ getDividendInfo: vi.fn() }));
+vi.mock('@stock-checker/core/src/services/earnings', () => ({ getEarningsData: vi.fn() }));
+vi.mock('@stock-checker/core/src/services/fundamentals', () => ({ getFundamentals: vi.fn() }));
+vi.mock('@stock-checker/core/src/services/news', () => ({ getStockNews: vi.fn() }));
+vi.mock('@/lib/analyze', () => ({ analyzeTicker: vi.fn() }));
 
 import { getFearGreedIndex } from '@stock-checker/core/src/services/data-fetcher';
+import { clearCache } from '@/lib/cache';
 
 const mockedGetFearGreedIndex = vi.mocked(getFearGreedIndex);
 
@@ -24,6 +33,7 @@ describe('marketRoutes', () => {
   beforeEach(async () => {
     app = await build();
     vi.resetAllMocks();
+    clearCache();
   });
 
   afterEach(async () => {
