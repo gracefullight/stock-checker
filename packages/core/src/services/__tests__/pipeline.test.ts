@@ -5,9 +5,8 @@ import {
   DEFAULT_PIPELINE_CONFIG,
   MEAN_REVERSION_GRADIENT_RANGES,
 } from '@/constants';
-import type { BenchmarkCandle } from '@/services/data-fetcher';
 import { evaluateSignal } from '@/services/pipeline';
-import type { CandleData, IndicatorValues, PipelineConfig } from '@/types';
+import type { BenchmarkCandle, CandleData, IndicatorValues, PipelineConfig } from '@/types';
 
 function makeIndicators(overrides: Partial<IndicatorValues> = {}): IndicatorValues {
   return {

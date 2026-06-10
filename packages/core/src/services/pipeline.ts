@@ -1,11 +1,11 @@
 import { gradientScore } from '@/services/analysis';
 import { confluenceCheck } from '@/services/confluence';
-import type { BenchmarkCandle } from '@/services/data-fetcher';
 import { gaussianChannel } from '@/services/gaussian-channel';
 import { calcInstitutionalScore } from '@/services/institutional';
 import { reversalConfirm } from '@/services/reversal-confirm';
 import { trendGate } from '@/services/trend-gate';
 import type {
+  BenchmarkCandle,
   CandleData,
   ConfluenceResult,
   IndicatorValues,

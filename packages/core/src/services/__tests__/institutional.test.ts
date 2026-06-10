@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_INSTITUTIONAL_CONFIG } from '@/constants';
-import type { BenchmarkCandle } from '@/services/data-fetcher';
 import { calcInstitutionalScore } from '@/services/institutional';
+import type { BenchmarkCandle } from '@/types';
 
 function makeBenchCandles(n: number, startPrice = 100, dailyReturn = 0.001): BenchmarkCandle[] {
   const candles: BenchmarkCandle[] = [];

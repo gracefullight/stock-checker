@@ -4,10 +4,6 @@ import pino from 'pino';
 import yahooFinance from '@/services/yahoo-finance';
 import type { BenchmarkCandle } from '@/types';
 
-// Re-export: BenchmarkCandle moved to @/types so pure modules can use it
-// without touching this I/O module; existing imports keep working.
-export type { BenchmarkCandle };
-
 const logger = pino({
   level: 'debug',
   timestamp: pino.stdTimeFunctions.isoTime,

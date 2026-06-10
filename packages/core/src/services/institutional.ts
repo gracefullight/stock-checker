@@ -1,5 +1,4 @@
-import type { BenchmarkCandle } from '@/services/data-fetcher';
-import type { InstitutionalConfig, InstitutionalScore } from '@/types';
+import type { BenchmarkCandle, InstitutionalConfig, InstitutionalScore } from '@/types';
 
 interface InstitutionalParams {
   close: number;
