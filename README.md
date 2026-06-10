@@ -23,12 +23,14 @@ revisions over oscillator soup.
 - **Trend regime** — Gaussian Channel (green = uptrend, red = downtrend) gates all buys.
 - **Institutional flow score** — relative strength vs SPY and the sector ETF,
   VWAP accumulation, breakout volume, dollar-volume liquidity, earnings revisions.
-- **Leader-pullback entry (주도주 눌림목)** — BUY only when a name that is
-  outperforming both the market and its sector pulls back below its 50-day SMA
-  on a calm, weak-close bar with real participation. Backtested (8y incl. the
-  2020 crash and the 2022 bear, 122 tickers, real pipeline, net of a 10bps
-  round-trip transaction cost): **61.3% 5-day win rate / 1.52 reward-risk**
-  vs the 52.2% / 1.09 ungated baseline.
+- **Strong-leader pullback entry (주도주 눌림목)** — BUY only when a name that
+  is STRONGLY outperforming both the market and its sector (`rs ≥ 0.7`) pulls
+  back below its 50-day SMA — while still above its 200-day SMA and while the
+  SPY Gaussian Channel is green (market kill-switch) — on a calm, weak-close
+  bar with real participation. Backtested (8y incl. the 2020 crash and the
+  2022 bear, 122 tickers, real pipeline, net of a 10bps round-trip cost):
+  **71.7% 5-day win rate / 1.75 reward-risk** vs the 52.2% / 1.09 ungated
+  baseline, every entry year ≥ 50%.
 - **SELL = exit discipline, not a downside prediction** — distribution-day
   SELLs are suppressed inside intact uptrends and only fire when the trend
   itself is broken.
@@ -69,6 +71,7 @@ mise run predict -- --ticker=TSLA,PLTR --slack-webhook=https://hooks.slack.com/s
 # Strategy validation & tuning
 mise run backtest        # version comparison, goal search, SELL validation
 mise run backtest -- --cost-bps=20   # vary the round-trip cost (default 10bps)
+mise run backtest -- --quick         # stop after version comparison + gate tuning
 mise run optimize        # parameter optimizer (positional symbol, e.g. TSLA)
 mise run learn           # learn from prediction feedback
 ```

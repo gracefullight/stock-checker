@@ -50,7 +50,8 @@ plus RSI/MACD only as seasoning. RSI is *not* important.
 | Gaussian trend regime | `trendGate.source: 'gaussian'` (pipeline Gate 1); chart band in web UI |
 | Relative strength (market & sector) | `institutional.components.rsSpy/rsSector` vs SPY + sector ETF |
 | VWAP / breakout volume / liquidity / earnings | institutional flow score components (blended, not hard-gated) |
-| Leader pullback entry (주도주 눌림목) | `qualityGate` (Gate 1.7): `rsMin 0.5` + `requireBelowSma50` + `ibs<0.3` + `atr%<3.5` + `volR>0.8` + `scoreMax 380` |
+| Leader pullback entry (주도주 눌림목) | `qualityGate` (Gate 1.7): `rsMin 0.7` + `requireBelowSma50` + `requireAboveSma200` + `ibs<0.3` + `atr%<3.5` + `volR>0.8` + `scoreMax 400` |
+| Market kill-switch (essay #2 at the index level) | `qualityGate.requireMarketUptrend`: no BUY while the SPY Gaussian Channel is red (wired into `predict` via `marketUptrend`) |
 | Anti-parabolic (don't chase) | `qualityGate.scoreMax` — extreme composite scores have the worst forward R/R |
 | One setup, one decision | Setup-consumed cluster semantics (`PipelineResult.qualityBlocked`): a pullback that keeps closing weak for days is a breakdown, not an entry |
 | Oscillators as seasoning only | institutional strategy caps oscillator contribution; flow components dominate |
@@ -62,18 +63,29 @@ bear), 122-ticker diversified universe, fixed 5-day exit, real pipeline,
 **net of a 10bps round-trip transaction cost** (a "win" = profitable after
 costs; `mise run backtest -- --cost-bps=N` to vary):
 
-- **V7 (institutional + leader-pullback gate): 61.3% WR / R/R 1.52 / N=106**
-  (by year: 2019 66.7% / 2020 **37.5%, N=8** / 2021 71.4% / 2022 60.0% /
-  2023 71.4% / 2024 50.0% / 2025 62.5% / 2026 58.3% partial)
+- **V10 (shipped default — strong-leader pullback `rs≥0.7` + `scr<400` +
+  market kill-switch + 200d stage filter): 71.7% WR / R/R 1.75 / N=46 /
+  avgRet 1.86%** (train ≤2024: 72.5% / 1.51 / N=40; holdout ≥2025: 66.7% /
+  N=6 — thin; by year: 2019 70% / 2020 60% / 2021 78% / 2022 67% / 2023 86% /
+  2024 67% / 2025 75% / 2026 50% partial — every year ≥ 50%)
+- The higher-N family member (`rs.7` + `scr<400` only, no market/stage filter):
+  **69.7% / 1.58 / N=66**, holdout 69.2% on N=13, 2022 bear 64% on N=14 —
+  statistically the sturdiest config; the shipped V10 adds two subtractive
+  regime filters on top of it.
+- V7 legacy gate (`rs.5`, `scr<380`): 61.3% / 1.52 / N=106. The single lever
+  that lifted WR *without* giving back R/R was `rsMin 0.5 → 0.7` (essay #1 §5:
+  "is it stronger than everything else?"); the market kill-switch added R/R
+  (1.52 → 1.77 on the legacy gate) at roughly flat WR.
 - V5 baseline (institutional, no gate): 52.2% / 1.09 (N=18,788)
-- The 2022 bear held the gate's edge (60.0%); the 2020 crash did NOT (37.5%,
-  avgRet −0.49%, tiny N). Pullback entries during a liquidity panic are the
-  known weak regime — position sizing / market-level kill-switch is the open
-  item, not gate re-tuning on 8 samples.
 - Essay-#2 trend-hold exit on the same entries: lower WR (41.5%) but R/R 2.6 —
   a different objective, kept as a documented option, not the default.
 - Pre-cost 5y numbers previously here (65.1% / 1.36 / N=63) were measured
   gross on 2023–2026 only; the net 8y figures above supersede them.
+- External cross-check: index-level regime filters raising pullback WR ~5pp
+  and cutting drawdown roughly in half is consistent with published SPY
+  mean-reversion backtests (QuantifiedStrategies 200d-MA filter: 76→81% WR,
+  MDD 29→14%), while stock-level evidence is mixed (Decoding Markets) — which
+  matches what we measured: the kill-switch's main gift is R/R, not WR.
 
 ## SELL signals are EXIT discipline, not downside predictions
 
