@@ -1,5 +1,7 @@
+import { SECTOR_ETF_MAP } from '@stock-checker/core/src/constants';
 import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
 import {
+  fetchBenchmarkPrices,
   getFearGreedIndex,
   getHistoricalPrices,
   getQuoteSnapshots,
@@ -129,6 +131,77 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         return reply.send({ ...result, ...extras });
       } catch (error) {
         req.log.error({ err: error }, 'single screener failed');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
+    }
+  );
+
+  // GET /api/screener/:ticker/backtest-data?days=1825
+  // Raw candles + benchmark series for the browser backtest playground.
+  app.get<{ Params: SingleTickerParams; Querystring: { days?: string } }>(
+    '/screener/:ticker/backtest-data',
+    async (req, reply) => {
+      try {
+        const ticker = req.params.ticker.toUpperCase();
+        const days = Math.min(Number(req.query.days ?? 1825), 1825);
+
+        const toCandles = (
+          data: Awaited<ReturnType<typeof getHistoricalPrices>>
+        ): Array<{
+          date: string;
+          open: number;
+          high: number;
+          low: number;
+          close: number;
+          volume: number;
+        }> =>
+          data.map((d) => ({
+            date: d.date.toISOString().split('T')[0],
+            open: d.open ?? d.close,
+            high: d.high ?? d.close,
+            low: d.low ?? d.close,
+            close: d.close,
+            volume: d.volume ?? 0,
+          }));
+
+        const [data, spy, fund] = await Promise.all([
+          getHistoricalPrices(ticker, days),
+          fetchBenchmarkPrices('SPY', days),
+          getFundamentals(ticker).catch(() => null),
+        ]);
+
+        if (data.length === 0) {
+          return reply.status(404).send({ error: `No data found for ticker: ${ticker}` });
+        }
+
+        const sectorEtf = fund?.sector ? (SECTOR_ETF_MAP[fund.sector] ?? null) : null;
+        const sectorCandles = sectorEtf ? await fetchBenchmarkPrices(sectorEtf, days) : [];
+
+        return reply.send({
+          ticker,
+          candles: toCandles(data),
+          spy: spy.map((c) => ({
+            date: c.date.toISOString().split('T')[0],
+            close: c.close,
+            volume: c.volume,
+            high: c.high,
+            low: c.low,
+          })),
+          sector: sectorEtf
+            ? {
+                etf: sectorEtf,
+                candles: sectorCandles.map((c) => ({
+                  date: c.date.toISOString().split('T')[0],
+                  close: c.close,
+                  volume: c.volume,
+                  high: c.high,
+                  low: c.low,
+                })),
+              }
+            : null,
+        });
+      } catch (error) {
+        req.log.error({ err: error }, 'backtest-data failed');
         return reply.status(500).send({ error: 'Internal server error' });
       }
     }
