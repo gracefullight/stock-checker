@@ -7,8 +7,8 @@ with a backtest.
 | Package | What it is |
 |---|---|
 | `packages/core` | Signal engine, backtest, and CLI (`predict` / `learn` / `optimize` / `backtest`) |
-| `apps/api` | Fastify API server (screener, ticker detail, OHLCV) — port 3001 |
-| `apps/web` | Next.js 16 screener UI (candlestick + Gaussian Channel band charts, portfolio, light/dark) — port 3000 |
+| `apps/api` | Fastify API server (screener, ticker detail, OHLCV) — port 5101 |
+| `apps/web` | Next.js 16 screener UI (candlestick + Gaussian Channel band charts, portfolio, light/dark) — port 5100 |
 
 | Screener | Ticker detail (Gaussian Channel band) |
 |---|---|
@@ -45,7 +45,7 @@ operation (run `mise tasks` to see them all).
 ```bash
 mise install        # pin runtimes (node 24, bun)
 bun install         # install workspace deps + git pre-commit hook
-mise run dev        # API (3001) + Web (3000) dev servers in parallel
+mise run dev        # API (5101) + Web (5100) dev servers in parallel
 ```
 
 ### Environment (optional)

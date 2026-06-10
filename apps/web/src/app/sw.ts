@@ -20,7 +20,7 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
-    // API GETs (cross-origin :3001 included — the SW intercepts all page fetches).
+    // API GETs (cross-origin :5101 included — the SW intercepts all page fetches).
     // NetworkFirst with a generous timeout: the screener legitimately takes >10s.
     {
       matcher: ({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/api/'),

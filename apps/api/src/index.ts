@@ -16,5 +16,5 @@ await app.register(portfolioRoutes, { prefix: '/api' });
 await app.register(watchlistRoutes, { prefix: '/api' });
 await app.register(marketRoutes, { prefix: '/api' });
 
-const port = Number(process.env.PORT ?? 3001);
+const port = Number(process.env.PORT ?? 5101);
 await app.listen({ port, host: '0.0.0.0' });

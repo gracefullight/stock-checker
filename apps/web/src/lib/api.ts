@@ -4,7 +4,7 @@ import axios, { type AxiosError } from 'axios';
 // Server components can use the non-public env var to avoid exposing internal
 // addresses. Clients only see NEXT_PUBLIC_* so the fallback chain is:
 //   process.env.API_URL (server-only)  →  process.env.NEXT_PUBLIC_API_URL  →  localhost
-const API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5101';
 
 export type { TickerResult };
 

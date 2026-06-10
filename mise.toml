@@ -9,12 +9,12 @@ run = "bun install"
 
 # ── Dev Servers ──────────────────────────────────────────────
 [tasks."dev:api"]
-description = "Start Fastify API server (port 3001)"
+description = "Start Fastify API server (port 5101)"
 dir = "apps/api"
 run = "bun run dev"
 
 [tasks."dev:web"]
-description = "Start Next.js dev server (port 3000)"
+description = "Start Next.js dev server (port 5100)"
 dir = "apps/web"
 run = "bun run dev"
 
