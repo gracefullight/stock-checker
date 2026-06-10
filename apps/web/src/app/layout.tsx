@@ -1,8 +1,8 @@
 import { SerwistProvider } from '@serwist/turbopack/react';
 import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
-import { ThemeProvider } from 'next-themes';
 import '@/app/globals.css';
+import { ThemeProvider } from '@/components/common/theme-provider';
 import { ThemeToggle } from '@/components/common/theme-toggle';
 import { FearGreedDisplay } from '@/components/fear-greed-display';
 import { Toaster } from '@/components/ui/sonner';
@@ -23,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground">
         <SerwistProvider swUrl="/serwist/sw.js">
-          <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+          <ThemeProvider>
             <TooltipProvider>
               {/* Top status bar */}
               <header className="sticky top-0 z-50 flex items-center justify-between px-4 py-1.5 bg-card border-b border-border">

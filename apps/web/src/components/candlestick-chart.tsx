@@ -7,8 +7,8 @@ import {
   HistogramSeries,
   LineSeries,
 } from 'lightweight-charts';
-import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
+import { useTheme } from '@/components/common/theme-provider';
 import { type ChartEvent, EventLinesPrimitive } from '@/components/event-lines-primitive';
 import { GaussianBandSeries } from '@/components/gaussian-band-series';
 import { Skeleton } from '@/components/ui/skeleton';
