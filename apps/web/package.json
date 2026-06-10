@@ -23,7 +23,7 @@
     "postcss": "^8.5.15",
     "react": "^19",
     "react-dom": "^19",
-    "recharts": "3.8.0",
+    "recharts": "^3.8.1",
     "serwist": "^9.5.11",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",

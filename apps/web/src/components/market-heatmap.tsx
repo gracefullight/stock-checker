@@ -1,10 +1,9 @@
 'use client';
 
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useMemo } from 'react';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip as RechartsTooltip, Treemap, type TreemapNode } from 'recharts';
 import type { TickerResult } from '@/lib/api';
-import { squarify, type TreemapTile } from '@/lib/treemap';
 import { formatMarketCap } from '@/lib/utils';
 
 interface MarketHeatmapProps {
@@ -12,19 +11,9 @@ interface MarketHeatmapProps {
 }
 
 /**
- * Virtual layout space for the squarified treemap. Tiles are positioned with
- * percentages, so this only fixes the aspect ratio the layout optimizes for
- * (roughly the rendered container's md aspect).
- */
-const LAYOUT_W = 1000;
-const LAYOUT_H = 520;
-/** Sector label strip height in virtual units. */
-const LABEL_H = 26;
-
-/**
  * Bucketed tile color: change% mapped to a color-mix() of --success/--destructive
- * into --card at increasing intensity (±0.5 / ±1.5 / ±3 steps). DOM CSS supports
- * oklch + color-mix (unlike the lightweight-charts canvas), so tokens stay live.
+ * into --card at increasing intensity (±0.5 / ±1.5 / ±3 steps). CSS supports
+ * oklch + color-mix in SVG fill via style, so theme tokens stay live.
  */
 function tileBackground(changePct: number | null | undefined): string {
   if (changePct == null) return 'var(--muted)';
@@ -34,24 +23,129 @@ function tileBackground(changePct: number | null | undefined): string {
   return `color-mix(in oklch, ${token} ${pct}%, var(--card))`;
 }
 
-function signalBorder(opinion: string): string {
-  if (opinion === 'BUY') return 'border-l-2 border-l-success';
-  if (opinion === 'SELL') return 'border-l-2 border-l-destructive';
-  return '';
+function formatChange(changePct: number | null | undefined): string {
+  return changePct != null ? `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%` : '—';
 }
 
-function pct(value: number, total: number): string {
-  return `${(value / total) * 100}%`;
+/** Leaf node payload: TreemapNode layout fields + the TickerResult spread in via data. */
+type HeatmapNode = TreemapNode & Partial<TickerResult> & { sector?: string | null };
+
+function HeatmapCell(props: Partial<HeatmapNode>) {
+  const router = useRouter();
+  const {
+    x = 0,
+    y = 0,
+    width = 0,
+    height = 0,
+    depth = 0,
+    index = 0,
+    name = '',
+    ticker,
+    dayChangePct,
+    opinion,
+    sector,
+  } = props;
+
+  // Root and sector containers: children paint over them, so render nothing.
+  if (depth !== 2 || !ticker || width <= 0 || height <= 0) return <g />;
+
+  const change = dayChangePct ?? null;
+  const showSectorCaption = index === 0 && width >= 90 && height >= 44;
+  const showTicker = width >= 40 && height >= 20;
+  const showChange = width >= 56 && height >= 36;
+  const centerY = showSectorCaption ? y + height / 2 + 4 : y + height / 2;
+
+  return (
+    // SVG-native <a>: keyboard focus, Enter activation, and middle-click come
+    // for free; onClick swaps the full navigation for Next's client routing.
+    <a
+      href={`/${ticker}`}
+      aria-label={`${ticker}${props.name !== ticker ? ` ${props.name}` : ''}, ${
+        change != null ? `${change.toFixed(2)}%` : 'no change data'
+      }, market cap ${formatMarketCap(props.marketCap ?? null)}, sector ${sector ?? 'Unknown'}, signal ${opinion ?? 'HOLD'}`}
+      className="cursor-pointer outline-none transition-opacity hover:opacity-80 focus-visible:opacity-80"
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+        e.preventDefault();
+        router.push(`/${ticker}`);
+      }}
+    >
+      <rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        style={{ fill: tileBackground(change), stroke: 'var(--background)', strokeWidth: 1 }}
+      />
+      {(opinion === 'BUY' || opinion === 'SELL') && (
+        <rect
+          x={x}
+          y={y}
+          width={2}
+          height={height}
+          style={{ fill: opinion === 'BUY' ? 'var(--success)' : 'var(--destructive)' }}
+        />
+      )}
+      {showSectorCaption && sector && (
+        <text
+          x={x + 4}
+          y={y + 11}
+          className="font-mono"
+          style={{ fill: 'var(--muted-foreground)', fontSize: 8, letterSpacing: 1.5 }}
+        >
+          {sector.toUpperCase()}
+        </text>
+      )}
+      {showTicker && (
+        <text
+          x={x + width / 2}
+          y={showChange ? centerY - 3 : centerY + 3}
+          textAnchor="middle"
+          className="font-mono font-bold"
+          style={{ fill: 'var(--foreground)', fontSize: 11 }}
+        >
+          {name}
+        </text>
+      )}
+      {showChange && (
+        <text
+          x={x + width / 2}
+          y={centerY + 10}
+          textAnchor="middle"
+          className="font-mono tabular-nums"
+          style={{ fill: 'var(--foreground)', fontSize: 10, opacity: 0.8 }}
+        >
+          {formatChange(change)}
+        </text>
+      )}
+    </a>
+  );
 }
 
-interface SectorRegion {
-  sector: string;
-  rect: TreemapTile<string>['rect'];
-  tiles: Array<TreemapTile<TickerResult>>;
+function HeatmapTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload?: HeatmapNode }>;
+}) {
+  const node = payload?.[0]?.payload;
+  if (!active || !node?.ticker) return null;
+  return (
+    <div className="rounded-md border border-border bg-popover px-3 py-2 font-mono text-xs text-popover-foreground shadow-md space-y-0.5">
+      <div className="font-bold">{node.name ?? node.ticker}</div>
+      <div className="text-muted-foreground">
+        {node.sector ?? 'Unknown'} · {formatMarketCap(node.marketCap ?? null)}
+      </div>
+      <div>
+        {formatChange(node.dayChangePct)} · {node.opinion}
+      </div>
+    </div>
+  );
 }
 
 export function MarketHeatmap({ results }: MarketHeatmapProps) {
-  const regions = useMemo<SectorRegion[]>(() => {
+  const data = useMemo(() => {
     const groups = new Map<string, TickerResult[]>();
     for (const r of results) {
       const sector = r.sector ?? 'Unknown';
@@ -67,110 +161,30 @@ export function MarketHeatmap({ results }: MarketHeatmapProps) {
     const weight = (r: TickerResult) =>
       r.marketCap && r.marketCap > 0 ? r.marketCap : fallbackCap;
 
-    const sectorItems = [...groups.entries()].map(([sector, rows]) => ({
-      value: rows.reduce((sum, r) => sum + weight(r), 0),
-      data: { sector, rows },
+    return [...groups.entries()].map(([sector, rows]) => ({
+      name: sector,
+      children: [...rows]
+        .sort((a, b) => weight(b) - weight(a))
+        .map((r) => ({ ...r, name: r.ticker, size: weight(r), sector })),
     }));
-
-    const outer = squarify(sectorItems, { x: 0, y: 0, w: LAYOUT_W, h: LAYOUT_H });
-
-    return outer.map(({ rect, data }) => {
-      const inner = {
-        x: rect.x,
-        y: rect.y + LABEL_H,
-        w: rect.w,
-        h: Math.max(rect.h - LABEL_H, 1),
-      };
-      return {
-        sector: data.sector,
-        rect,
-        tiles: squarify(
-          data.rows.map((r) => ({ value: weight(r), data: r })),
-          inner
-        ),
-      };
-    });
   }, [results]);
 
   if (results.length === 0) return null;
 
   return (
     <section aria-label="Sector treemap of screener tickers, tile size by market cap">
-      <div className="relative w-full h-[420px] sm:h-[480px] md:h-[520px] overflow-hidden">
-        {regions.map(({ sector, rect, tiles }) => (
-          <div
-            key={sector}
-            className="absolute"
-            style={{
-              left: pct(rect.x, LAYOUT_W),
-              top: pct(rect.y, LAYOUT_H),
-              width: pct(rect.w, LAYOUT_W),
-              height: pct(rect.h, LAYOUT_H),
-            }}
-          >
-            <div
-              className="truncate px-1 font-mono text-[9px] leading-none tracking-widest text-muted-foreground"
-              style={{ height: pct(LABEL_H, rect.h), paddingTop: 6 }}
-            >
-              {sector.toUpperCase()}
-            </div>
-          </div>
-        ))}
-        {regions.flatMap(({ sector, tiles }) =>
-          tiles.map(({ rect, data: r }) => {
-            const change = r.dayChangePct;
-            const changeLabel =
-              change != null ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}%` : '—';
-            // Hide text that cannot fit instead of overflowing neighbours.
-            const showTicker = rect.w >= 36 && rect.h >= 18;
-            const showChange = rect.w >= 52 && rect.h >= 34;
-            return (
-              <Tooltip key={r.ticker}>
-                <TooltipTrigger
-                  render={(props) => (
-                    <Link
-                      {...props}
-                      href={`/${r.ticker}`}
-                      className={`absolute flex flex-col items-center justify-center overflow-hidden font-mono outline outline-1 -outline-offset-1 outline-background/60 transition-opacity hover:opacity-80 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-primary ${signalBorder(r.opinion)}`}
-                      style={{
-                        left: pct(rect.x, LAYOUT_W),
-                        top: pct(rect.y, LAYOUT_H),
-                        width: pct(rect.w, LAYOUT_W),
-                        height: pct(rect.h, LAYOUT_H),
-                        background: tileBackground(change),
-                      }}
-                      aria-label={`${r.ticker}${r.name ? ` ${r.name}` : ''}, ${
-                        change != null ? `${change.toFixed(2)}%` : 'no change data'
-                      }, market cap ${formatMarketCap(r.marketCap)}, sector ${sector}, signal ${r.opinion}`}
-                    >
-                      {showTicker && (
-                        <span className="max-w-full truncate px-0.5 text-[11px] font-bold leading-tight text-foreground">
-                          {r.ticker}
-                        </span>
-                      )}
-                      {showChange && (
-                        <span className="max-w-full truncate px-0.5 text-[10px] leading-tight tabular-nums text-foreground/80">
-                          {changeLabel}
-                        </span>
-                      )}
-                    </Link>
-                  )}
-                />
-                <TooltipContent>
-                  <div className="font-mono text-xs space-y-0.5">
-                    <div className="font-bold">{r.name ?? r.ticker}</div>
-                    <div className="text-muted-foreground">
-                      {sector} · {formatMarketCap(r.marketCap)}
-                    </div>
-                    <div>
-                      {changeLabel} · {r.opinion}
-                    </div>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            );
-          })
-        )}
+      <div className="h-[420px] w-full sm:h-[480px] md:h-[520px]">
+        <Treemap
+          width="100%"
+          height="100%"
+          data={data}
+          dataKey="size"
+          nameKey="name"
+          isAnimationActive={false}
+          content={<HeatmapCell />}
+        >
+          <RechartsTooltip content={<HeatmapTooltip />} isAnimationActive={false} />
+        </Treemap>
       </div>
     </section>
   );
