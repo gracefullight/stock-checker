@@ -26,6 +26,7 @@
   "include": [
     "src",
     "next.config.ts",
+    "vitest.setup.ts",
     ".next/types/**/*.ts"
   ],
   "exclude": [
