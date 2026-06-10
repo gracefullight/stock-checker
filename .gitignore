@@ -38,3 +38,6 @@ docs/plans/
 .antigravitycli/
 .agents/results/
 .agents/state/
+
+# oma docs generated artifacts
+docs/generated/
