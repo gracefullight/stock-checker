@@ -1,6 +1,7 @@
 import axios, { type AxiosRequestConfig, isAxiosError } from 'axios';
 import { DateTime } from 'luxon';
 import pino from 'pino';
+import { fetchTiingoDaily, isTiingoConfigured } from '@/services/tiingo';
 import yahooFinance from '@/services/yahoo-finance';
 import type { BenchmarkCandle } from '@/types';
 
@@ -40,17 +41,29 @@ export async function getHistoricalPrices(symbol: string, daysAgo = 365) {
   const start = end.minus({ days: daysAgo });
 
   try {
-    return await yahooFinance.historical(symbol, {
+    const rows = await yahooFinance.historical(symbol, {
       period1: start.toJSDate(),
       period2: end.toJSDate(),
       interval: '1d',
       events: 'history',
       includeAdjustedClose: true,
     });
+    if (rows.length > 0) return rows;
+    logger.warn({ symbol }, 'Yahoo returned no historical prices');
   } catch (error) {
-    logger.error({ error, symbol }, 'Failed to fetch historical prices');
-    return [];
+    logger.error({ error, symbol }, 'Failed to fetch historical prices from Yahoo');
   }
+
+  // Fallback: Tiingo daily candles when a key is provisioned (Yahoo rate-limits
+  // aggressively); without a key, degrade to [] as before.
+  if (isTiingoConfigured()) {
+    try {
+      return await fetchTiingoDaily(symbol, daysAgo);
+    } catch (error) {
+      logger.error({ error, symbol }, 'Tiingo fallback failed');
+    }
+  }
+  return [];
 }
 
 const benchmarkCache = new Map<string, BenchmarkCandle[]>();

@@ -48,6 +48,13 @@ bun install         # install workspace deps + git pre-commit hook
 mise run dev        # API (3001) + Web (3000) dev servers in parallel
 ```
 
+### Environment (optional)
+
+| Variable | Effect |
+|---|---|
+| `TIINGO_API_KEY` | Enables the [Tiingo](https://www.tiingo.com) daily-OHLCV fallback when Yahoo is rate-limited or down (free tier: 1,000 req/day). Without it, OHLCV degrades to empty on Yahoo failure. |
+| `SLACK_WEBHOOK_URL` | Slack notification for BUY/SELL opinions from `predict`. |
+
 ### CLI (packages/core)
 
 ```bash
