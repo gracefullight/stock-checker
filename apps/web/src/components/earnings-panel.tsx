@@ -12,7 +12,11 @@ function fmtEps(v: number | null | undefined): string {
 export function EarningsPanel({ earnings }: EarningsPanelProps) {
   const est = earnings.nextEarningsEstimate;
   const rev = earnings.estimateRevisions;
-  const history = earnings.earningsHistory.slice(-4).reverse();
+  // Defensive: rows without a report date (e.g. stale cached API payloads) are unrenderable.
+  const history = earnings.earningsHistory
+    .filter((h) => h.reportDate != null)
+    .slice(-4)
+    .reverse();
 
   return (
     <div className="space-y-3">

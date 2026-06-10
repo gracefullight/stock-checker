@@ -55,7 +55,7 @@ export interface EarningsData {
 interface RawEarningsHistory {
   epsActual?: number;
   epsEstimate?: number;
-  epsActualDate: string;
+  epsActualDate?: string;
 }
 
 interface RawEarningsTrend {
@@ -115,20 +115,25 @@ export async function getEarningsData(ticker: string): Promise<EarningsData> {
 
     const earningsHistory: EarningsActual[] = (
       (history?.history || []) as unknown as RawEarningsHistory[]
-    ).map((h) => {
-      const epsActual = h.epsActual ?? null;
-      const epsEstimate = h.epsEstimate ?? null;
-      return {
-        reportDate: new Date(h.epsActualDate),
-        epsActual,
-        epsEstimate,
-        epsDifference: epsActual !== null && epsEstimate !== null ? epsActual - epsEstimate : null,
-        surprisePercent:
-          epsActual !== null && epsEstimate !== null && epsEstimate !== 0
-            ? ((epsActual - epsEstimate) / Math.abs(epsEstimate)) * 100
-            : null,
-      };
-    });
+    )
+      // Yahoo omits epsActualDate on not-yet-reported quarters; new Date(undefined)
+      // is an Invalid Date that JSON-serializes to null and breaks consumers.
+      .filter((h) => h.epsActualDate && !Number.isNaN(new Date(h.epsActualDate).getTime()))
+      .map((h) => {
+        const epsActual = h.epsActual ?? null;
+        const epsEstimate = h.epsEstimate ?? null;
+        return {
+          reportDate: new Date(h.epsActualDate as string),
+          epsActual,
+          epsEstimate,
+          epsDifference:
+            epsActual !== null && epsEstimate !== null ? epsActual - epsEstimate : null,
+          surprisePercent:
+            epsActual !== null && epsEstimate !== null && epsEstimate !== 0
+              ? ((epsActual - epsEstimate) / Math.abs(epsEstimate)) * 100
+              : null,
+        };
+      });
 
     const rawTrend = (trend?.trend || []) as unknown as RawEarningsTrend[];
     const estimateRevisions = extractEstimateRevisions(rawTrend[0]);

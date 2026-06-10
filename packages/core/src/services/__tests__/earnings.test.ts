@@ -81,6 +81,29 @@ describe('earnings service', () => {
       expect(result.currentYearEstimate).toBeNull();
     });
 
+    it('drops history rows without a valid epsActualDate', async () => {
+      vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
+        earningsHistory: {
+          history: [
+            { epsActualDate: '2026-01-28', epsActual: 1.2, epsEstimate: 1.0 },
+            // Not-yet-reported quarter: Yahoo omits epsActualDate. new Date(undefined)
+            // is an Invalid Date that JSON-serializes to null downstream.
+            { epsActual: null, epsEstimate: 1.3 },
+            { epsActualDate: 'not-a-date', epsActual: 0.9, epsEstimate: 1.0 },
+          ],
+        },
+        earningsTrend: { trend: [] },
+        calendarEvents: {},
+        // biome-ignore lint/suspicious/noExplicitAny: Mock data structure complexity
+      } as any);
+
+      const result = await getEarningsData('TSLA');
+
+      expect(result.earningsHistory).toHaveLength(1);
+      expect(result.earningsHistory[0].reportDate).toEqual(new Date('2026-01-28'));
+      expect(Number.isNaN(result.earningsHistory[0].reportDate.getTime())).toBe(false);
+    });
+
     it('should return empty data on API error', async () => {
       vi.mocked(yahooFinance).quoteSummary.mockRejectedValue(new Error('API Error'));
 
