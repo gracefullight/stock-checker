@@ -1,0 +1,69 @@
+{
+  "hooks": {
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-BeforeAgent",
+            "type": "command",
+            "command": "\"$GEMINI_PROJECT_DIR/.gemini/hooks/oma-hook.sh\" --vendor 'gemini' --event 'BeforeAgent' --matcher '*'",
+            "timeout": 16005
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "BeforeTool": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-BeforeTool",
+            "type": "command",
+            "command": "\"$GEMINI_PROJECT_DIR/.gemini/hooks/oma-hook.sh\" --vendor 'gemini' --event 'BeforeTool' --matcher 'run_shell_command'",
+            "timeout": 5005
+          }
+        ],
+        "matcher": "run_shell_command"
+      }
+    ],
+    "AfterTool": [
+      {
+        "hooks": [
+          {
+            "name": "hud",
+            "type": "command",
+            "command": "'bun' \"$GEMINI_PROJECT_DIR/.gemini/hooks/hud.ts\"",
+            "timeout": 3000
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-AfterAgent",
+            "type": "command",
+            "command": "\"$GEMINI_PROJECT_DIR/.gemini/hooks/oma-hook.sh\" --vendor 'gemini' --event 'AfterAgent' --matcher '*'",
+            "timeout": 5005
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "name": "hud",
+            "type": "command",
+            "command": "'bun' \"$GEMINI_PROJECT_DIR/.gemini/hooks/hud.ts\"",
+            "timeout": 3000
+          }
+        ],
+        "matcher": "*"
+      }
+    ]
+  }
+}
