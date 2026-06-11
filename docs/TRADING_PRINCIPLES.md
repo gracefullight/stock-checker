@@ -50,7 +50,7 @@ plus RSI/MACD only as seasoning. RSI is *not* important.
 | Gaussian trend regime | `trendGate.source: 'gaussian'` (pipeline Gate 1); chart band in web UI |
 | Relative strength (market & sector) | `institutional.components.rsSpy/rsSector` vs SPY + sector ETF |
 | VWAP / breakout volume / liquidity / earnings | institutional flow score components (blended, not hard-gated) |
-| Leader pullback entry (주도주 눌림목) | `qualityGate` (Gate 1.7): `rsMin 0.7` + `requireBelowSma50` + `ibs<0.3` + `atr%<3.5` + `volR>0.8` + `scoreMax 400` |
+| Leader pullback entry (주도주 눌림목) | `qualityGate` (Gate 1.7): `rsMin 0.7` + `requireBelowSma50` + `ibs<0.2` + `atr%<3.5` + `volR>0.8` + `scoreMax 400` |
 | Market kill-switch (essay #2 at the index level) | `qualityGate.requireMarketUptrend` (optional, OFF by default — helped on 122 tickers, hurt at 408; wired into `predict` via `marketUptrend`) |
 | Anti-parabolic (don't chase) | `qualityGate.scoreMax` — extreme composite scores have the worst forward R/R |
 | One setup, one decision | Setup-consumed cluster semantics (`PipelineResult.qualityBlocked`): a pullback that keeps closing weak for days is a breakdown, not an entry |
@@ -59,18 +59,26 @@ plus RSI/MACD only as seasoning. RSI is *not* important.
 ## Validated results (don't regress these without a better backtest)
 
 8y (entry years 2019–2026, incl. the 2020 COVID crash and the 2022 rate-hike
-bear), **408-ticker** diversified universe, fixed 5-day exit, real pipeline,
-**net of a 10bps round-trip transaction cost** (a "win" = profitable after
-costs; `mise run backtest -- --cost-bps=N` to vary):
+bear), **546-ticker** diversified universe (large/mid/small, all 11 sectors),
+fixed 5-day exit, real pipeline, **net of a 10bps round-trip transaction
+cost** (a "win" = profitable after costs; `mise run backtest -- --cost-bps=N`
+to vary):
 
-- **Shipped gate (strong-leader pullback `rs≥0.7` + `scr<400` + below-50d):
-  59.1% WR / R/R 1.13 / N=279 / avgRet 0.81%** — train ≤2024: 57.1%/1.05
-  (N=224), holdout ≥2025: 67.3%/1.67 (N=55); by year: 2019 67% / 2020 50% /
-  2021 63% / 2022 56% / 2023 47% / 2024 55% / 2025 67% / 2026 68%. Edge over
-  baseline is statistically significant (z≈2.5, p≈0.006).
-- V7 legacy gate (`rs.5`, `scr<380`): 57.3% / 1.22 / N=419 — equal expectancy
-  (~0.8%/trade), slightly lower WR, slightly higher R/R. Also significant.
-- V5 baseline (institutional, no gate): 51.6% / 1.03 (N=65,698)
+- **Shipped gate (strong-leader deep pullback `rs≥0.7` + `ibs<0.2` +
+  `scr<400` + below-50d): 60.4% WR / R/R 1.28 / N=225 / avgRet 1.08%** —
+  train ≤2024: 58.6%/1.19 (N=186), holdout ≥2025: 69.2%/2.35 (N=39); by year:
+  2019 66% / 2020 62% / 2021 61% / 2022 55% / 2023 52% / 2024 55% / 2025 65% /
+  2026 74% — every entry year ≥ 50% including both bears. Significant vs
+  baseline (z≈2.6, p≈0.004). The `ibs` lever improved monotonically
+  (0.3 → 0.25 → 0.2) on every universe tested — a deep intraday flush, not a
+  mild dip, is what gets paid.
+- V7 legacy gate (`rs.5`, `ibs.3`, `scr<380`): 56.3% / 1.32 / N=476.
+- V5 baseline (institutional, no gate): 51.3% / 1.05 (N=84,541)
+- **Cap-tier scope: large-cap strategy.** ~90% of gate signals are $10B+
+  names. Mid caps: gate fires rarely, no WR edge (≈52% vs 50.5% baseline,
+  N=25), winners run bigger (R/R ~1.7-1.9). Small caps: the ungated pullback
+  baseline is negative (46.1% WR, −0.07%/trade, N=2,220) — do not buy
+  small-cap pullbacks with this system.
 - Essay-#2 trend-hold exit: lower WR but higher R/R per cycle — a different
   objective, kept as a documented option, not the default.
 
@@ -93,8 +101,12 @@ now codified:
    benefit). `requireMarketUptrend` / `requireAboveSma200` stay available as
    gate params, OFF by default.
 3. Realistic ceiling: at N in the hundreds, the leader-pullback edge at a
-   5-day fixed exit is **~57–59% WR with R/R ~1.1–1.2** in this universe
-   class. 70%+ WR claims at N<100 should be treated as unvalidated.
+   5-day fixed exit is **~56–60% WR with R/R ~1.2–1.3** in this universe
+   class (60.4% with the deep-flush `ibs<0.2` gate). 70%+ WR claims at N<100
+   should be treated as unvalidated.
+4. Cap tiers are not interchangeable: the same gate that clears 60% on large
+   caps has no hit-rate edge on mids and the raw pullback is a losing trade
+   on smalls. A win-rate claim carries a universe AND a cap tier.
 - Pre-cost 5y numbers previously here (65.1% / 1.36 / N=63) were measured
   gross on 2023–2026 only; superseded twice since (costs+8y, then 408-ticker
   universe).
