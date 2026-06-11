@@ -178,7 +178,7 @@ export const DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG = {
 /**
  * Entry-quality gate — the "leader pullback" (주도주 눌림목) setup from the two
  * institutional-flow essays, validated through the REAL pipeline (with
- * setup-consumed cluster semantics) on a diversified 408-ticker, 8-year span
+ * setup-consumed cluster semantics) on a diversified 546-ticker, 8-year span
  * (entry years 2019–2026, incl. the 2020 crash and 2022 bear), NET of a 10bps
  * round-trip transaction cost:
  *
@@ -187,30 +187,39 @@ export const DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG = {
  *                          essay #1 §5)
  *   requireBelowSma50    — pulled back below the 50-day line: buy leaders on
  *                          weakness within a Gaussian-confirmed trend, never chase
- *   ibs<0.3              — entry bar closed in the bottom 30% of its range
+ *   ibs<0.2              — entry bar closed in the bottom 20% of its range:
+ *                          a DEEP intraday flush, not a mild dip (the ibs
+ *                          family improved monotonically on every universe
+ *                          tested: 0.3 → 0.25 → 0.2)
  *   atr%<3.5             — calm name, not a volatility blowup
  *   volR>0.8 (no upper)  — real participation; pullback bars rarely blow off
  *   buyScore<400         — anti-parabolic cap (essay #1 §6: extension ≠ entry)
  *
- *   → 5-day WR 59.1% / R/R 1.13 / N=279 / avgRet 0.81% (train ≤2024:
- *     57.1%/1.05, holdout ≥2025: 67.3%/1.67) vs institutional baseline
- *     51.6% / 1.03 — the edge is statistically significant (z≈2.5, p≈0.006).
- *     The legacy V7 gate (rs .5, scr<380) sits at 57.3% / 1.22 / N=419 —
- *     equal expectancy (~0.8%/trade), slightly lower WR, slightly higher R/R.
+ *   → 5-day WR 60.4% / R/R 1.28 / N=225 / avgRet 1.08% (train ≤2024:
+ *     58.6%/1.19, holdout ≥2025: 69.2%/2.35; by year 2019 66% / 2020 62% /
+ *     2021 61% / 2022 55% / 2023 52% / 2024 55% / 2025 65% / 2026 74% —
+ *     every entry year ≥ 50%) vs institutional baseline 51.3% / 1.05 —
+ *     statistically significant (z≈2.6, p≈0.004).
+ *     The legacy V7 gate (rs .5, ibs .3, scr<380) sits at 56.3% / 1.32 / N=476.
+ *
+ * Cap-tier scope: this is a LARGE-CAP strategy — ~90% of gate signals are
+ * $10B+ names. On mid caps the gate rarely fires and the WR edge disappears
+ * (≈52% vs a 50.5% mid baseline, though winners run bigger); the ungated
+ * small-cap baseline is outright negative (46% WR). Trade it on liquid
+ * large caps.
  *
  * Falsification record (hard-won rule #2 — universe shapes conclusions): on
  * the original 122-ticker growth-heavy universe this family printed
- * 66–72% WR with R/R 1.45–1.75 (N=46–66). Expanding to 408 tickers collapsed
- * those numbers to the figures above — the 70%+ readings were small-N universe
- * artifacts, NOT edge. Likewise `requireMarketUptrend` (SPY Gaussian green)
- * and `requireAboveSma200` HELPED on 122 tickers but consistently HURT at
- * N=408 (e.g. 59.1%→55.7% with the kill-switch), matching the published
+ * 66–72% WR with R/R 1.45–1.75 (N=46–66). Expanding to 408+ tickers collapsed
+ * those numbers — the 70%+ readings were small-N universe artifacts, NOT edge.
+ * Likewise `requireMarketUptrend` (SPY Gaussian green) and `requireAboveSma200`
+ * HELPED on 122 tickers but consistently HURT at scale, matching the published
  * stock-level evidence — both remain available as gate params but are NOT
  * part of the default.
  */
 export const DEFAULT_QUALITY_GATE = {
   enabled: true,
-  ibsMax: 0.3,
+  ibsMax: 0.2,
   atrPctMax: 3.5,
   volRMin: 0.8,
   volRMax: 99, // effectively unbounded — see note above
@@ -222,7 +231,7 @@ export const DEFAULT_QUALITY_GATE = {
 /**
  * Institutional (flow-primary) strategy WITH the entry-quality gate enabled.
  * This is the recommended high-selectivity config: fewer, higher-quality entries
- * — 59.1% WR / 1.13 R/R / N=279 over 8y on a 408-ticker universe, net of the
+ * — 60.4% WR / 1.28 R/R / N=225 over 8y on a 546-ticker universe, net of the
  * round-trip transaction cost (see DEFAULT_QUALITY_GATE for the full record).
  */
 export const DEFAULT_QUALITY_PIPELINE_CONFIG = {

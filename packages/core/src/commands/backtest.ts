@@ -20,6 +20,7 @@ import {
   type WinRateResult,
 } from '@/optimization/engine';
 import { gaussianChannel } from '@/services/gaussian-channel';
+import yahooFinance from '@/services/yahoo-finance';
 import type { BenchmarkCandle, PipelineConfig } from '@/types';
 
 // History window per ticker (calendar days). 8y so the 205-bar warm-up clears
@@ -474,6 +475,162 @@ const TICKER_SECTOR_ETF: Record<string, string> = {
   CSGP: 'XLRE',
   WY: 'XLRE',
   IRM: 'XLRE',
+  // --- Mid/small-cap expansion (liquid names; cap tier is classified
+  // dynamically from today's quotes, so these just need sector mappings) ---
+  // Technology
+  TOST: 'XLK',
+  DUOL: 'XLK',
+  CFLT: 'XLK',
+  DOCN: 'XLK',
+  FSLY: 'XLK',
+  BOX: 'XLK',
+  DBX: 'XLK',
+  ASAN: 'XLK',
+  PD: 'XLK',
+  BRZE: 'XLK',
+  SOUN: 'XLK',
+  BBAI: 'XLK',
+  ACMR: 'XLK',
+  FORM: 'XLK',
+  ONTO: 'XLK',
+  NOVT: 'XLK',
+  LSCC: 'XLK',
+  POWI: 'XLK',
+  SLAB: 'XLK',
+  SYNA: 'XLK',
+  RAMP: 'XLK',
+  QLYS: 'XLK',
+  TENB: 'XLK',
+  RPD: 'XLK',
+  CYBR: 'XLK',
+  ZETA: 'XLK',
+  AI: 'XLK',
+  AMBA: 'XLK',
+  // Communication Services
+  SIRI: 'XLC',
+  NYT: 'XLC',
+  BMBL: 'XLC',
+  YELP: 'XLC',
+  ZD: 'XLC',
+  CARG: 'XLC',
+  IAS: 'XLC',
+  // Consumer Discretionary
+  FIVE: 'XLY',
+  BOOT: 'XLY',
+  YETI: 'XLY',
+  CAKE: 'XLY',
+  TXRH: 'XLY',
+  WING: 'XLY',
+  SHAK: 'XLY',
+  CAVA: 'XLY',
+  BROS: 'XLY',
+  PTON: 'XLY',
+  FIGS: 'XLY',
+  LEVI: 'XLY',
+  GPS: 'XLY',
+  AEO: 'XLY',
+  ANF: 'XLY',
+  URBN: 'XLY',
+  M: 'XLY',
+  KSS: 'XLY',
+  BBWI: 'XLY',
+  VFC: 'XLY',
+  HAS: 'XLY',
+  MAT: 'XLY',
+  DKS: 'XLY',
+  WSM: 'XLY',
+  GME: 'XLY',
+  AMC: 'XLY',
+  // Health Care
+  TDOC: 'XLV',
+  ACAD: 'XLV',
+  SRPT: 'XLV',
+  RARE: 'XLV',
+  INSM: 'XLV',
+  HALO: 'XLV',
+  MEDP: 'XLV',
+  GH: 'XLV',
+  TWST: 'XLV',
+  BEAM: 'XLV',
+  NTLA: 'XLV',
+  EDIT: 'XLV',
+  AXSM: 'XLV',
+  KRYS: 'XLV',
+  CYTK: 'XLV',
+  ARWR: 'XLV',
+  JAZZ: 'XLV',
+  NBIX: 'XLV',
+  EXEL: 'XLV',
+  IONS: 'XLV',
+  VIR: 'XLV',
+  // Financials
+  LC: 'XLF',
+  MARA: 'XLF',
+  RIOT: 'XLF',
+  CLSK: 'XLF',
+  ALLY: 'XLF',
+  ZION: 'XLF',
+  CMA: 'XLF',
+  SNV: 'XLF',
+  WAL: 'XLF',
+  EWBC: 'XLF',
+  SLM: 'XLF',
+  NAVI: 'XLF',
+  // Industrials
+  SAIA: 'XLI',
+  XPO: 'XLI',
+  CHRW: 'XLI',
+  GXO: 'XLI',
+  KNX: 'XLI',
+  WERN: 'XLI',
+  ARCB: 'XLI',
+  MATX: 'XLI',
+  ALK: 'XLI',
+  JBLU: 'XLI',
+  JOBY: 'XLI',
+  ACHR: 'XLI',
+  KTOS: 'XLI',
+  AVAV: 'XLI',
+  MRCY: 'XLI',
+  ATI: 'XLI',
+  TXT: 'XLI',
+  OSK: 'XLI',
+  AGCO: 'XLI',
+  TEX: 'XLI',
+  GNRC: 'XLI',
+  MIDD: 'XLI',
+  // Energy
+  SM: 'XLE',
+  MUR: 'XLE',
+  CHRD: 'XLE',
+  PR: 'XLE',
+  MTDR: 'XLE',
+  NOG: 'XLE',
+  RIG: 'XLE',
+  VAL: 'XLE',
+  TDW: 'XLE',
+  CRC: 'XLE',
+  CCJ: 'XLE',
+  // Materials
+  CMC: 'XLB',
+  RS: 'XLB',
+  WLK: 'XLB',
+  OLN: 'XLB',
+  HUN: 'XLB',
+  SMG: 'XLB',
+  KALU: 'XLB',
+  UEC: 'XLB',
+  // Utilities
+  OGE: 'XLU',
+  PNW: 'XLU',
+  IDA: 'XLU',
+  NWE: 'XLU',
+  POR: 'XLU',
+  // Real Estate
+  STAG: 'XLRE',
+  CUBE: 'XLRE',
+  REXR: 'XLRE',
+  COLD: 'XLRE',
 };
 
 interface SellAccuracyResult {
@@ -837,6 +994,37 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     ...['EQIX', 'DLR', 'CCI', 'SBAC', 'PSA', 'EXR', 'AVB', 'EQR', 'MAA', 'ESS'],
     ...['INVH', 'SPG', 'O', 'VICI', 'WELL', 'VTR', 'ARE', 'CBRE', 'CSGP', 'WY'],
     ...['IRM'],
+    // --- Mid/small-cap expansion: liquid mid ($2-10B) and small (<$2B) caps
+    // so the cap-tier breakdown has real samples in every tier. ---
+    // Technology
+    ...['TOST', 'DUOL', 'CFLT', 'DOCN', 'FSLY', 'BOX', 'DBX', 'ASAN', 'PD', 'BRZE'],
+    ...['SOUN', 'BBAI', 'ACMR', 'FORM', 'ONTO', 'NOVT', 'LSCC', 'POWI', 'SLAB', 'SYNA'],
+    ...['RAMP', 'QLYS', 'TENB', 'RPD', 'CYBR', 'ZETA', 'AI', 'AMBA'],
+    // Communication Services
+    ...['SIRI', 'NYT', 'BMBL', 'YELP', 'ZD', 'CARG', 'IAS'],
+    // Consumer Discretionary
+    ...['FIVE', 'BOOT', 'YETI', 'CAKE', 'TXRH', 'WING', 'SHAK', 'CAVA', 'BROS', 'PTON'],
+    ...['FIGS', 'LEVI', 'GPS', 'AEO', 'ANF', 'URBN', 'M', 'KSS', 'BBWI', 'VFC'],
+    ...['HAS', 'MAT', 'DKS', 'WSM', 'GME', 'AMC'],
+    // Health Care
+    ...['TDOC', 'ACAD', 'SRPT', 'RARE', 'INSM', 'HALO', 'MEDP', 'GH', 'TWST', 'BEAM'],
+    ...['NTLA', 'EDIT', 'AXSM', 'KRYS', 'CYTK', 'ARWR', 'JAZZ', 'NBIX', 'EXEL', 'IONS'],
+    ...['VIR'],
+    // Financials
+    ...['LC', 'MARA', 'RIOT', 'CLSK', 'ALLY', 'ZION', 'CMA', 'SNV', 'WAL', 'EWBC'],
+    ...['SLM', 'NAVI'],
+    // Industrials
+    ...['SAIA', 'XPO', 'CHRW', 'GXO', 'KNX', 'WERN', 'ARCB', 'MATX', 'ALK', 'JBLU'],
+    ...['JOBY', 'ACHR', 'KTOS', 'AVAV', 'MRCY', 'ATI', 'TXT', 'OSK', 'AGCO', 'TEX'],
+    ...['GNRC', 'MIDD'],
+    // Energy
+    ...['SM', 'MUR', 'CHRD', 'PR', 'MTDR', 'NOG', 'RIG', 'VAL', 'TDW', 'CRC', 'CCJ'],
+    // Materials
+    ...['CMC', 'RS', 'WLK', 'OLN', 'HUN', 'SMG', 'KALU', 'UEC'],
+    // Utilities
+    ...['OGE', 'PNW', 'IDA', 'NWE', 'POR'],
+    // Real Estate
+    ...['STAG', 'CUBE', 'REXR', 'COLD'],
   ];
 
   console.log('Loading historical data for', tickers.length, 'tickers...');
@@ -870,6 +1058,34 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   }
 
   console.log(`Loaded data for ${allData.size} tickers\n`);
+
+  // Market-cap tier per ticker (AS-OF-TODAY caps — point-in-time caps are not
+  // available, so a 2019 small cap that 10×'d is classified by what it is now;
+  // read tier splits with that bias in mind). Batched quote calls, 50/chunk.
+  const capByTicker = new Map<string, number>();
+  const loadedTickers = [...allData.keys()];
+  for (let b = 0; b < loadedTickers.length; b += 50) {
+    const chunk = loadedTickers.slice(b, b + 50);
+    try {
+      const quotes = await yahooFinance.quote(chunk);
+      for (const q of Array.isArray(quotes) ? quotes : [quotes]) {
+        if (q?.symbol && typeof q.marketCap === 'number') capByTicker.set(q.symbol, q.marketCap);
+      }
+    } catch {
+      /* chunk failed — those tickers stay 'unknown' */
+    }
+  }
+  type CapTier = 'large' | 'mid' | 'small' | 'unknown';
+  const tierOf = (t: string): CapTier => {
+    const c = capByTicker.get(t);
+    if (c === undefined) return 'unknown';
+    return c >= 10e9 ? 'large' : c >= 2e9 ? 'mid' : 'small';
+  };
+  const tierCounts: Record<CapTier, number> = { large: 0, mid: 0, small: 0, unknown: 0 };
+  for (const t of loadedTickers) tierCounts[tierOf(t)]++;
+  console.log(
+    `Market-cap tiers (today): large(≥$10B)=${tierCounts.large}  mid($2-10B)=${tierCounts.mid}  small(<$2B)=${tierCounts.small}  unknown=${tierCounts.unknown}\n`
+  );
 
   // Market benchmark (SPY) for relative strength (rsSpy) — loaded once, no lookahead.
   let spyData: BenchmarkCandle[] = [];
@@ -1428,6 +1644,20 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       name: 'V10 + volR<2',
       gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, volRMax: 2.0 },
     },
+    // Final ibs-family pass: ibs<0.25 improved WR AND avgRet at R/R parity on
+    // both the 408 and 546 universes — test its immediate neighbors once.
+    {
+      name: 'V10 + ibs.25 + atr3.0',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, ibsMax: 0.25, atrPctMax: 3.0 },
+    },
+    {
+      name: 'V10 + ibs.20',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, ibsMax: 0.2 },
+    },
+    {
+      name: 'V10 + ibs.25 + scr380',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, ibsMax: 0.25, scoreMax: 380 },
+    },
     // Market kill-switch (essay #2 at the index level) and VWAP accumulation
     // (essay #1) variants — the WR+R/R dominance candidates from the goal search,
     // re-validated through the REAL pipeline.
@@ -1561,6 +1791,9 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     'V10 + rs.75',
     'V10 + vwap.5',
     'V10 + volR<2',
+    'V10 + ibs.25 + atr3.0',
+    'V10 + ibs.20',
+    'V10 + ibs.25 + scr380',
   ]) {
     const sigs = sigsByVariant.get(name);
     if (!sigs) continue;
@@ -1584,6 +1817,31 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       years.push(`${yr} ${r.winRate5d.toFixed(0)}%/${r.totalSignals}`);
     }
     console.log(`    BY YR: ${years.join('  ')}`);
+  }
+
+  // Market-cap tier breakdown — where does the leader-pullback edge actually
+  // live? Same signals, segmented by (as-of-today) cap tier, full + holdout.
+  console.log(
+    '\n📊 Market-cap tier breakdown (as-of-today caps; large ≥$10B / mid $2-10B / small <$2B):'
+  );
+  const tierRows: [string, BacktestSignal[]][] = [
+    ['V10 shipped (rs.7 + scr<400)', v10Signals],
+    ['V10 + ibs.25', sigsByVariant.get('V10 + ibs.25') ?? []],
+    ['V7 legacy (rs.5 + scr<380)', v7Signals],
+    ['V5 baseline (no gate)', v5Signals],
+  ];
+  for (const [name, sigs] of tierRows) {
+    console.log(`  ${name}:`);
+    for (const tier of ['large', 'mid', 'small', 'unknown'] as const) {
+      const sub = sigs.filter((s) => tierOf(s.ticker) === tier);
+      const r = measure5DayWinRate(sub, priceData, COST_PCT);
+      if (r.totalSignals === 0) continue;
+      const hold = sub.filter((s) => s.date.toISOString().slice(0, 4) >= '2025');
+      const h = measure5DayWinRate(hold, priceData, COST_PCT);
+      console.log(
+        `    ${tier.padEnd(7)}: WR=${r.winRate5d.toFixed(1).padStart(5)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${String(r.totalSignals).padStart(5)}  avgRet=${r.avgReturn.toFixed(2)}%  | holdout WR=${h.totalSignals > 0 ? h.winRate5d.toFixed(1) : '—'}% N=${h.totalSignals}`
+      );
+    }
   }
 
   if (opts.quick) {
