@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { EarningsWarningBadge } from '@/components/common/earnings-warning-badge';
+import { ConvertedPrice } from '@/components/converted-price';
 import { EarningsPanel } from '@/components/earnings-panel';
 import { FundamentalsCard } from '@/components/fundamentals-card';
 import { IndicatorRow } from '@/components/indicator-row';
@@ -107,6 +108,7 @@ export default async function TickerDetailPage({ params }: PageProps) {
           <span className="text-2xl font-mono font-bold tabular-nums text-warning">
             ${data.close.toFixed(2)}
           </span>
+          <ConvertedPrice usd={data.close} />
           <span className="text-xs font-mono text-muted-foreground ml-auto">{data.date}</span>
           <Link
             href={`/${symbol}/backtest`}

@@ -133,3 +133,38 @@ export async function getQuoteNames(symbols: string[]): Promise<Record<string, s
   const snapshots = await getQuoteSnapshots(symbols);
   return Object.fromEntries(Object.entries(snapshots).map(([sym, s]) => [sym, s.name]));
 }
+
+export interface FxRate {
+  /** ISO-4217 quote currency, e.g. 'KRW' for USD→KRW. */
+  currency: string;
+  /** Units of `currency` per 1 USD. */
+  rate: number;
+  prevClose: number | null;
+  dayChangePct: number | null;
+  /** Quote timestamp (ISO-8601), market time when Yahoo provides it. */
+  asOf: string;
+}
+
+/**
+ * USD→currency spot rate via Yahoo's FX quote symbols (`USDKRW=X`).
+ * Returns null when the pair is unknown or the quote has no price.
+ */
+export async function getFxRate(currency: string): Promise<FxRate | null> {
+  try {
+    const result = await yahooFinance.quote(`USD${currency}=X`);
+    const quote = Array.isArray(result) ? result[0] : result;
+    const rate = quote?.regularMarketPrice;
+    if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) return null;
+    const marketTime = quote.regularMarketTime;
+    return {
+      currency,
+      rate,
+      prevClose: quote.regularMarketPreviousClose ?? null,
+      dayChangePct: quote.regularMarketChangePercent ?? null,
+      asOf: (marketTime instanceof Date ? marketTime : new Date()).toISOString(),
+    };
+  } catch (error) {
+    logger.error({ error, currency }, 'Failed to fetch FX rate');
+    return null;
+  }
+}

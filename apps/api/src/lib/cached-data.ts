@@ -1,6 +1,8 @@
 import {
+  type FxRate,
   fetchBenchmarkPrices,
   getFearGreedIndex,
+  getFxRate,
   getHistoricalPrices,
   getQuoteSnapshots,
   type QuoteSnapshot,
@@ -25,6 +27,7 @@ export const TTL = {
   dividends: 60 * MINUTE,
   news: 10 * MINUTE,
   fearGreed: 30 * MINUTE,
+  fx: 5 * MINUTE,
 } as const;
 
 export function cachedAnalyzeTicker(ticker: string, fearGreed: number | null) {
@@ -86,6 +89,12 @@ export function cachedNews(ticker: string, limit = 5) {
 
 export function cachedFearGreed(): Promise<number | null> {
   return cached('fear-greed', TTL.fearGreed, () => getFearGreedIndex(), {
+    isEmpty: (v) => v == null,
+  });
+}
+
+export function cachedFxRate(currency: string): Promise<FxRate | null> {
+  return cached(`fx:${currency}`, TTL.fx, () => getFxRate(currency), {
     isEmpty: (v) => v == null,
   });
 }

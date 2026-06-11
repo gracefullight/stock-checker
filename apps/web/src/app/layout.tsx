@@ -5,6 +5,7 @@ import '@/app/globals.css';
 import { ThemeProvider } from '@/components/common/theme-provider';
 import { ThemeToggle } from '@/components/common/theme-toggle';
 import { FearGreedDisplay } from '@/components/fear-greed-display';
+import { FxDisplay } from '@/components/fx-display';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { AlertEngine } from '@/features/alerts/components/alert-engine';
@@ -59,6 +60,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </nav>
                 </div>
                 <div className="flex items-center gap-2">
+                  <FxDisplay />
                   <FearGreedDisplay />
                   <ThemeToggle />
                 </div>

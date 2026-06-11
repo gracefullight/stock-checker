@@ -159,6 +159,23 @@ export function getFearGreed(): Promise<FearGreedResult> {
   return apiFetch<FearGreedResult>('/api/market/fear-greed');
 }
 
+export interface FxRateResult {
+  currency: string;
+  /** Units of `currency` per 1 USD. */
+  rate: number;
+  prevClose: number | null;
+  dayChangePct: number | null;
+  asOf: string;
+}
+
+/**
+ * GET /api/market/fx?currency=KRW
+ */
+export function getFxRate(currency: string): Promise<FxRateResult> {
+  const params = new URLSearchParams({ currency });
+  return apiFetch<FxRateResult>(`/api/market/fx?${params.toString()}`);
+}
+
 /**
  * GET /api/portfolio
  */
