@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { cachedFearGreed, cachedFxRate } from '@/lib/cached-data';
+import { cachedFearGreed, cachedFxRate } from '@/lib/cached/market';
 
 function fearGreedLabel(v: number | null): string {
   if (v === null) return 'Unknown';

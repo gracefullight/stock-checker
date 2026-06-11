@@ -10,8 +10,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@stock-checker/core": "workspace:*",
     "@fastify/cors": "^10",
+    "@stock-checker/core": "workspace:*",
+    "async-cache-dedupe": "^3.4.0",
     "fastify": "^5"
   }
 }

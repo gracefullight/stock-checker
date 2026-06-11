@@ -4,18 +4,20 @@ import { gaussianChannel } from '@stock-checker/core/src/services/gaussian-chann
 import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
 import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
 import type { FastifyPluginAsync } from 'fastify';
+import { cachedAnalyzeTicker } from '@/lib/cached/analyze';
+import { cachedFearGreed } from '@/lib/cached/market';
 import {
-  cachedAnalyzeTicker,
   cachedBacktestPrices,
   cachedBenchmarkPrices,
+  cachedHistoricalPrices,
+  cachedQuoteSnapshots,
+} from '@/lib/cached/prices';
+import {
   cachedDividends,
   cachedEarnings,
-  cachedFearGreed,
   cachedFundamentals,
-  cachedHistoricalPrices,
   cachedNews,
-  cachedQuoteSnapshots,
-} from '@/lib/cached-data';
+} from '@/lib/cached/reference';
 
 interface ScreenerQuery {
   tickers?: string;

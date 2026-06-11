@@ -35,7 +35,7 @@ describe('marketRoutes', () => {
   beforeEach(async () => {
     app = await build();
     vi.resetAllMocks();
-    clearCache();
+    await clearCache();
   });
 
   afterEach(async () => {
