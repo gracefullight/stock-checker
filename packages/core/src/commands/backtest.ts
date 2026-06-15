@@ -10,20 +10,19 @@ import {
   DEFAULT_ROUND_TRIP_COST_PCT,
   MEAN_REVERSION_GRADIENT_RANGES,
 } from '@/constants';
+import { TICKER_SECTOR_ETF } from '@/constants/tickers';
 import { DataLoader } from '@/optimization/data-loader';
-import { type BacktestSignal,
+import {
+  type BacktestSignal,
   buildTickerContext,
   measure5DayWinRate,
   runSignalsWithContext,
   type TickerContext,
-  type WinRateResult,, measureSellAccuracy, measureTrendHoldWinRate, type SellAccuracyResult } from '@/optimization/engine';
-import { POST_FILTERS } from '@/optimization/filters';
-import { v2Config, v3Config, v4Config, v5Config, v7Config, v9Config, v10Config, gateVariants } from '@/optimization/backtest-configs';
-
+  type WinRateResult,
+} from '@/optimization/engine';
 import { gaussianChannel } from '@/services/gaussian-channel';
 import yahooFinance from '@/services/yahoo-finance';
 import type { BenchmarkCandle, PipelineConfig } from '@/types';
-import { TICKER_SECTOR_ETF } from '@/constants/tickers';
 
 // History window per ticker (calendar days). 8y so the 205-bar warm-up clears
 // mid-2019, making 2020 (COVID crash) and 2022 (rate-hike bear) full entry
@@ -31,8 +30,167 @@ import { TICKER_SECTOR_ETF } from '@/constants/tickers';
 // Tickers that IPO'd later simply contribute shorter series.
 const HISTORY_DAYS = 2920;
 
+interface SellAccuracyResult {
+  total: number;
+  hits: number; // forward return < 0 (the SELL was right)
+  accuracy: number; // %
+  avgRet: number; // average forward return (negative = good for a SELL)
+  avgDown: number; // average |return| when right
+  avgUp: number; // average return when wrong
+  rewardRisk: number; // avgDown / avgUp
+}
 
+/**
+ * SELL-side validation: a SELL "hit" means price is LOWER after `horizon` bars.
+ * Must be compared against the all-bars base down-rate — this universe drifts
+ * up, so the base rate is below 50% and raw accuracy alone overstates nothing.
+ */
+function measureSellAccuracy(
+  signals: BacktestSignal[],
+  allData: Map<string, { date: Date; close: number }[]>,
+  horizon = 5
+): SellAccuracyResult {
+  let hits = 0;
+  let total = 0;
+  let downSum = 0;
+  let downCnt = 0;
+  let upSum = 0;
+  let upCnt = 0;
+  let retSum = 0;
+  for (const sig of signals) {
+    if (sig.decision !== 'SELL') continue;
+    const prices = allData.get(sig.ticker);
+    if (!prices) continue;
+    const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
+    if (idx === -1 || idx + horizon >= prices.length) continue;
+    const ret = ((prices[idx + horizon].close - sig.close) / sig.close) * 100;
+    total++;
+    retSum += ret;
+    if (ret < 0) {
+      hits++;
+      downSum += -ret;
+      downCnt++;
+    } else {
+      upSum += ret;
+      upCnt++;
+    }
+  }
+  const avgDown = downCnt > 0 ? downSum / downCnt : 0;
+  const avgUp = upCnt > 0 ? upSum / upCnt : 0;
+  return {
+    total,
+    hits,
+    accuracy: total > 0 ? (hits / total) * 100 : 0,
+    avgRet: total > 0 ? retSum / total : 0,
+    avgDown,
+    avgUp,
+    rewardRisk: avgUp > 0 ? avgDown / avgUp : 0,
+  };
+}
 
+/**
+ * Trend-following exit: enter on a BUY signal, hold until the Gaussian Channel
+ * turns red (downtrend) or a stop is hit, capped at maxHold bars. Measures the
+ * realized per-trade win rate / return — the essay's "ride the trend, exit on
+ * color flip" approach vs the fixed 5-day horizon.
+ */
+function measureTrendHoldWinRate(
+  signals: BacktestSignal[],
+  allData: Map<string, { date: Date; close: number }[]>,
+  opts: {
+    maxHold?: number;
+    stopPct?: number;
+    exitRule?: 'flip' | 'mid';
+    trailPct?: number;
+    tpPct?: number;
+    costPct?: number;
+  } = {}
+): WinRateResult {
+  const maxHold = opts.maxHold ?? 60;
+  const stopPct = opts.stopPct ?? 8;
+  const exitRule = opts.exitRule ?? 'flip';
+  const trailPct = opts.trailPct;
+  const tpPct = opts.tpPct;
+  const costPct = opts.costPct ?? DEFAULT_ROUND_TRIP_COST_PCT;
+  const gcCache = new Map<string, ReturnType<typeof gaussianChannel>['series']>();
+
+  let holdBarsTotal = 0;
+  let wins = 0;
+  let total = 0;
+  const returns: number[] = [];
+  const monthly: Record<string, { wins: number; total: number }> = {};
+
+  for (const sig of signals) {
+    if (sig.decision !== 'BUY') continue;
+    const prices = allData.get(sig.ticker);
+    if (!prices) continue;
+    const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
+    if (idx === -1 || idx + 1 >= prices.length) continue;
+
+    let series = gcCache.get(sig.ticker);
+    if (!series) {
+      series = gaussianChannel(prices.map((p) => p.close)).series;
+      gcCache.set(sig.ticker, series);
+    }
+
+    const entry = sig.close;
+    const stop = entry * (1 - stopPct / 100);
+    const lastK = Math.min(idx + maxHold, prices.length - 1);
+    let exitBar = lastK;
+    let exitPrice = prices[lastK].close;
+    let peak = entry;
+    for (let k = idx + 1; k <= lastK; k++) {
+      const c = prices[k].close;
+      if (c > peak) peak = c;
+      const hardStop = c <= stop;
+      const trailStop = trailPct !== undefined && c <= peak * (1 - trailPct / 100);
+      const tpHit = tpPct !== undefined && c >= entry * (1 + tpPct / 100);
+      // With a take-profit bracket, the trend rule is disabled (pure TP/stop).
+      const ruleExit =
+        tpPct === undefined &&
+        (exitRule === 'mid' ? c < series[k].mid : series[k].direction === 'down');
+      if (hardStop || trailStop || tpHit || ruleExit) {
+        exitPrice = c;
+        exitBar = k;
+        break;
+      }
+    }
+    holdBarsTotal += exitBar - idx;
+
+    const ret = ((exitPrice - entry) / entry) * 100 - costPct;
+    returns.push(ret);
+    total++;
+    const month = sig.date.toISOString().slice(0, 7);
+    if (!monthly[month]) monthly[month] = { wins: 0, total: 0 };
+    monthly[month].total++;
+    if (ret > 0) {
+      wins++;
+      monthly[month].wins++;
+    }
+  }
+
+  const winReturns = returns.filter((r) => r > 0);
+  const lossReturns = returns.filter((r) => r <= 0);
+  const avgWin =
+    winReturns.length > 0 ? winReturns.reduce((a, b) => a + b, 0) / winReturns.length : 0;
+  const avgLoss =
+    lossReturns.length > 0
+      ? Math.abs(lossReturns.reduce((a, b) => a + b, 0) / lossReturns.length)
+      : 0;
+  const monthCount = Object.keys(monthly).length || 1;
+  return {
+    winRate5d: total > 0 ? (wins / total) * 100 : 0,
+    totalSignals: total,
+    wins,
+    avgReturn: returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0,
+    avgWin,
+    avgLoss,
+    rewardRisk: avgLoss > 0 ? avgWin / avgLoss : 0,
+    monthlyBreakdown: monthly,
+    signalsPerMonth: total / monthCount,
+    avgHoldBars: total > 0 ? holdBarsTotal / total : 0,
+  };
+}
 
 export async function backtest(opts: { costBps?: number; quick?: boolean } = {}) {
   // Round-trip transaction cost applied to every simulated trade. All WR/R-R
@@ -156,6 +314,616 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   console.log('V3 = mean-reversion, institutional disabled, new patterns active');
   console.log('V4 = momentum/institutional accumulation strategy (new default)');
 
+  const MR_WEIGHTS = {
+    rsi: 79,
+    stochastic: 76,
+    bollinger: 78,
+    donchian: 74,
+    williamsR: 72,
+    fearGreed: 50,
+    macd: 75,
+    sma: 60,
+    ema: 65,
+    volume: 0,
+  };
+
+  const newPatternKeys = [
+    'bullishPennant',
+    'bearishPennant',
+    'cupWithHandle',
+    'invertedCupWithHandle',
+    'threeRisingValleys',
+    'threeDescendingPeaks',
+    'ascendingScallop',
+    'descendingScallop',
+    'measuredMoveUp',
+    'measuredMoveDown',
+    'diamondBottom',
+    'topsRectangle',
+  ];
+
+  const v2PatternWeights = { ...DEFAULT_PIPELINE_CONFIG.patternWeights };
+  for (const k of newPatternKeys) {
+    (v2PatternWeights as Record<string, number>)[k] = 0;
+  }
+
+  const v2Config: PipelineConfig = {
+    ...DEFAULT_PIPELINE_CONFIG,
+    strategy: 'mean-reversion',
+    indicatorWeights: MR_WEIGHTS,
+    gradientRanges: { ...MEAN_REVERSION_GRADIENT_RANGES },
+    regimeFilter: { enabled: true, blockUptrend: true },
+    institutional: { ...DEFAULT_INSTITUTIONAL_CONFIG, enabled: false },
+    patternWeights: v2PatternWeights,
+    trendGate: { ...DEFAULT_PIPELINE_CONFIG.trendGate, minConditions: 1, enabled: true },
+    reversalConfirm: { ...DEFAULT_PIPELINE_CONFIG.reversalConfirm, enabled: false },
+    thresholds: { buy: 370, sell: 200 },
+    confluence: { minActive: 3, activationThreshold: 0.3 },
+    confidenceGate: { ...DEFAULT_PIPELINE_CONFIG.confidenceGate, enabled: false },
+  };
+
+  const v3Config: PipelineConfig = {
+    ...DEFAULT_PIPELINE_CONFIG,
+    strategy: 'mean-reversion',
+    indicatorWeights: MR_WEIGHTS,
+    gradientRanges: { ...MEAN_REVERSION_GRADIENT_RANGES },
+    regimeFilter: { enabled: true, blockUptrend: true },
+    institutional: { ...DEFAULT_INSTITUTIONAL_CONFIG, enabled: false },
+    trendGate: { ...DEFAULT_PIPELINE_CONFIG.trendGate, minConditions: 1, enabled: true },
+    reversalConfirm: { ...DEFAULT_PIPELINE_CONFIG.reversalConfirm, enabled: false },
+    thresholds: { buy: 370, sell: 200 },
+    confluence: { minActive: 3, activationThreshold: 0.3 },
+    confidenceGate: { ...DEFAULT_PIPELINE_CONFIG.confidenceGate, enabled: false },
+  };
+
+  const v4Config: PipelineConfig = {
+    ...DEFAULT_PIPELINE_CONFIG,
+    institutional: { ...DEFAULT_INSTITUTIONAL_CONFIG, enabled: false },
+    trendGate: { ...DEFAULT_PIPELINE_CONFIG.trendGate, minConditions: 1, enabled: true },
+    reversalConfirm: { ...DEFAULT_PIPELINE_CONFIG.reversalConfirm, enabled: false },
+    confidenceGate: { ...DEFAULT_PIPELINE_CONFIG.confidenceGate, enabled: false },
+  };
+
+  // V5 = institutional (flow-primary + gaussian trend + blended institutional).
+  // Kept RAW (no quality gate) so the Phase-4 goal search runs on the unfiltered
+  // signal set — otherwise the search would re-filter an already-filtered input.
+  const v5Config: PipelineConfig = {
+    ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
+  };
+
+  // V7 = institutional + the LEGACY entry-quality gate (rs.5, scr<380, no
+  // market/stage filter) — pinned explicitly so the comparison row stays stable
+  // even as the shipped default gate evolves. Evaluated through the REAL
+  // pipeline (Gate 1.7), not as a post-hoc filter.
+  const LEGACY_V7_GATE = {
+    enabled: true,
+    ibsMax: 0.3,
+    atrPctMax: 3.5,
+    volRMin: 0.8,
+    volRMax: 99,
+    scoreMax: 380,
+    rsMin: 0.5,
+    requireBelowSma50: true,
+  };
+  const v7Config: PipelineConfig = {
+    ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
+    qualityGate: LEGACY_V7_GATE,
+  };
+
+  // V9 = V7 + market kill-switch (essay #2 at the index level): no new BUYs
+  // while the SPY Gaussian Channel is red. Targets the 2020-type crash regime
+  // where leader-pullback entries lose their edge.
+  const v9Config: PipelineConfig = {
+    ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
+    qualityGate: { ...LEGACY_V7_GATE, requireMarketUptrend: true },
+  };
+
+  // V10 = the SHIPPED default gate (strong-leader pullback: rs.7 + scr<400 +
+  // market kill-switch + above-200d stage filter) — the WR+R/R dominance config.
+  const v10Config: PipelineConfig = {
+    ...DEFAULT_QUALITY_PIPELINE_CONFIG,
+  };
+
+  const v2Signals: BacktestSignal[] = [];
+  const v3Signals: BacktestSignal[] = [];
+  const v4Signals: BacktestSignal[] = [];
+  const v5Signals: BacktestSignal[] = [];
+  const v7Signals: BacktestSignal[] = [];
+  const v9Signals: BacktestSignal[] = [];
+  const v10Signals: BacktestSignal[] = [];
+  for (const [ticker, ctx] of ctxMap) {
+    v2Signals.push(...runSignalsWithContext(ctx, ticker, v2Config));
+    v3Signals.push(...runSignalsWithContext(ctx, ticker, v3Config));
+    v4Signals.push(...runSignalsWithContext(ctx, ticker, v4Config));
+    v5Signals.push(...runSignalsWithContext(ctx, ticker, v5Config));
+    v7Signals.push(...runSignalsWithContext(ctx, ticker, v7Config));
+    v9Signals.push(...runSignalsWithContext(ctx, ticker, v9Config));
+    v10Signals.push(...runSignalsWithContext(ctx, ticker, v10Config));
+  }
+
+  // Entry years actually present in the signal set — derived, not hardcoded,
+  // so widening HISTORY_DAYS automatically extends every per-year breakdown.
+  const ENTRY_YEARS = [...new Set(v5Signals.map((s) => s.date.toISOString().slice(0, 4)))].sort();
+
+  const v2Result = measure5DayWinRate(v2Signals, priceData, COST_PCT);
+  const v3Result = measure5DayWinRate(v3Signals, priceData, COST_PCT);
+  const v4Result = measure5DayWinRate(v4Signals, priceData, COST_PCT);
+  const v5Result = measure5DayWinRate(v5Signals, priceData, COST_PCT);
+  // V6 = same institutional entries as V5, but exit on Gaussian Channel flip (trend-hold).
+  const v6Result = measureTrendHoldWinRate(v5Signals, priceData, { costPct: COST_PCT });
+  // V7 = institutional + entry-quality gate, through the real pipeline (the shipped improvement).
+  const v7Result = measure5DayWinRate(v7Signals, priceData, COST_PCT);
+  // V9 = V7 + SPY-Gaussian market kill-switch, through the real pipeline.
+  const v9Result = measure5DayWinRate(v9Signals, priceData, COST_PCT);
+  // V10 = the shipped default gate (strong-leader pullback + market/stage filters).
+  const v10Result = measure5DayWinRate(v10Signals, priceData, COST_PCT);
+
+  console.log(
+    `\n${'Version'.padEnd(20)} | ${'WinRate'.padStart(8)} | ${'Signals'.padStart(8)} | ${'AvgRet'.padStart(8)} | ${'R/R'.padStart(6)} | ${'Sig/Mo'.padStart(6)}`
+  );
+  console.log('-'.repeat(72));
+  const fmtRow = (name: string, r: WinRateResult) =>
+    `${name.padEnd(20)} | ${(`${r.winRate5d.toFixed(1)}%`).padStart(8)} | ${String(r.totalSignals).padStart(8)} | ${(`${r.avgReturn.toFixed(2)}%`).padStart(8)} | ${r.rewardRisk.toFixed(2).padStart(6)} | ${r.signalsPerMonth.toFixed(1).padStart(6)}`;
+  console.log(fmtRow('V2', v2Result));
+  console.log(fmtRow('V3', v3Result));
+  console.log(fmtRow('V4 (momentum)', v4Result));
+  console.log(fmtRow('V5 (institutional)', v5Result));
+  console.log(fmtRow('V6 (V5 + trend-hold)', v6Result));
+  console.log(fmtRow('V7 (V5 + quality)', v7Result));
+  console.log(fmtRow('V9 (V7 + mkt switch)', v9Result));
+  console.log(fmtRow('V10 (shipped gate)', v10Result));
+  console.log(
+    '\n🎯 V7 = shipped improvement (institutional + entry-quality gate, via real pipeline):'
+  );
+  console.log(
+    `  WR ${v7Result.winRate5d.toFixed(1)}% (vs V5 ${v5Result.winRate5d.toFixed(1)}%)  |  R/R ${v7Result.rewardRisk.toFixed(2)} (vs V5 ${v5Result.rewardRisk.toFixed(2)})  |  N ${v7Result.totalSignals}  |  AvgRet ${v7Result.avgReturn.toFixed(2)}%`
+  );
+  const v7GoalMet = v7Result.winRate5d >= 60 && v7Result.rewardRisk > v5Result.rewardRisk;
+  console.log(
+    `  ${v7GoalMet ? '✅ GOAL MET' : '⚠️ goal NOT met'}: WR ≥ 60% AND R/R > baseline (${v5Result.rewardRisk.toFixed(2)})`
+  );
+  console.log('  V7 by entry year:');
+  for (const yr of ENTRY_YEARS) {
+    const sub = v7Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+    if (sub.length === 0) continue;
+    const r = measure5DayWinRate(sub, priceData, COST_PCT);
+    console.log(
+      `    ${yr}: WR=${r.winRate5d.toFixed(1)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.totalSignals}  AvgRet=${r.avgReturn.toFixed(2)}%`
+    );
+  }
+  console.log(
+    `\n🎯 V9 = V7 + market kill-switch (no BUY while SPY Gaussian is red), via real pipeline:`
+  );
+  console.log(
+    `  WR ${v9Result.winRate5d.toFixed(1)}% (vs V7 ${v7Result.winRate5d.toFixed(1)}%)  |  R/R ${v9Result.rewardRisk.toFixed(2)} (vs V7 ${v7Result.rewardRisk.toFixed(2)})  |  N ${v9Result.totalSignals}  |  AvgRet ${v9Result.avgReturn.toFixed(2)}%`
+  );
+  console.log('  V9 by entry year:');
+  for (const yr of ENTRY_YEARS) {
+    const sub = v9Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+    if (sub.length === 0) continue;
+    const r = measure5DayWinRate(sub, priceData, COST_PCT);
+    console.log(
+      `    ${yr}: WR=${r.winRate5d.toFixed(1)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.totalSignals}  AvgRet=${r.avgReturn.toFixed(2)}%`
+    );
+  }
+  console.log(
+    '\n🎯 V10 = SHIPPED default gate (rs.7 + scr<400 + market kill-switch + 200d stage), via real pipeline:'
+  );
+  console.log(
+    `  WR ${v10Result.winRate5d.toFixed(1)}% (vs V7 ${v7Result.winRate5d.toFixed(1)}%)  |  R/R ${v10Result.rewardRisk.toFixed(2)} (vs V7 ${v7Result.rewardRisk.toFixed(2)})  |  N ${v10Result.totalSignals}  |  AvgRet ${v10Result.avgReturn.toFixed(2)}%`
+  );
+  const v10GoalMet = v10Result.winRate5d >= 70 && v10Result.rewardRisk >= v7Result.rewardRisk;
+  console.log(
+    `  ${v10GoalMet ? '✅ DOMINANCE GOAL MET' : '⚠️ dominance goal NOT met'}: WR ≥ 70% AND R/R ≥ V7 (${v7Result.rewardRisk.toFixed(2)})`
+  );
+  console.log('  V10 by entry year:');
+  for (const yr of ENTRY_YEARS) {
+    const sub = v10Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+    if (sub.length === 0) continue;
+    const r = measure5DayWinRate(sub, priceData, COST_PCT);
+    console.log(
+      `    ${yr}: WR=${r.winRate5d.toFixed(1)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.totalSignals}  AvgRet=${r.avgReturn.toFixed(2)}%`
+    );
+  }
+
+  // Quality-gate parameter tuning — evaluated through the REAL pipeline (not a
+  // post-hoc filter), so the cluster-filter interaction is accounted for. Picks
+  // the gate that best satisfies the goal with margin AND the strongest weakest
+  // entry-year (robustness), not just the best aggregate.
+  console.log('\nQuality-gate tuning (via real pipeline; min-year = weakest entry-year WR):');
+  console.log(
+    `${'Gate params'.padEnd(34)} | ${'WinRate'.padStart(7)} | ${'R/R'.padStart(5)} | ${'N'.padStart(5)} | ${'AvgRet'.padStart(7)} | ${'minYr'.padStart(6)}`
+  );
+  const gateVariants: { name: string; gate: NonNullable<PipelineConfig['qualityGate']> }[] = [
+    {
+      name: 'ibs.30 atr3.5 vol.8-2.0',
+      gate: { enabled: true, ibsMax: 0.3, atrPctMax: 3.5, volRMin: 0.8, volRMax: 2.0 },
+    },
+    {
+      name: 'ibs.25 atr3.5 vol.8-2.0',
+      gate: { enabled: true, ibsMax: 0.25, atrPctMax: 3.5, volRMin: 0.8, volRMax: 2.0 },
+    },
+    {
+      name: 'ibs.20 atr3.5 vol.8-2.0',
+      gate: { enabled: true, ibsMax: 0.2, atrPctMax: 3.5, volRMin: 0.8, volRMax: 2.0 },
+    },
+    {
+      name: 'ibs.20 atr3.0 vol.8-2.0',
+      gate: { enabled: true, ibsMax: 0.2, atrPctMax: 3.0, volRMin: 0.8, volRMax: 2.0 },
+    },
+    {
+      name: 'ibs.20 atr3.5 vol.8-1.5',
+      gate: { enabled: true, ibsMax: 0.2, atrPctMax: 3.5, volRMin: 0.8, volRMax: 1.5 },
+    },
+    {
+      name: 'ibs.15 atr3.5 vol.8-2.0',
+      gate: { enabled: true, ibsMax: 0.15, atrPctMax: 3.5, volRMin: 0.8, volRMax: 2.0 },
+    },
+    // Essay #1 anti-blowoff: add a buyScore cap (every top generalizing config had scr<380/400).
+    {
+      name: 'ibs.30 atr3.5 vol.8-2.0 scr<400',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 2.0,
+        scoreMax: 400,
+      },
+    },
+    {
+      name: 'ibs.30 atr3.5 vol.8-2.0 scr<380',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 2.0,
+        scoreMax: 380,
+      },
+    },
+    {
+      name: 'ibs.30 atr3.5 vol.8-1.5 scr<400',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 1.5,
+        scoreMax: 400,
+      },
+    },
+    {
+      name: 'ibs.30 atr4 vol.8-1.5 scr<400',
+      gate: { enabled: true, ibsMax: 0.3, atrPctMax: 4, volRMin: 0.8, volRMax: 1.5, scoreMax: 400 },
+    },
+    // Essay #1 leader-pullback (주도주 눌림목): strong RS vs market AND sector,
+    // pulled back below the 50-day line, calm, weak intraday close, real volume.
+    // Top generalizing family from the diversified-universe Phase-4 search.
+    {
+      name: 'LDR rs.5+50b ibs.3 atr3.5 scr380',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR rs.5+50b ibs.3 atr3.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR rs.5 only ibs.3 atr3.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.5,
+      },
+    },
+    {
+      name: 'LDR 50b only ibs.3 atr3.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR rs.7+50b ibs.3 atr3.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+      },
+    },
+    // Strong-leader family (rs ≥ 0.7): the highest real-pipeline WR-with-R/R
+    // lever found so far (essay #1 — "is it stronger than everything else?").
+    // Crossed with the market kill-switch and the stage filter.
+    {
+      name: 'LDR7 + mktUp',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+      },
+    },
+    {
+      name: 'LDR7 + 200a',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireAboveSma200: true,
+      },
+    },
+    {
+      name: 'LDR7 + mktUp + 200a',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        requireAboveSma200: true,
+      },
+    },
+    {
+      name: 'LDR7 + scr400',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 400,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR8 (rs.8)',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.8,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR7 + ibs.25',
+      gate: {
+        enabled: true,
+        ibsMax: 0.25,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+      },
+    },
+    {
+      name: 'LDR7 + scr400 + mktUp',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 400,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+      },
+    },
+    {
+      name: 'LDR7 + scr400 + 200a',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 400,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireAboveSma200: true,
+      },
+    },
+    {
+      name: 'LDR7 + scr400 + mktUp + 200a',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 400,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        requireAboveSma200: true,
+      },
+    },
+    {
+      name: 'LDR7 + scr380',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.7,
+        requireBelowSma50: true,
+      },
+    },
+    // One-shot greed pass on top of the shipped V10 champion — each variant
+    // adds a single extra condition. Tiny-N results here are read as noise,
+    // not edge (hard-won rule #4: families over lone spikes).
+    {
+      name: 'V10 + ibs.25',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, ibsMax: 0.25 },
+    },
+    {
+      name: 'V10 + atr3.0',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, atrPctMax: 3.0 },
+    },
+    {
+      name: 'V10 + rs.75',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, rsMin: 0.75 },
+    },
+    {
+      name: 'V10 + vwap.5',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, vwapMin: 0.5 },
+    },
+    {
+      name: 'V10 + volR<2',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, volRMax: 2.0 },
+    },
+    // Final ibs-family pass: ibs<0.25 improved WR AND avgRet at R/R parity on
+    // both the 408 and 546 universes — test its immediate neighbors once.
+    {
+      name: 'V10 + ibs.25 + atr3.0',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, ibsMax: 0.25, atrPctMax: 3.0 },
+    },
+    {
+      name: 'V10 + ibs.20',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, ibsMax: 0.2 },
+    },
+    {
+      name: 'V10 + ibs.25 + scr380',
+      gate: { ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate, ibsMax: 0.25, scoreMax: 380 },
+    },
+    // Market kill-switch (essay #2 at the index level) and VWAP accumulation
+    // (essay #1) variants — the WR+R/R dominance candidates from the goal search,
+    // re-validated through the REAL pipeline.
+    {
+      name: 'LDR + mktUp (V9)',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+      },
+    },
+    {
+      name: 'LDR + mktUp + vwap.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        vwapMin: 0.5,
+      },
+    },
+    {
+      name: 'LDR + mktUp + 200a',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        requireAboveSma200: true,
+      },
+    },
+    {
+      name: 'LDR + mktUp + 200a + vwap.5',
+      gate: {
+        enabled: true,
+        ibsMax: 0.3,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 99,
+        scoreMax: 380,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        requireAboveSma200: true,
+        vwapMin: 0.5,
+      },
+    },
+    {
+      name: 'deepIBS.12 scr<400 50b + mktUp',
+      gate: {
+        enabled: true,
+        ibsMax: 0.12,
+        atrPctMax: 3.5,
+        volRMin: 0,
+        volRMax: 2.0,
+        scoreMax: 400,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+      },
+    },
+    {
+      name: 'vwap+ rs.5 vR.8-1.2 + mktUp',
+      gate: {
+        enabled: true,
+        ibsMax: 99,
+        atrPctMax: 3.5,
+        volRMin: 0.8,
+        volRMax: 1.2,
+        scoreMax: 400,
+        rsMin: 0.5,
+        requireBelowSma50: true,
+        requireMarketUptrend: true,
+        vwapMin: 0.5,
+      },
+    },
+  ];
   const sigsByVariant = new Map<string, BacktestSignal[]>();
   for (const variant of gateVariants) {
     const cfg: PipelineConfig = { ...DEFAULT_QUALITY_PIPELINE_CONFIG, qualityGate: variant.gate };
@@ -545,6 +1313,217 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   console.log('='.repeat(130));
 
   // Apply post-hoc filters to the base signal set
+  type PostFilter = (sig: (typeof diagSignals)[0], allSigs: typeof diagSignals) => boolean;
+
+  const postFilters: { name: string; filter: PostFilter }[] = [
+    { name: 'baseline (no filter)', filter: () => true },
+    // Regime filter: exclude uptrend (counterintuitive but data-driven)
+    { name: 'regime≠uptrend', filter: (s) => s.regime !== 'uptrend' },
+    // Anti-perfect confluence: confR=1.0 might mean free-fall
+    { name: 'confR<1.0', filter: (s) => s.confluenceRatio < 1.0 },
+    // Combined
+    {
+      name: 'regime≠uptrend + confR<1.0',
+      filter: (s) => s.regime !== 'uptrend' && s.confluenceRatio < 1.0,
+    },
+    // Score cap: extremely high scores may indicate crashes
+    { name: 'score<400', filter: (s) => s.score < 400 },
+    { name: 'score<390', filter: (s) => s.score < 390 },
+    // Consecutive skip: if same ticker had BUY within 5 days, skip
+    {
+      name: 'no-cluster-5d',
+      filter: (s, all) => {
+        const prev = all.filter(
+          (x) =>
+            x.ticker === s.ticker &&
+            x.date < s.date &&
+            s.date.getTime() - x.date.getTime() < 5 * 86400000
+        );
+        return prev.length === 0;
+      },
+    },
+    // Consecutive skip 10 days
+    {
+      name: 'no-cluster-10d',
+      filter: (s, all) => {
+        const prev = all.filter(
+          (x) =>
+            x.ticker === s.ticker &&
+            x.date < s.date &&
+            s.date.getTime() - x.date.getTime() < 10 * 86400000
+        );
+        return prev.length === 0;
+      },
+    },
+    // Only take if downtrend + no cluster 5d
+    {
+      name: 'regime≠up + no-clust-5d',
+      filter: (s, all) => {
+        if (s.regime === 'uptrend') return false;
+        const prev = all.filter(
+          (x) =>
+            x.ticker === s.ticker &&
+            x.date < s.date &&
+            s.date.getTime() - x.date.getTime() < 5 * 86400000
+        );
+        return prev.length === 0;
+      },
+    },
+    // Same-day multi-signal check: if ≥3 tickers signal same day, skip
+    {
+      name: 'no-multi-day(≥3)',
+      filter: (s, all) => {
+        const sameDay = all.filter((x) => x.date.getTime() === s.date.getTime());
+        return sameDay.length < 3;
+      },
+    },
+    // Regime≠uptrend + score<400
+    { name: 'regime≠up + score<400', filter: (s) => s.regime !== 'uptrend' && s.score < 400 },
+    // ATR-based volatility filter: skip high-volatility (ATR > X% of price)
+    { name: 'atr<4%', filter: (s) => (s.atr / s.close) * 100 < 4 },
+    { name: 'atr<3.5%', filter: (s) => (s.atr / s.close) * 100 < 3.5 },
+    { name: 'atr<3%', filter: (s) => (s.atr / s.close) * 100 < 3 },
+    // Volume ratio filter
+    { name: 'volR<1.5', filter: (s) => s.volumeRatio < 1.5 },
+    { name: 'volR>0.8', filter: (s) => s.volumeRatio > 0.8 },
+    // SMA distance: how far below SMA50
+    { name: 'sma50dist<-5%', filter: (s) => s.sma50dist < -5 },
+    { name: 'sma50dist<-8%', filter: (s) => s.sma50dist < -8 },
+    { name: 'sma50dist<-10%', filter: (s) => s.sma50dist < -10 },
+    // SMA200 distance
+    { name: 'sma200dist>-15%', filter: (s) => s.sma200dist > -15 },
+    { name: 'sma200dist>-20%', filter: (s) => s.sma200dist > -20 },
+    // RSI filter
+    { name: 'rsi<25', filter: (s) => s.rsi < 25 },
+    { name: 'rsi<30', filter: (s) => s.rsi < 30 },
+    // Score margin above threshold
+    { name: 'score≥375', filter: (s) => s.score >= 375 },
+    { name: 'score≥378', filter: (s) => s.score >= 378 },
+    // --- New strategy filters ---
+    // IBS (Internal Bar Strength)
+    { name: 'ibs<0.30', filter: (s) => s.ibs < 0.3 },
+    { name: 'ibs<0.25', filter: (s) => s.ibs < 0.25 },
+    { name: 'ibs<0.20', filter: (s) => s.ibs < 0.2 },
+    { name: 'ibs<0.15', filter: (s) => s.ibs < 0.15 },
+    // RSI(2) cumulative
+    { name: 'rsi2c<20', filter: (s) => s.rsi2cumul < 20 },
+    { name: 'rsi2c<15', filter: (s) => s.rsi2cumul < 15 },
+    { name: 'rsi2c<10', filter: (s) => s.rsi2cumul < 10 },
+    { name: 'rsi2c<5', filter: (s) => s.rsi2cumul < 5 },
+    // ATR distance (how stretched from SMA20)
+    { name: 'atrD>1.0', filter: (s) => s.atrDistance > 1.0 },
+    { name: 'atrD>1.5', filter: (s) => s.atrDistance > 1.5 },
+    { name: 'atrD>2.0', filter: (s) => s.atrDistance > 2.0 },
+    { name: 'atrD>2.5', filter: (s) => s.atrDistance > 2.5 },
+    // Consecutive oversold days
+    { name: 'consOD≥2', filter: (s) => s.consecutiveOversold >= 2 },
+    { name: 'consOD≥3', filter: (s) => s.consecutiveOversold >= 3 },
+    // Volume
+    { name: 'volR<2', filter: (s) => s.volumeRatio < 2.0 },
+    { name: 'volR<1.5', filter: (s) => s.volumeRatio < 1.5 },
+    // --- Combos: top singles ---
+    { name: 'ibs<0.25 + atrD>1.5', filter: (s) => s.ibs < 0.25 && s.atrDistance > 1.5 },
+    { name: 'ibs<0.25 + volR<2', filter: (s) => s.ibs < 0.25 && s.volumeRatio < 2.0 },
+    { name: 'ibs<0.25 + rsi2c<10', filter: (s) => s.ibs < 0.25 && s.rsi2cumul < 10 },
+    { name: 'atrD>1.5 + volR<2', filter: (s) => s.atrDistance > 1.5 && s.volumeRatio < 2.0 },
+    { name: 'atrD>1.5 + rsi2c<15', filter: (s) => s.atrDistance > 1.5 && s.rsi2cumul < 15 },
+    { name: 'atrD>2 + volR<2', filter: (s) => s.atrDistance > 2.0 && s.volumeRatio < 2.0 },
+    { name: 'atrD>2 + ibs<0.25', filter: (s) => s.atrDistance > 2.0 && s.ibs < 0.25 },
+    {
+      name: 'ibs<0.25+atrD>1.5+volR<2',
+      filter: (s) => s.ibs < 0.25 && s.atrDistance > 1.5 && s.volumeRatio < 2.0,
+    },
+    {
+      name: 'ibs<0.20+atrD>1.5+volR<2',
+      filter: (s) => s.ibs < 0.2 && s.atrDistance > 1.5 && s.volumeRatio < 2.0,
+    },
+    {
+      name: 'atrD>2+volR<2+consOD≥2',
+      filter: (s) => s.atrDistance > 2.0 && s.volumeRatio < 2.0 && s.consecutiveOversold >= 2,
+    },
+    {
+      name: 'atrD>1.5+volR<1.5+ibs<0.25',
+      filter: (s) => s.atrDistance > 1.5 && s.volumeRatio < 1.5 && s.ibs < 0.25,
+    },
+    { name: 'atrD>2+volR<1.5', filter: (s) => s.atrDistance > 2.0 && s.volumeRatio < 1.5 },
+    {
+      name: 'score≥375+atrD>1.5+volR<2',
+      filter: (s) => s.score >= 375 && s.atrDistance > 1.5 && s.volumeRatio < 2.0,
+    },
+    {
+      name: 'scr≥375+volR<2+ibs<0.25',
+      filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.ibs < 0.25,
+    },
+    {
+      name: 'scr≥375+volR<2+ibs<0.30',
+      filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.ibs < 0.3,
+    },
+    {
+      name: 'scr≥375+volR<2+ibs<0.40',
+      filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.ibs < 0.4,
+    },
+    {
+      name: 'scr≥375+volR<2+consOD≥2',
+      filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.consecutiveOversold >= 2,
+    },
+    {
+      name: 'scr≥375+volR<2+rsi2c<20',
+      filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.rsi2cumul < 20,
+    },
+    {
+      name: 'scr≥375+volR<2+rsi2c<15',
+      filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.rsi2cumul < 15,
+    },
+    {
+      name: 'all:scr375+vR2+ibs25+atrD1.5',
+      filter: (s) => s.score >= 375 && s.volumeRatio < 2.0 && s.ibs < 0.25 && s.atrDistance > 1.5,
+    },
+    {
+      name: 'all:scr375+vR2+consOD2+atrD2',
+      filter: (s) =>
+        s.score >= 375 && s.volumeRatio < 2.0 && s.consecutiveOversold >= 2 && s.atrDistance > 2.0,
+    },
+    // --- V4 Momentum-specific filters ---
+    { name: 'regime=uptrend', filter: (s) => s.regime === 'uptrend' },
+    { name: 'volR>1.5', filter: (s) => s.volumeRatio > 1.5 },
+    { name: 'volR>2.0', filter: (s) => s.volumeRatio > 2.0 },
+    { name: 'sma50dist>0', filter: (s) => s.sma50dist > 0 },
+    { name: 'sma200dist>0', filter: (s) => s.sma200dist > 0 },
+    { name: 'rsi>50', filter: (s) => s.rsi > 50 },
+    { name: 'rsi>55', filter: (s) => s.rsi > 55 },
+    { name: 'ibs>0.5', filter: (s) => s.ibs > 0.5 },
+    { name: 'ibs>0.6', filter: (s) => s.ibs > 0.6 },
+    { name: 'score≥300', filter: (s) => s.score >= 300 },
+    { name: 'score≥320', filter: (s) => s.score >= 320 },
+    { name: 'score≥350', filter: (s) => s.score >= 350 },
+    { name: 'uptrend+volR>1.5', filter: (s) => s.regime === 'uptrend' && s.volumeRatio > 1.5 },
+    { name: 'uptrend+volR>2.0', filter: (s) => s.regime === 'uptrend' && s.volumeRatio > 2.0 },
+    {
+      name: 'uptrend+sma50>0+volR>1.5',
+      filter: (s) => s.regime === 'uptrend' && s.sma50dist > 0 && s.volumeRatio > 1.5,
+    },
+    {
+      name: 'uptrend+sma200>0+volR>1.5',
+      filter: (s) => s.regime === 'uptrend' && s.sma200dist > 0 && s.volumeRatio > 1.5,
+    },
+    {
+      name: 'uptrend+rsi>50+volR>1.5',
+      filter: (s) => s.regime === 'uptrend' && s.rsi > 50 && s.volumeRatio > 1.5,
+    },
+    {
+      name: 'uptrend+ibs>0.5+volR>1.5',
+      filter: (s) => s.regime === 'uptrend' && s.ibs > 0.5 && s.volumeRatio > 1.5,
+    },
+    {
+      name: 'scr≥300+uptrend+volR>1.5',
+      filter: (s) => s.score >= 300 && s.regime === 'uptrend' && s.volumeRatio > 1.5,
+    },
+    {
+      name: 'scr≥320+uptrend+volR>1.5',
+      filter: (s) => s.score >= 320 && s.regime === 'uptrend' && s.volumeRatio > 1.5,
+    },
+  ];
+
   // Multi-period win rate analysis
   console.log('\n📊 Holding period analysis:');
   console.log('-'.repeat(70));
@@ -590,7 +1569,7 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   );
   console.log('-'.repeat(85));
 
-  for (const { name, filter } of POST_FILTERS) {
+  for (const { name, filter } of postFilters) {
     const filtered = diagSignals.filter((s) => filter(s, diagSignals));
     const w = filtered.filter((s) => s.win).length;
     const l = filtered.filter((s) => !s.win).length;
