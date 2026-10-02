@@ -19,7 +19,10 @@ async function loadPortfolio(): Promise<Portfolio> {
   try {
     const data = await fs.readFile(PORTFOLIO_FILE, 'utf-8');
     return JSON.parse(data);
-  } catch (_error) {
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
+      throw error;
+    }
     logger.info('No existing portfolio found, creating new one');
     return { assets: [], createdAt: new Date().toISOString() };
   }
@@ -31,6 +34,7 @@ async function savePortfolio(portfolio: Portfolio): Promise<void> {
     logger.info(`Portfolio saved: ${portfolio.assets.length} assets`);
   } catch (error) {
     logger.error({ error }, 'Failed to save portfolio');
+    throw error;
   }
 }
 

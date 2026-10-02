@@ -1,6 +1,11 @@
 import { promises as fs } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { addAsset, generatePerformanceReport, removeAsset } from '@/portfolio/manager';
+import {
+  addAsset,
+  generatePerformanceReport,
+  getPortfolio,
+  removeAsset,
+} from '@/portfolio/manager';
 import type { TickerResult } from '@/types';
 
 vi.mock('node:fs', () => ({
@@ -18,6 +23,52 @@ vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 describe('portfolio manager', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('persistence failures', () => {
+    it('creates an empty portfolio only when the file is missing', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce(
+        Object.assign(new Error('File not found'), { code: 'ENOENT' })
+      );
+
+      const portfolio = await getPortfolio();
+
+      expect(portfolio.assets).toEqual([]);
+      expect(portfolio.createdAt).toBeTruthy();
+    });
+
+    it.each([
+      'EACCES',
+      'EIO',
+    ])('does not overwrite a portfolio after a %s read failure', async (code) => {
+      const error = Object.assign(new Error('Failed to read portfolio'), { code });
+      vi.mocked(fs.readFile).mockRejectedValueOnce(error);
+
+      await expect(addAsset('PLTR')).rejects.toBe(error);
+
+      expect(fs.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('does not overwrite malformed portfolio JSON', async () => {
+      vi.mocked(fs.readFile).mockResolvedValueOnce('{"assets":');
+
+      await expect(addAsset('PLTR')).rejects.toBeInstanceOf(SyntaxError);
+
+      expect(fs.writeFile).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { action: 'add', mutate: () => addAsset('PLTR') },
+      { action: 'remove', mutate: () => removeAsset('TSLA') },
+    ])('reports a failed $action when saving fails', async ({ mutate }) => {
+      const error = Object.assign(new Error('Failed to write portfolio'), { code: 'ENOSPC' });
+      vi.mocked(fs.readFile).mockResolvedValueOnce(
+        JSON.stringify({ assets: ['TSLA'], createdAt: '2026-01-01' })
+      );
+      vi.mocked(fs.writeFile).mockRejectedValueOnce(error);
+
+      await expect(mutate()).rejects.toBe(error);
+    });
   });
 
   describe('addAsset', () => {

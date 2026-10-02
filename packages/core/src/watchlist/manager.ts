@@ -18,7 +18,10 @@ async function loadWatchlist(): Promise<Watchlist> {
   try {
     const data = await fs.readFile(WATCHLIST_FILE, 'utf-8');
     return JSON.parse(data);
-  } catch (_error) {
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
+      throw error;
+    }
     logger.info('No existing watchlist found, creating new one');
     return { tickers: [], createdAt: new Date().toISOString() };
   }
@@ -30,6 +33,7 @@ async function saveWatchlist(watchlist: Watchlist): Promise<void> {
     logger.info(`Watchlist saved: ${watchlist.tickers.length} tickers`);
   } catch (error) {
     logger.error({ error }, 'Failed to save watchlist');
+    throw error;
   }
 }
 

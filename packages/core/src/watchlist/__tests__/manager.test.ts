@@ -14,6 +14,41 @@ describe('watchlist manager', () => {
     vi.clearAllMocks();
   });
 
+  describe('persistence failures', () => {
+    it.each([
+      'EACCES',
+      'EIO',
+    ])('does not overwrite a watchlist after a %s read failure', async (code) => {
+      const error = Object.assign(new Error('Failed to read watchlist'), { code });
+      vi.mocked(fs.readFile).mockRejectedValueOnce(error);
+
+      await expect(addTicker('PLTR')).rejects.toBe(error);
+
+      expect(fs.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('does not overwrite malformed watchlist JSON', async () => {
+      vi.mocked(fs.readFile).mockResolvedValueOnce('{"tickers":');
+
+      await expect(addTicker('PLTR')).rejects.toBeInstanceOf(SyntaxError);
+
+      expect(fs.writeFile).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { action: 'add', mutate: () => addTicker('PLTR') },
+      { action: 'remove', mutate: () => removeTicker('TSLA') },
+    ])('reports a failed $action when saving fails', async ({ mutate }) => {
+      const error = Object.assign(new Error('Failed to write watchlist'), { code: 'ENOSPC' });
+      vi.mocked(fs.readFile).mockResolvedValueOnce(
+        JSON.stringify({ tickers: ['TSLA'], createdAt: '2026-01-01' })
+      );
+      vi.mocked(fs.writeFile).mockRejectedValueOnce(error);
+
+      await expect(mutate()).rejects.toBe(error);
+    });
+  });
+
   describe('addTicker', () => {
     it('should add new ticker to watchlist', async () => {
       vi.mocked(fs.readFile).mockResolvedValue(
@@ -73,7 +108,9 @@ describe('watchlist manager', () => {
 
   describe('getWatchlist', () => {
     it('should return empty watchlist when file is missing', async () => {
-      vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+      vi.mocked(fs.readFile).mockRejectedValueOnce(
+        Object.assign(new Error('File not found'), { code: 'ENOENT' })
+      );
 
       const watchlist = await getWatchlist();
 
