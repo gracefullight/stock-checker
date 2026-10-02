@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+scratch_dir=$(mktemp -d)
+trap 'rm -rf "$scratch_dir"' EXIT
+
+# Validate the staged contents, preserving partially staged working files.
+git diff --cached --name-only --diff-filter=ACMR -z |
+  while IFS= read -r -d '' staged_file; do
+    case "$staged_file" in
+      apps/*/src/*|packages/*/src/*|apps/*/package.json|packages/*/package.json|package.json|tsconfig.json|biome.json)
+        git show ":$staged_file" > "$scratch_dir/staged"
+        # Biome's stdin mode needs --write; it writes only to stdout here.
+        mise exec -- bunx --no-install biome check --write \
+          --stdin-file-path="$staged_file" \
+          --files-ignore-unknown=true --no-errors-on-unmatched \
+          < "$scratch_dir/staged" > "$scratch_dir/checked"
+        if ! cmp -s "$scratch_dir/staged" "$scratch_dir/checked"; then
+          printf 'pre-commit: fix and stage %s before committing\n' "$staged_file" >&2
+          diff -u "$scratch_dir/staged" "$scratch_dir/checked" >&2 || true
+          exit 1
+        fi
+        ;;
+    esac
+  done

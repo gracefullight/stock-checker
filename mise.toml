@@ -44,7 +44,7 @@ depends = ["build:api", "build:web"]
 # ── Quality ───────────────────────────────────────────────────
 [tasks.lint]
 description = "Lint entire monorepo"
-run = "bunx biome check ."
+run = "bunx biome check apps packages package.json tsconfig.json biome.json"
 
 [tasks."lint:fix"]
 description = "Lint + auto-fix"
@@ -120,17 +120,10 @@ depends = ["lint", "typecheck", "test", "build"]
 
 # ── Git Hooks ─────────────────────────────────────────────────
 [tasks."hooks:install"]
-description = "Install git pre-commit hook"
+description = "Enable the repository git hooks"
 run = """
-cat > .git/hooks/pre-commit << 'EOF'
-#!/bin/sh
-# Lint + format staged TS/JS files via biome
-STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\\.(ts|tsx|js|jsx|json)$')
-if [ -n "$STAGED" ]; then
-  echo "$STAGED" | xargs biome check --write --unsafe
-  echo "$STAGED" | xargs git add
-fi
-EOF
-chmod +x .git/hooks/pre-commit
-echo "pre-commit hook installed"
+set -eu
+chmod +x .githooks/pre-commit .githooks/commit-msg
+git config core.hooksPath .githooks
+echo "repository git hooks installed"
 """

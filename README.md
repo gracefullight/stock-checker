@@ -82,9 +82,14 @@ operation (run `mise tasks` to see them all).
 
 ```bash
 mise install        # pin runtimes (node 24, bun)
-bun install         # install workspace deps + git pre-commit hook
+bun install         # install workspace deps + repository git hooks
 mise run dev        # API (5101) + Web (5100) dev servers in parallel
 ```
+
+The pre-commit hook checks staged file contents with Biome and leaves file contents
+and staging unchanged. Fix reported issues and stage the changes before retrying
+the commit. The commit-message hook checks co-author addresses against the
+repository allowlist.
 
 ### Environment (optional)
 
