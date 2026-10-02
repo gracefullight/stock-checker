@@ -117,6 +117,16 @@ describe('marketRoutes', () => {
       expect(mockedGetFxRate).not.toHaveBeenCalled();
     });
 
+    it('rejects repeated currency values before fetching a rate', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/market/fx?currency=KRW&currency=JPY',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(mockedGetFxRate).not.toHaveBeenCalled();
+    });
+
     it('returns 502 when the rate is unavailable', async () => {
       mockedGetFxRate.mockResolvedValue(null);
 

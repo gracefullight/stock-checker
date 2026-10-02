@@ -3,7 +3,7 @@ import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
 import { gaussianChannel } from '@stock-checker/core/src/services/gaussian-channel';
 import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
 import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { cachedAnalyzeTicker } from '@/lib/cached/analyze';
 import { cachedFearGreed } from '@/lib/cached/market';
 import {
@@ -31,59 +31,101 @@ interface SingleTickerParams {
   ticker: string;
 }
 
+interface DaysQuery {
+  days?: number;
+}
+
+const daysQuerystringSchema = {
+  type: 'object',
+  properties: { days: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } },
+};
+
+async function validateDays(
+  req: FastifyRequest<{ Params: SingleTickerParams; Querystring: DaysQuery }>,
+  reply: FastifyReply
+) {
+  // Query coercion can admit Infinity even with an integer schema.
+  if (req.query.days !== undefined && !Number.isSafeInteger(req.query.days)) {
+    return reply.status(400).send({ error: 'days must be a positive safe integer' });
+  }
+}
+
 export const screenerRoutes: FastifyPluginAsync = async (app) => {
-  app.get<{ Querystring: ScreenerQuery }>('/screener', async (req, reply) => {
-    try {
-      let tickers: string[];
+  app.get<{ Querystring: ScreenerQuery }>(
+    '/screener',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: { tickers: { type: 'string' } },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        let tickers: string[];
 
-      if (req.query.tickers) {
-        tickers = req.query.tickers
-          .split(',')
-          .map((t) => t.trim().toUpperCase())
-          .filter(Boolean);
-      } else {
-        const portfolio = await getPortfolio();
-        tickers = portfolio.assets;
-      }
+        if (req.query.tickers) {
+          tickers = req.query.tickers
+            .split(',')
+            .map((t) => t.trim().toUpperCase())
+            .filter(Boolean);
+        } else {
+          const portfolio = await getPortfolio();
+          tickers = portfolio.assets;
+        }
 
-      if (tickers.length === 0) {
-        return reply.send({ results: [], fearGreed: null, generatedAt: new Date().toISOString() });
-      }
+        if (tickers.length === 0) {
+          return reply.send({
+            results: [],
+            fearGreed: null,
+            generatedAt: new Date().toISOString(),
+          });
+        }
 
-      const fearGreed = await cachedFearGreed();
-      // Analysis (slow, per-ticker) and quote snapshot lookup (one batch call) run together.
-      const [settled, snapshots] = await Promise.all([
-        Promise.allSettled(tickers.map((ticker) => cachedAnalyzeTicker(ticker, fearGreed))),
-        cachedQuoteSnapshots(tickers),
-      ]);
+        const fearGreed = await cachedFearGreed();
+        // Analysis (slow, per-ticker) and quote snapshot lookup (one batch call) run together.
+        const [settled, snapshots] = await Promise.all([
+          Promise.allSettled(tickers.map((ticker) => cachedAnalyzeTicker(ticker, fearGreed))),
+          cachedQuoteSnapshots(tickers),
+        ]);
 
-      const snapshotMap = snapshots ?? {};
-      const results = settled
-        .map((r) => (r.status === 'fulfilled' ? r.value : null))
-        .filter((r) => r !== null)
-        .map((r) => {
-          const snap = snapshotMap[r.ticker];
-          return {
-            ...r,
-            name: snap?.name ?? r.name,
-            marketCap: snap?.marketCap ?? null,
-            dayChangePct: snap?.dayChangePct ?? null,
-          };
+        const snapshotMap = snapshots ?? {};
+        const results = settled
+          .map((r) => (r.status === 'fulfilled' ? r.value : null))
+          .filter((r) => r !== null)
+          .map((r) => {
+            const snap = snapshotMap[r.ticker];
+            return {
+              ...r,
+              name: snap?.name ?? r.name,
+              marketCap: snap?.marketCap ?? null,
+              dayChangePct: snap?.dayChangePct ?? null,
+            };
+          });
+
+        return reply.send({
+          results,
+          fearGreed,
+          generatedAt: new Date().toISOString(),
         });
-
-      return reply.send({
-        results,
-        fearGreed,
-        generatedAt: new Date().toISOString(),
-      });
-    } catch (error) {
-      req.log.error({ err: error }, 'screener failed');
-      return reply.status(500).send({ error: 'Internal server error' });
+      } catch (error) {
+        req.log.error({ err: error }, 'screener failed');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
     }
-  });
+  );
 
   app.get<{ Params: SingleTickerParams; Querystring: SingleTickerQuery }>(
     '/screener/:ticker',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: { include: { type: 'string' } },
+        },
+      },
+    },
     async (req, reply) => {
       try {
         const ticker = req.params.ticker.toUpperCase();
@@ -141,12 +183,13 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /api/screener/:ticker/backtest-data?days=1825
   // Raw candles + benchmark series for the browser backtest playground.
-  app.get<{ Params: SingleTickerParams; Querystring: { days?: string } }>(
+  app.get<{ Params: SingleTickerParams; Querystring: DaysQuery }>(
     '/screener/:ticker/backtest-data',
+    { schema: { querystring: daysQuerystringSchema }, preHandler: validateDays },
     async (req, reply) => {
       try {
         const ticker = req.params.ticker.toUpperCase();
-        const days = Math.min(Number(req.query.days ?? 1825), 1825);
+        const days = Math.min(req.query.days ?? 1825, 1825);
 
         const toCandles = (
           data: Awaited<ReturnType<typeof cachedBacktestPrices>>
@@ -211,12 +254,13 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
   );
 
   // GET /api/screener/:ticker/ohlcv?days=180
-  app.get<{ Params: SingleTickerParams; Querystring: { days?: string } }>(
+  app.get<{ Params: SingleTickerParams; Querystring: DaysQuery }>(
     '/screener/:ticker/ohlcv',
+    { schema: { querystring: daysQuerystringSchema }, preHandler: validateDays },
     async (req, reply) => {
       try {
         const ticker = req.params.ticker.toUpperCase();
-        const days = Math.min(Number(req.query.days ?? 180), 730);
+        const days = Math.min(req.query.days ?? 180, 730);
         const data = await cachedHistoricalPrices(ticker, days);
 
         const closes = data.map((d) => d.close);

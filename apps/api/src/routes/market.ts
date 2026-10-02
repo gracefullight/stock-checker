@@ -41,22 +41,33 @@ export const marketRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
-  app.get<{ Querystring: { currency?: string } }>('/market/fx', async (req, reply) => {
-    const currency = (req.query.currency ?? 'KRW').toUpperCase();
-    if (!isSupportedCurrency(currency)) {
-      return reply.status(400).send({
-        error: `Unsupported currency '${currency}'. Supported: ${SUPPORTED_FX_CURRENCIES.join(', ')}`,
-      });
-    }
-    try {
-      const fx = await cachedFxRate(currency);
-      if (!fx) {
-        return reply.status(502).send({ error: `FX rate for ${currency} unavailable` });
+  app.get<{ Querystring: { currency?: string } }>(
+    '/market/fx',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: { currency: { type: 'string' } },
+        },
+      },
+    },
+    async (req, reply) => {
+      const currency = (req.query.currency ?? 'KRW').toUpperCase();
+      if (!isSupportedCurrency(currency)) {
+        return reply.status(400).send({
+          error: `Unsupported currency '${currency}'. Supported: ${SUPPORTED_FX_CURRENCIES.join(', ')}`,
+        });
       }
-      return reply.send(fx);
-    } catch (error) {
-      req.log.error({ err: error, currency }, 'fx fetch failed');
-      return reply.status(500).send({ error: 'Internal server error' });
+      try {
+        const fx = await cachedFxRate(currency);
+        if (!fx) {
+          return reply.status(502).send({ error: `FX rate for ${currency} unavailable` });
+        }
+        return reply.send(fx);
+      } catch (error) {
+        req.log.error({ err: error, currency }, 'fx fetch failed');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
     }
-  });
+  );
 };

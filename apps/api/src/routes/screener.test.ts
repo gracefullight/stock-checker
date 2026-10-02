@@ -44,13 +44,21 @@ vi.mock('@/lib/analyze', () => ({
 }));
 
 import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
-import { getFearGreedIndex } from '@stock-checker/core/src/services/data-fetcher';
+import {
+  fetchBenchmarkPrices,
+  getFearGreedIndex,
+  getHistoricalPrices,
+} from '@stock-checker/core/src/services/data-fetcher';
+import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
+import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
 import { analyzeTicker } from '@/lib/analyze';
 import { clearCache } from '@/lib/cache';
 
 const mockedGetPortfolio = vi.mocked(getPortfolio);
 const mockedGetFearGreedIndex = vi.mocked(getFearGreedIndex);
 const mockedAnalyzeTicker = vi.mocked(analyzeTicker);
+const mockedGetHistoricalPrices = vi.mocked(getHistoricalPrices);
+const mockedFetchBenchmarkPrices = vi.mocked(fetchBenchmarkPrices);
 
 const mockTickerResult = {
   ticker: 'AAPL',
@@ -110,6 +118,17 @@ describe('screenerRoutes', () => {
   });
 
   describe('GET /api/screener', () => {
+    it('rejects repeated ticker queries before fetching data', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/screener?tickers=AAPL&tickers=MSFT',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(mockedGetFearGreedIndex).not.toHaveBeenCalled();
+      expect(mockedAnalyzeTicker).not.toHaveBeenCalled();
+    });
+
     it('returns 200 with results when tickers query param is provided', async () => {
       mockedGetFearGreedIndex.mockResolvedValue(50);
       mockedAnalyzeTicker.mockResolvedValue(mockTickerResult as never);
@@ -181,6 +200,16 @@ describe('screenerRoutes', () => {
   });
 
   describe('GET /api/screener/:ticker', () => {
+    it('rejects repeated include queries before analyzing a ticker', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/screener/AAPL?include=news&include=earnings',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(mockedAnalyzeTicker).not.toHaveBeenCalled();
+    });
+
     it('returns 200 with ticker result', async () => {
       mockedGetFearGreedIndex.mockResolvedValue(50);
       mockedAnalyzeTicker.mockResolvedValue(mockTickerResult as never);
@@ -210,6 +239,52 @@ describe('screenerRoutes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(res.json()).toEqual({ error: 'Internal server error' });
+    });
+  });
+
+  describe.each([
+    { endpoint: 'ohlcv', defaultDays: 180, maxDays: 730, statusCode: 200 },
+    { endpoint: 'backtest-data', defaultDays: 1825, maxDays: 1825, statusCode: 404 },
+  ])('GET /api/screener/:ticker/$endpoint', ({ endpoint, defaultDays, maxDays, statusCode }) => {
+    beforeEach(() => {
+      mockedGetHistoricalPrices.mockResolvedValue([]);
+      mockedFetchBenchmarkPrices.mockResolvedValue([]);
+      vi.mocked(calcSMA).mockReturnValue([]);
+      vi.mocked(calcBB).mockReturnValue([]);
+      vi.mocked(getSignalHistory).mockReturnValue([]);
+    });
+
+    it.each([
+      'abc',
+      '0',
+      '-1',
+      '1.5',
+      'Infinity',
+      '1e309',
+      '1&days=2',
+    ])('rejects invalid days=%s without fetching prices', async (days) => {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/screener/AAPL/${endpoint}?days=${days}`,
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(mockedGetHistoricalPrices).not.toHaveBeenCalled();
+      expect(mockedFetchBenchmarkPrices).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { query: '', expectedDays: defaultDays },
+      { query: '?days=30', expectedDays: 30 },
+      { query: '?days=9999', expectedDays: maxDays },
+    ])('uses $expectedDays days for query "$query"', async ({ query, expectedDays }) => {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/screener/aapl/${endpoint}${query}`,
+      });
+
+      expect(res.statusCode).toBe(statusCode);
+      expect(mockedGetHistoricalPrices).toHaveBeenCalledWith('AAPL', expectedDays);
     });
   });
 });
