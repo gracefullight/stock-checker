@@ -1,11 +1,11 @@
 // PreToolUse hook — Filter test output to show only failures
-// Works with: Claude Code, Codex CLI, Gemini CLI, Qwen Code
+// Works with: Claude Code, Codex CLI, Qwen Code
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveGitRoot } from "./fs-utils.ts";
 import { makePreToolOutput } from "./hook-output.ts";
 import type { HandlerCtx, HandlerResult, HookInput, Vendor } from "./types.ts";
+import { getHookDir, getProjectDir } from "./vendor-detect.ts";
 
 // --- Vendor detection (same logic as keyword-detector.ts) ---
 
@@ -20,7 +20,6 @@ function detectVendor(input: Record<string, unknown>): Vendor {
   if (process.env.GROK_WORKSPACE_ROOT) return "grok";
   if (process.env.KIRO_PROJECT_DIR) return "kiro";
 
-  if (event === "BeforeTool") return "gemini";
   if (event === "preToolUse" || _hookEventName === "preToolUse") return "kiro";
   if (event === "PreToolUse" && process.env.ANTIGRAVITY_PROJECT_DIR)
     return "antigravity";
@@ -29,81 +28,6 @@ function detectVendor(input: Record<string, unknown>): Vendor {
   }
   if (process.env.QWEN_PROJECT_DIR) return "qwen";
   return "claude";
-}
-
-function getProjectDir(vendor: Vendor, input: Record<string, unknown>): string {
-  let dir: string;
-  switch (vendor) {
-    case "codex":
-      dir = (input.cwd as string) || process.cwd();
-      break;
-    case "gemini":
-      dir = process.env.GEMINI_PROJECT_DIR || process.cwd();
-      break;
-    case "antigravity":
-      dir =
-        (input.cwd as string) ||
-        process.env.ANTIGRAVITY_PROJECT_DIR ||
-        process.env.AGY_PROJECT_DIR ||
-        process.cwd();
-      break;
-    case "qwen":
-      dir = process.env.QWEN_PROJECT_DIR || process.cwd();
-      break;
-    case "grok":
-      dir =
-        process.env.GROK_WORKSPACE_ROOT ||
-        (input.cwd as string) ||
-        process.cwd();
-      break;
-    case "kiro":
-      dir =
-        process.env.KIRO_PROJECT_DIR || (input.cwd as string) || process.cwd();
-      break;
-    default:
-      dir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-      break;
-  }
-  return resolveGitRoot(dir);
-}
-
-/**
- * Vendor → hooks directory (relative to the project root) where
- * `filter-test-output.sh` is materialized by the installer.
- *
- * MUST mirror the `hookDir` field of `.agents/hooks/variants/<vendor>.json`.
- * This switch cannot import the variant JSONs (pi spawns this script as a
- * standalone subprocess from a directory where variants are not copied), so
- * the mapping is duplicated here and locked by a contract test
- * (`cli/commands/hook/vendor-wiring.test.ts`).
- */
-export function getHookDir(vendor: Vendor): string {
-  switch (vendor) {
-    case "claude":
-      return ".claude/hooks";
-    case "codex":
-      return ".codex/hooks";
-    case "commandcode":
-      return ".commandcode/hooks";
-    case "cursor":
-      return ".cursor/hooks";
-    case "gemini":
-      return ".gemini/hooks";
-    case "antigravity":
-      // agy has no project hook dir — its `.agents/hooks.json` runs handlers
-      // straight from the SSOT core dir, where filter-test-output.sh lives.
-      return ".agents/hooks/core";
-    case "qwen":
-      return ".qwen/hooks";
-    case "grok":
-      return ".grok/hooks";
-    case "kiro":
-      return ".kiro/hooks";
-    case "pi":
-      // pi keeps the core scripts (and filter-test-output.sh) inside the
-      // bridge's directory extension, not a dedicated hooks dir.
-      return join(".pi", "extensions", "oma");
-  }
 }
 
 // --- Test runner patterns ---
@@ -179,11 +103,29 @@ export async function run(
   const { toolName, toolInput, cwd: projectDir } = input;
   const { vendor } = ctx;
 
-  // Gemini uses run_shell_command; Claude-family uses Bash.
-  if (toolName !== "Bash" && toolName !== "run_shell_command") return null;
+  // Claude-family uses Bash; some CLIs use run_shell_command; Cursor names its
+  // terminal tool "Shell" (matches cursor.json's preToolUse matcher); Kiro's
+  // canonical shell tool is execute_bash (the agent-JSON matcher name).
+  if (
+    toolName !== "Bash" &&
+    toolName !== "run_shell_command" &&
+    toolName !== "Shell" &&
+    toolName !== "execute_bash"
+  )
+    return null;
 
   const command = toolInput.command as string | undefined;
   if (!command) return null;
+
+  // The rewrite below is Bash-only (`set -o pipefail`, subshell, pipe to
+  // bash). On Windows the host shell is PowerShell/cmd, which fails to parse
+  // it before the test runner even starts (#618). Losing the failure filter
+  // is acceptable; breaking `npm test` is not.
+  if (process.platform === "win32") return null;
+
+  // Hook re-entry guard: a command already piping through the filter script
+  // must pass through unchanged, not get wrapped a second time (#618).
+  if (command.includes("filter-test-output.sh")) return null;
 
   const isTestCommand = TEST_PATTERNS.some((p) => p.test(command));
   if (!isTestCommand) return null;
@@ -191,12 +133,18 @@ export async function run(
   const isExcluded = EXCLUDE_PATTERNS.some((p) => p.test(command));
   if (isExcluded) return null;
 
-  const filterScript = join(
-    projectDir,
+  // Resolve the filter script: vendor hook dir first, then the opencode
+  // bridge dir (opencode has no core Vendor identity — its subprocess payload
+  // detects as claude, whose hook dir is absent in opencode-only installs),
+  // then the SSOT core dir as the last resort.
+  const filterScript = [
     getHookDir(vendor),
-    "filter-test-output.sh",
-  );
-  if (!existsSync(filterScript)) return null;
+    join(".opencode", "plugins", "oma"),
+    join(".agents", "hooks", "core"),
+  ]
+    .map((dir) => join(projectDir, dir, "filter-test-output.sh"))
+    .find((p) => existsSync(p));
+  if (!filterScript) return null;
 
   const filteredCmd = `set -o pipefail; (${command}) 2>&1 | bash "${filterScript}"`;
   const updatedInput: Record<string, unknown> = {

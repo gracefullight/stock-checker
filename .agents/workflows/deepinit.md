@@ -4,13 +4,10 @@ description: Initialize project harness with AGENTS.md as table of contents, ARC
 disable-model-invocation: true
 ---
 
-# MANDATORY RULES: VIOLATION IS FORBIDDEN
-
 - **Response language follows `language` setting in `.agents/oma-config.yaml` if configured.**
-- **NEVER skip steps.** Execute from Step 0 in order. Explicitly report completion of each step before proceeding.
-- **You MUST use MCP tools throughout the entire workflow.** This is NOT optional.
-  - Use code analysis tools (`get_symbols_overview`, `find_symbol`, `search_for_pattern`, `list_dir`) for code exploration.
-  - Use file writing tools to generate all output files.
+- Follow `.agents/skills/_shared/core/execution-policy.md` for authorization, clarification, verification, and completion. Execute required steps on the selected path in dependency order; apply documented branch and skip conditions.
+- Follow `.agents/skills/_shared/core/code-intelligence.md`: discover the configured provider’s tools; use native search only for paths outside this project or ignored paths when unavailable or timed out. Do not install a provider or track a repository automatically.
+- Use native file tools and `.agents/skills/_shared/runtime/memory-protocol.md` for durable coordination state; code-intelligence memory tools are not required.
 - **Exclude directories:**
   - Respect the project's `.gitignore` as the source of truth for excluding directories.
   - Automatically skip framework-generated cross-platform build/project directories (e.g., Flutter/React Native's `android`, `ios`, `macos`, `linux`, `windows`, `web` folders).
@@ -97,7 +94,7 @@ Not all files are required. Generate only what is **discoverable and relevant** 
    - What packages/apps/services exist?
    - What tech stacks are used?
 
-2. **Discover architectural patterns** using `get_symbols_overview` and `search_for_pattern`:
+2. **Discover architectural patterns** using configured structure/pattern tools. Native search is only for paths outside this project or ignored paths:
    - Layer structure (e.g., controllers → services → repositories)
    - Module boundaries and dependency direction
    - Naming conventions in use
@@ -163,15 +160,17 @@ Generate only the files that are **relevant and discoverable** from the codebase
 
 ### `docs/plans/`
 
-**Structured plan artifacts (local working notes; add `docs/plans/` to the target repo's `.gitignore` if not already ignored).**
+**Structured plan artifacts (local working notes; add `docs/plans/` to the target repo's `.gitignore` if not already ignored). A file that committed docs must reference is promoted deliberately with `git add -f`.**
 
 Folder = type. Status field = lifecycle. Filenames use a 3-digit zero-padded sequential prefix per folder.
 
 - **`designs/{NNN}-{name}.md`**: permanent design references (architecture, API specs, tradeoffs)
 - **`work/{NNN}-{name}.md`**: execution plans with progress, decision log, and `Status` header (`Active` → `Completed`)
+<!-- oma-docs:ignore-start -->
 - **`work/tech-debt-tracker.md`**: known tech debt with priority, rationale, and proposed resolution
 
 Initially: create `designs/` and `work/` subdirectories + `work/tech-debt-tracker.md` with any debt discovered in Step 1.
+<!-- oma-docs:ignore-end -->
 
 ### `docs/generated/`
 
@@ -203,7 +202,7 @@ Generate only those relevant to the project:
 
 | File | When to Generate | Content |
 |------|-----------------|---------|
-| `DESIGN.md` | Project has UI/design system | Design system principles, component patterns, visual language |
+| `DESIGN.md` | Project has UI/design system | Design system principles, component patterns, visual language. If the `/design` workflow already maintains a root-level `DESIGN.md`, do NOT generate a second copy here — link to the root file instead |
 | `FRONTEND.md` | Project has frontend | Frontend architecture, rendering strategy, state management, routing |
 | `PLANS.md` | Always | Planning process conventions, how to write plans, template |
 | `PRODUCT-SENSE.md` | User-facing product | Product thinking, user mental models, prioritization framework |
@@ -212,7 +211,9 @@ Generate only those relevant to the project:
 | `SECURITY.md` | Has auth/data handling | Security policies, threat model, auth patterns, data handling rules |
 | `CODE-REVIEW.md` | Always | Code review standards, checklist, and review behavior configuration |
 
+<!-- oma-docs:ignore-start -->
 ### `docs/CODE-REVIEW.md`
+<!-- oma-docs:ignore-end -->
 
 **Code review standards referenced from AGENTS.md.**
 
@@ -348,7 +349,9 @@ deepinit no longer detects drift on update runs; it only generates 0→1 bootstr
 5. Root AGENTS.md is under 120 lines.
 6. ARCHITECTURE.md is under 200 lines.
 7. Each boundary AGENTS.md is under 60 lines.
+<!-- oma-docs:ignore-start -->
 8. `docs/design-docs/index.md` lists all design docs that exist.
 9. `docs/product-specs/index.md` lists all product specs that exist.
+<!-- oma-docs:ignore-end -->
 
 Report validation results to the user.

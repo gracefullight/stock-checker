@@ -19,7 +19,7 @@ Example (shorts): `30s vertical short for a dev audience: how oma-video turns a 
 - **Hook in the first 1.5s** — the first scene's on-screen text must earn the swipe.
 - Keep scenes 2–4s; favor 6–10 scenes for a 30s clip (≤ `max_scenes` 40).
 - oma-image stills get Ken Burns motion — write prompts that frame a clear subject with headroom for the pan.
-- TikTok captions are centered and animated; keep narration lines short (≤ ~8 words/segment) so caption pages switch cleanly.
+- TikTok captions are centered, static windowed cues (one SRT cue on screen at a time, CSS-wrapped — no per-word animation); keep narration lines short (≤ ~8 words/segment) so cues switch cleanly.
 
 ### explainer (16:9 / 9:16)
 - Source is a README / code / data — point the brief at the file and the *one* thing to teach.
@@ -29,7 +29,7 @@ Example (shorts): `30s vertical short for a dev audience: how oma-video turns a 
 
 ### demo (16:9)
 - The visual is a human-recorded capture (`--capture`). The brief drives the intro card, zoom/callout beats, and outro.
-- Call out *where to look* on screen — Remotion adds zoom + callouts over the capture.
+- Call out *where to look* on screen — HyperFrames adds zoom + callouts over the capture.
 - Keep the intro ≤ 3s; viewers came for the product, not the title card.
 
 ## Per-scene image prompts (oma-image)
@@ -53,7 +53,7 @@ Scene/backdrop → Subject → Details → Constraints
 - Anchor the **arc**: hook → body → payoff. A short without a hook gets swiped past.
 - Match **aspect to mode** (9:16 shorts, 16:9 explainer/demo) or use `auto`.
 - Keep narration **per-scene and short** so caption pages and scene boundaries align.
-- Pick **music** that matches pacing (`upbeat` for shorts, `calm` for explainer).
+- Pick **music** that matches pacing (`upbeat` for shorts, `calm` for explainer) — Strudel renders the bed offline and mixes it at −18 dB under narration. Needs a one-time `oma video doctor --install-strudel`; without it the run still succeeds, just silent.
 
 ## Don'ts
 
@@ -64,11 +64,11 @@ Scene/backdrop → Subject → Details → Constraints
 
 ## Localization
 
-- Narration + on-screen text are authored in `--locale`. For a non-source locale, oma-translator translates the script text before TTS/captions (key-free). If the translator is absent, the source text is kept and a warning is recorded.
+- Narration + on-screen text are authored in `--locale`. For a non-source locale, oma-translation translates the script text before TTS/captions (key-free). If the translator is absent, the source text is kept and a warning is recorded.
 - oma-image prompts are sent in **English** regardless of `--locale`; translate the user's subject and show the translated prompt during amplification.
 
 ## Determinism
 
-- `--seed <n>` makes the render reproducible. The same `render-spec.json` + assets + seed + embedded Pretendard font produce a byte-stable render.
+- `--seed <n>` makes the render reproducible. The same `render-spec.json` + assets + seed + embedded Pretendard font produce a byte-stable render. The font is fetched once by `oma video doctor --install`; if it is missing (e.g. the fetch ran offline), the render gracefully falls back to system fonts and byte-identical output is only guaranteed once the font is present.
 - Re-render an existing run with `oma video render <runDir>` — it consumes `render-spec.json` only, so script/voice/visual generation is not re-run.
 - `OMA_VIDEO_MOCK=1` replays golden fixtures for deterministic tests.

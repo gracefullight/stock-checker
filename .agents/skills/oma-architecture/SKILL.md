@@ -1,6 +1,6 @@
 ---
 name: oma-architecture
-description: Architecture specialist for software/system design, module and service boundaries, tradeoff analysis, and stakeholder synthesis. Uses context-aware methods such as diagnostic routing, design-twice comparison, ATAM-style risk analysis, CBAM-style prioritization, and ADR-style decision records.
+description: "Evaluate system boundaries and architectural tradeoffs. Use for architecture decisions, design reviews, and ADRs."
 ---
 
 # Architecture Agent - Software Architecture Specialist
@@ -14,6 +14,7 @@ Analyze, compare, and document software architecture decisions with explicit tra
 - User asks for architecture, system design, module/service boundaries, ADRs, or design tradeoffs.
 - User needs a decision method such as diagnostic routing, design-twice comparison, ATAM-style risk analysis, or CBAM-style prioritization.
 - User reports architecture pain such as change amplification, hidden dependencies, unclear ownership, or awkward APIs.
+- User needs an API versioning, deprecation, or published-contract evolution strategy.
 
 ### When to use
 - Choosing or reviewing system architecture
@@ -22,6 +23,7 @@ Analyze, compare, and document software architecture decisions with explicit tra
 - Investigating architectural pain: change amplification, hidden dependencies, awkward APIs
 - Prioritizing architecture investments or refactors
 - Writing architecture recommendations or ADRs
+- Deciding API versioning, deprecation windows, and published-contract evolution strategy
 
 ### When NOT to use
 - Visual design, design systems, branding, or landing pages -> use oma-design
@@ -39,6 +41,8 @@ Analyze, compare, and document software architecture decisions with explicit tra
 ### Expected outputs
 - Architecture diagnosis, recommendation, comparison, prioritization, or ADR
 - Assumptions, tradeoffs, risks, and validation steps
+- A Mermaid context/container diagram when the decision changes structure (boundaries, dependencies, data flow)
+- When `oma diagram resolve` reports `engine: archify` (the normal case — oma auto-fetches the latest archify release), an interactive sibling `<artifact-stem>.archify.json` + `.archify.html` derived from that Mermaid (see `_shared/conditional/diagram-engine.md`)
 - Saved architecture artifacts under `.agents/results/architecture/` when producing durable outputs
 
 ```yaml
@@ -47,6 +51,10 @@ outputs:
     description: ADR, comparison, or recommendation written to durable storage when the run is meant to persist
     artifact: ".agents/results/architecture/*.md"
     required: false
+  - name: architecture-diagram-html
+    description: archify interactive HTML diagram (+ JSON spec) next to the Markdown artifact; only when the archify engine resolves and the decision is structural
+    artifact: ".agents/results/architecture/*.archify.html"
+    required: false
 ```
 
 ### Dependencies
@@ -54,6 +62,9 @@ outputs:
 - `resources/methodology-selection.md` for method choice
 - `resources/stakeholder-synthesis.md` when cross-cutting stakeholder consultation is justified
 - `resources/output-templates.md` for final artifact shapes
+- `resources/api-evolution.md` for published-contract versioning/deprecation decisions (MAP evolution patterns)
+- `resources/migration-patterns.md` for transition plans when the chosen architecture requires restructuring a live system
+- `_shared/conditional/diagram-engine.md` (+ `oma diagram resolve`) when a structural diagram is emitted — chooses archify vs Mermaid and owns the validate/deliver loop
 
 ### Control-flow features
 - Branches by request clarity, decision materiality, risk level, and need for stakeholder consultation
@@ -65,7 +76,8 @@ outputs:
 ### Entry
 1. Identify the architecture problem, decision, or pain signal.
 2. Gather existing constraints, source evidence, and stakeholder context.
-3. Select the lightest sufficient method.
+3. Read prior decisions in `.agents/results/architecture/` — new decisions supersede old ones explicitly, never contradict them silently.
+4. Select the lightest sufficient method.
 
 ### Scenes
 1. **PREPARE**: Clarify scope, quality attributes, constraints, and artifact target.
@@ -109,7 +121,10 @@ outputs:
 - Optional stakeholder-agent consultation only when cross-cutting enough to justify cost
 
 ### Canonical workflow path
+Use the configured code-intelligence provider for structure, symbols, references, and integration points. If unavailable, use native search only for paths outside this project or ignored paths:
+
 ```bash
+ls .agents/results/architecture/   # prior decisions — read before deciding
 rg --files
 rg "ADR|architecture|boundary|service|module|dependency|owner|interface" .
 ```
@@ -142,6 +157,8 @@ Then choose Diagnostic, Recommendation, Design-Twice, ATAM-style, CBAM-style, or
 7. Be cost-aware by default: implementation cost, operational cost, team complexity, and future change cost.
 8. When a decision is material, compare at least two genuinely different options before recommending one.
 9. Save architecture artifacts to `.agents/results/architecture/`.
+10. Read prior artifacts in `.agents/results/architecture/` before deciding; when replacing an old decision, mark it superseded rather than contradicting it.
+11. When a durable artifact is finalized, emit the `architecture.adr-complete` L1 decision event and verify the checkpoint (commands in `resources/execution-protocol.md` Step 7).
 
 ### Method Selection Summary
 - **Diagnostic Mode**: vague pain, unclear architecture symptom
@@ -152,20 +169,16 @@ Then choose Diagnostic, Recommendation, Design-Twice, ATAM-style, CBAM-style, or
 - **ADR Mode**: concise final decision record after analysis
 
 ## References
-Follow `resources/execution-protocol.md` step by step.
-See `resources/examples.md` for output examples.
-Use `resources/methodology-selection.md` to select the right method.
-Use `resources/stakeholder-synthesis.md` when stakeholder consultation is needed.
-Use `resources/output-templates.md` to format the final artifact.
-Before submitting, run `resources/checklist.md`.
-- Execution steps: `resources/execution-protocol.md`
-- Checklist: `resources/checklist.md`
-- Examples: `resources/examples.md`
+- Local code tools: `../_shared/core/code-intelligence.md` (code search/navigation)
+
+- Execution steps (follow for the selected task): `resources/execution-protocol.md`
+- Checklist (run before handoff): `resources/checklist.md`
 - Method selection: `resources/methodology-selection.md`
 - Stakeholder protocol: `resources/stakeholder-synthesis.md`
 - Output templates: `resources/output-templates.md`
+- API evolution patterns (versioning, deprecation, lifecycle guarantees): `resources/api-evolution.md`
+- Migration/transition patterns (strangler fig, branch by abstraction, expand-contract): `resources/migration-patterns.md`
 - Context loading: `../_shared/core/context-loading.md`
-- Difficulty guide: `../_shared/core/difficulty-guide.md`
-- Reasoning templates: `../_shared/core/reasoning-templates.md`
+- Task decomposition: `../_shared/core/difficulty-guide.md` (unresolved scope or dependencies)
 - Clarification protocol: `../_shared/core/clarification-protocol.md`
 - Quality principles: `../_shared/core/quality-principles.md`

@@ -1,73 +1,28 @@
 # API Contracts
 
-This directory contains API contracts created by PM Agent and referenced by backend/frontend/mobile agents.
+This directory owns the optional contract template, not generated API specifications. Reuse the project's existing OpenAPI, schema, or other authoritative contract before creating a parallel Markdown specification.
 
-## Usage
+## When a contract artifact helps
 
-### PM Agent (Author)
-Create API contracts here during the planning phase:
-```
-[WRITE]("api-contracts/{domain}.md", contract content)
-```
+Create or update a contract when a changed API boundary needs coordination between producers and consumers, or the task explicitly requests a specification. A scoped implementation against an existing contract does not require a PM task or a new document.
 
-If MCP memory tool is unavailable, create files directly in this directory.
+| Artifact | Location |
+|---|---|
+| Transient coordination contract | `.agents/results/api-contracts/{domain}.md` |
+| Durable project specification, if no existing location applies | `docs/plans/contracts/{domain}.md` |
+| Reusable format example | `template.md` in this directory |
 
-### Backend Agent (Implementer)
-Read contract and implement exactly as specified:
-```
-[READ]("api-contracts/{domain}.md")
-```
+Use task/session-specific domain names for independent runs that could otherwise overwrite the same transient file. Follow assigned artifact paths when supplied. Read and write with available file tools; no memory MCP is required.
 
-### Frontend / Mobile Agent (Consumer)
-Read contract and integrate API client exactly as specified:
-```
-[READ]("api-contracts/{domain}.md")
-```
+## Authoring and use
 
-## Tool Reference
+1. Identify the authoritative schema and affected consumers. The assigned API owner can define the contract; PM involvement is useful for unresolved product requirements.
+2. Document changed operations: method/path, input fields and validation, success/error schemas, authentication and authorization, and relevant compatibility requirements.
+3. Share the contract path with affected assigned agents through the workflow's authorized coordination channel. Resolve incompatible expectations before dependent implementation. A separate approval ceremony is unnecessary when the existing contract and task already settle them.
+4. Implement and verify producer/consumer compatibility with applicable schema checks, generated clients, or integration tests. If a contract changes, update its source and affected consumers within scope.
 
-Tool names are configured in `mcp.json → memoryConfig.tools`:
-- `[READ]` → default: `read_memory`
-- `[WRITE]` → default: `write_memory`
+## Completion
 
-## Contract Format
+The changed boundary is explicit, consumers can use it, and applicable compatibility checks support the result. Include pagination, rate limits, timestamp formats, and migration/deprecation behavior only when relevant. Do not invent JWT authentication, CRUD endpoints, a database, or error codes merely because the template includes an example.
 
-```markdown
-# {Domain} API Contract
-
-## POST /api/{resource}
-- **Auth**: Required (JWT Bearer)
-- **Request Body**:
-  ```json
-  { "field": "type", "field2": "type" }
-  ```
-- **Response 200**:
-  ```json
-  { "id": "uuid", "field": "value", "created_at": "ISO8601" }
-  ```
-- **Response 401**: `{ "detail": "Not authenticated" }`
-- **Response 422**: `{ "detail": [{ "field": "error message" }] }`
-```
-
-## When to Create
-
-- **New API endpoint**: PM Agent creates contract before implementation tasks are assigned
-- **Existing API schema change**: Update contract first, then notify affected agents
-- **Cross-platform feature**: Contract must exist before backend/frontend/mobile tasks start
-
-## Completion Criteria
-
-- [ ] Request schema defined with all required/optional fields
-- [ ] Response schema defined (200, 201, etc.)
-- [ ] Error cases documented (400, 401, 403, 404, 422, 500)
-- [ ] Authentication requirements specified
-- [ ] Rate limiting noted (if applicable)
-- [ ] Backend Agent has reviewed and approved
-- [ ] Frontend/Mobile Agent has reviewed and approved
-
-## Rules
-
-1. PM Agent must create during planning
-2. Backend Agent must not implement differently from contract
-3. Frontend/Mobile Agent defines types based on contract
-4. If changes are needed, request re-planning from PM Agent
+Follow `../execution-policy.md` for authorization and verification. Transient artifacts do not belong in this source directory; durable specifications follow the repository's tracking policy.

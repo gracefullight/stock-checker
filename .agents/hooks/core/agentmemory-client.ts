@@ -5,10 +5,7 @@ import http from "node:http";
 import https from "node:https";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-
-// AgentMemory's published version line moved from 0.11/0.12 (original design
-// target) to 0.9.x service builds; accept 0.9.x and the 0.1x.x range.
-const SUPPORTED = /^0\.(9|1\d)\./;
+import { currentMemoryAdapter } from "./memory-adapter.ts";
 
 function endpointUrl(): string | null {
   if (process.env.OMA_NO_AGENTMEMORY === "1") return null;
@@ -31,6 +28,15 @@ function endpointUrl(): string | null {
 }
 
 let reachable: boolean | null = null;
+
+/**
+ * Test-only: clear the memoized reachability probe so cases that point
+ * `AGENTMEMORY_URL` at different endpoints don't leak a cached verdict into each
+ * other (the probe is intentionally memoized once per process at runtime).
+ */
+export function _resetReachableCache(): void {
+  reachable = null;
+}
 
 function requestAgentMemory(
   baseUrl: string,
@@ -97,36 +103,12 @@ export async function isAgentMemoryReachable(): Promise<boolean> {
 
   try {
     const response = await requestAgentMemory(url, "/agentmemory/health");
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      reachable = false;
-      return reachable;
-    }
-    const headerVersion = response.headers["x-agentmemory-version"];
-    const version = Array.isArray(headerVersion)
-      ? headerVersion[0]
-      : headerVersion;
-    // Recent AgentMemory releases expose the version only in the health body,
-    // not the `x-agentmemory-version` header.
-    let isAgentMemory = false;
-    let bodyVersion: string | undefined;
-    try {
-      const parsed = JSON.parse(response.body) as {
-        service?: unknown;
-        status?: unknown;
-        version?: unknown;
-      };
-      isAgentMemory =
-        parsed.service === "agentmemory" ||
-        parsed.status === "healthy" ||
-        parsed.status === "ok";
-      if (typeof parsed.version === "string") bodyVersion = parsed.version;
-    } catch {
-      // Non-JSON body — fall back to the header check below.
-    }
-    const resolvedVersion = version ?? bodyVersion;
-    reachable =
-      isAgentMemory ||
-      (resolvedVersion !== undefined && SUPPORTED.test(resolvedVersion));
+    // Capability-based acceptance: any 2xx health response from the
+    // explicitly configured endpoint counts as reachable. Version pinning
+    // proved brittle (the published line already jumped from 0.11/0.12
+    // design targets to 0.9.x service builds), so payload shape and version
+    // are no longer gating.
+    reachable = response.statusCode >= 200 && response.statusCode < 300;
     return reachable;
   } catch {
     reachable = false;
@@ -142,15 +124,63 @@ export interface RecalledFact {
 
 interface SearchResult {
   score?: number;
+  timestamp?: unknown;
+  created_at?: unknown;
   observation?: {
     narrative?: unknown;
     facts?: unknown;
     title?: unknown;
     type?: unknown;
+    timestamp?: unknown;
+    created_at?: unknown;
   };
 }
 
-function parseSearchResults(body: string, k: number): RecalledFact[] {
+/**
+ * Recall TTL: facts older than this many days are dropped from the snapshot so
+ * stale, long-resolved decisions stop rehydrating every boundary. Default 30
+ * days; set `OMA_RECALL_MAX_AGE_DAYS=0` (or a non-positive value) to disable.
+ * Returns the max age in ms, or null when disabled.
+ */
+function recallMaxAgeMs(): number | null {
+  const raw = process.env.OMA_RECALL_MAX_AGE_DAYS;
+  const days = raw === undefined ? 30 : Number(raw);
+  if (!Number.isFinite(days) || days <= 0) return null;
+  return days * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * Best-effort timestamp extraction from a search result. AgentMemory's response
+ * envelope is not contractually fixed across versions, so several candidate
+ * field names / locations are probed. Numeric epoch seconds are normalised to
+ * ms. Returns null when no parseable timestamp is present — callers then keep
+ * the fact (TTL filtering is fail-open, never dropping facts of unknown age).
+ */
+function extractTimestampMs(entry: SearchResult): number | null {
+  const obs = entry.observation ?? {};
+  const candidates: unknown[] = [
+    obs.timestamp,
+    obs.created_at,
+    entry.timestamp,
+    entry.created_at,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return candidate < 1e12 ? candidate * 1000 : candidate;
+    }
+    if (typeof candidate === "string" && candidate.trim()) {
+      const parsed = Date.parse(candidate);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+export function parseSearchResults(
+  body: string,
+  k: number,
+  nowMs: number = Date.now(),
+): RecalledFact[] {
   let parsed: { results?: unknown };
   try {
     parsed = JSON.parse(body) as { results?: unknown };
@@ -164,12 +194,20 @@ function parseSearchResults(body: string, k: number): RecalledFact[] {
     return Number.isFinite(raw) ? raw : 1;
   })();
 
+  const maxAgeMs = recallMaxAgeMs();
+  const cutoffMs = maxAgeMs === null ? null : nowMs - maxAgeMs;
+
   const facts: RecalledFact[] = [];
   for (const entry of parsed.results as SearchResult[]) {
     const score = typeof entry.score === "number" ? entry.score : 0;
     // Raw `/observe` envelopes score near-zero (~0.006); enriched facts score
     // in the single digits. Drop the noise floor so the snapshot stays useful.
     if (score < minScore) continue;
+    // TTL: drop facts older than the cutoff (fail-open on unknown age).
+    if (cutoffMs !== null) {
+      const tsMs = extractTimestampMs(entry);
+      if (tsMs !== null && tsMs < cutoffMs) continue;
+    }
     const obs = entry.observation ?? {};
     const narrative =
       typeof obs.narrative === "string" && obs.narrative.trim()
@@ -196,17 +234,30 @@ function parseSearchResults(body: string, k: number): RecalledFact[] {
 export async function recallFacts(
   query: string,
   k = 5,
+  projectDir: string = process.cwd(),
 ): Promise<RecalledFact[]> {
   if (!query.trim()) return [];
-  if (!(await isAgentMemoryReachable())) return [];
-  const url = endpointUrl();
-  if (!url) return [];
-
+  // The whole body is guarded so this honors its "never throws" contract: the
+  // reachability probe and endpoint resolution can throw under load (e.g. a
+  // socket error from the shared daemon), and an unguarded throw here blanks the
+  // boundary snapshot the hook would otherwise emit. Degrade to local-only.
   try {
+    const adapter = currentMemoryAdapter(projectDir);
+    if (adapter) return await adapter.recall(query, k, projectDir);
+    if (!(await isAgentMemoryReachable())) return [];
+    const url = endpointUrl();
+    if (!url) return [];
     const response = await requestAgentMemory(url, "/agentmemory/search", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query, limit: k }),
+      // Match the project identity used by observeWithTimeout. The query's
+      // project-name term is a relevance hint, not a scope restriction.
+      body: JSON.stringify({
+        query,
+        limit: k,
+        project: basename(projectDir),
+        cwd: projectDir,
+      }),
       timeoutMs: 2000,
     });
     if (response.statusCode < 200 || response.statusCode >= 300) return [];
@@ -222,11 +273,15 @@ export async function observeWithTimeout(payload: {
   source: string;
   projectDir?: string;
 }): Promise<boolean> {
-  if (!(await isAgentMemoryReachable())) return false;
-  const url = endpointUrl();
-  if (!url) return false;
-
+  // Fully guarded (best-effort, never throws): the reachability probe and
+  // endpoint resolution can throw under load, and a throw here must not abort
+  // the hook that fired the observe.
   try {
+    const adapter = currentMemoryAdapter(payload.projectDir);
+    if (adapter) return await adapter.observe(payload);
+    if (!(await isAgentMemoryReachable())) return false;
+    const url = endpointUrl();
+    if (!url) return false;
     // AgentMemory's /observe expects a hook-event envelope
     // (hookType, sessionId, project, cwd, timestamp) carrying the content.
     const cwd = payload.projectDir ?? process.cwd();

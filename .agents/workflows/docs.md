@@ -1,15 +1,13 @@
 ---
 name: docs
-description: Documentation drift detection and sync via `oma-docs`. Verify mode finds broken refs in all repo markdown (default glob `**/*.md`), sync mode proposes patches for docs affected by a git diff.
+description: Documentation drift detection and sync via `oma-docs`. Verify mode finds broken refs in all repo markdown (default glob `**/*.md`), sync mode proposes patches for docs affected by a git diff, i18n mode surfaces stale translations, and lint mode checks CJK em-dash style plus wrong-language placeholders across all locales.
 disable-model-invocation: true
 ---
 
-# MANDATORY RULES: VIOLATION IS FORBIDDEN
-
 - **Response language follows `language` setting in `.agents/oma-config.yaml` if configured.**
-- **NEVER skip steps.** Execute from Step 1 in order.
-- **Never auto-apply sync patches.** Sync mode is always interactive: `[y]` confirm required per doc.
-- **Never modify `.agents/`.** SSOT protection applies in all modes.
+- Follow `.agents/skills/_shared/core/execution-policy.md` for authorization, clarification, verification, and completion. Execute required steps on the selected path in dependency order; apply documented branch and skip conditions.
+- **Sync is proposal-only unless edits are authorized.** Follow the execution policy: an explicit request to update the scoped docs authorizes those patches; otherwise present proposals and obtain authorization before applying.
+- **Never modify `.agents/` definitions.** SSOT protection covers skills, workflows, rules, agents, and config, in all modes. Generated artifacts under `.agents/results/` and `.agents/state/` are not SSOT — never delete them to "restore" protection.
 - **Follow the host-LLM contract** in `.agents/skills/oma-docs/SKILL.md`: the CLI emits structured data; this workflow performs natural-language synthesis, severity grouping, and patch drafting on top of the JSON output.
 
 ---
@@ -20,7 +18,7 @@ disable-model-invocation: true
 
 ## L1 Decision Events
 
-Use the `oma_emit` helper documented in `.agents/skills/_shared/runtime/event-spec.md` before required L1 decision checkpoints. The helper wraps `oma state:emit`.
+Emit required L1 decisions by calling `oma state emit` directly, as documented in `.agents/skills/_shared/runtime/event-spec.md`.
 
 ---
 
@@ -31,6 +29,8 @@ Inspect the user's request to select a mode:
 | Mode | Triggers |
 |------|----------|
 | `sync` | Prompt mentions `sync`, "동기화", "patch docs", "update docs after change", or supplies a git diff range (e.g. `HEAD~1..HEAD`, `main..feature`). |
+| `i18n` | Prompt mentions translation drift, stale/missing translations, "번역 드리프트", "translations out of date". |
+| `lint` | Prompt mentions translated-doc style lint, em-dash cleanup, CJK style anti-patterns, or wrong-language placeholders in translations. |
 | `verify` | Default. Use when the request is about checking, auditing, or validating docs. |
 
 If intent is ambiguous, ask once:
@@ -42,6 +42,8 @@ Run `oma docs verify` (drift check) or `oma docs sync` (propose patches for a gi
 Capture optional arguments from the prompt:
 - **verify**: glob path (e.g. `docs/**/*.md`, `cli/README.md`), `--no-urls`, `--urls-sync`, `--report-file <path>`.
 - **sync**: git diff range (default: staged, fallback `HEAD~1..HEAD`).
+- **i18n**: `--min-severity <CRITICAL|HIGH|MEDIUM|LOW>` (default `MEDIUM`).
+- **lint**: `--locales <list>` narrows only the CJK em-dash rule (default `ko,ja,zh`); wrong-language placeholder detection still scans every locale.
 
 ---
 
@@ -57,7 +59,6 @@ Capture optional arguments from the prompt:
 
 ## Step 3A: Verify Mode
 
-// turbo
 Run the deterministic drift check and capture JSON for downstream synthesis:
 
 ```bash
@@ -100,7 +101,23 @@ oma docs sync HEAD~5..HEAD --json
 oma docs sync main..feature-branch --json
 ```
 
-The CLI emits a list of `{ doc, changedFiles, matchedRefs }` entries. **Do not auto-apply anything.** Patch synthesis is your responsibility (host-LLM contract).
+The CLI emits a list of `{ doc, changedFiles, matchedRefs }` entries. Patch synthesis is your responsibility (host-LLM contract); apply patches only within the authorized edit scope.
+
+---
+
+## Step 3C: i18n / Lint Mode
+
+Both are report-only — the CLI never edits translations.
+
+```bash
+# Structural drift between web/docs (EN) and web/i18n/{lang}
+oma docs i18n --json --min-severity MEDIUM
+
+# Content-level style anti-patterns in CJK translations
+oma docs lint --json
+```
+
+Host-LLM contract: prioritize CRITICAL/HIGH drift pairs and hand each to `oma-translation` in diff-sync mode; for lint issues, restructure flagged sentences via `oma-translation` when translation edits are authorized; otherwise report proposals. Never bulk-retranslate.
 
 ---
 
@@ -126,20 +143,20 @@ For each candidate doc:
 1. Read the doc itself.
 2. Read `git diff` for the listed `changedFiles`.
 3. Draft a unified-diff patch reflecting the code change. Keep the patch minimal: only update text that the diff actually invalidates.
-4. Present each patch to the user with the prompt template:
+4. Prepare and present the patches. If scoped edits are already authorized, proceed without another approval. Otherwise use the prompt template for the unresolved patch decision:
 
    ```
    [y] apply  [n] skip  [d] show diff  [s] show full proposal
    ```
 
-5. After each `[y]` or `[n]` decision, emit and verify the required patch approval decision:
+5. Before applying or skipping each patch, emit and verify the required patch approval decision. Substitute the actual doc path, intended action, and authorization source (existing request or new choice); do not emit the literal template:
 
    ```bash
-   oma_emit "decision.made" '{"subject":"docs.sync-patch-approval","decision":"Apply or skip the proposed documentation sync patch for this document.","rationale":"The user reviewed the proposed doc patch and made an explicit per-document decision."}'
-   oma state:verify --workflow docs --checkpoint sync-patch-approval
+   oma state emit "decision.made" '{"subject":"docs.sync-patch-approval","decision":"<apply|skip>: <doc path>","rationale":"<existing scoped edit request or new user choice authorizing this action>"}'
+   oma state verify --workflow docs --checkpoint sync-patch-approval
    ```
 
-6. On `[y]`, apply via `git apply` or by writing the doc directly. After applying any patches, regenerate the index:
+6. Apply authorized patches via `git apply` or by writing the doc directly. After applying the patch batch, regenerate the index once:
 
    ```bash
    oma docs verify --json > /dev/null
@@ -177,7 +194,7 @@ Tell the user:
 ## Docs Sync Report
 - Range: <range>
 - Candidate docs: N
-- Applied patches: M (user-confirmed)
+- Applied patches: M (authorized)
 - Skipped: K (user declined or no actionable change)
 - Index regenerated: docs/generated/doc-refs.json
 ```
@@ -208,6 +225,8 @@ Tell the user:
 | `/docs sync` | Propose patches for staged changes. |
 | `/docs sync HEAD~5..HEAD` | Propose patches for a commit range. |
 | `/docs sync main..feature` | Propose patches for a branch diff. |
+| `/docs i18n` | Report stale/missing translations (severity ≥ MEDIUM). |
+| `/docs lint` | Report CJK style issues in translated docs. |
 
 ---
 

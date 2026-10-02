@@ -1,35 +1,22 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 import { recallFacts } from "./agentmemory-client.ts";
-import { agyConversationId, agyProjectDir, isAgyInput } from "./agy-input.ts";
-import { resolveGitRoot } from "./fs-utils.ts";
-import { syncGrokContext } from "./grok-context.ts";
+import { agyConversationId, isAgyInput } from "./agy-input.ts";
+import { evolutionNoticeLines } from "./evolution-notice.ts";
 import { makePromptOutput } from "./hook-output.ts";
 import { writeInjectLog } from "./inject-log.ts";
+import { normalizePromptInput } from "./prompt-input.ts";
 import { emitEvent, type OmaEvent, readEvents } from "./state-emit.ts";
 import { getActiveSid, readIndex, setLastSession } from "./state-marker.ts";
 import type { HandlerCtx, HandlerResult, HookInput, Vendor } from "./types.ts";
+import { getProjectDir, inferVendorFromScriptPath } from "./vendor-detect.ts";
 import { type MemoryFact, renderStateSnapshot } from "./vendor-renderer.ts";
-
-function inferVendorFromScriptPath(): Vendor | null {
-  const path = import.meta.filename;
-  if (path.includes(`${join(".gemini", "antigravity-cli", "hooks")}`))
-    return "antigravity";
-  if (path.includes(`${join(".cursor", "hooks")}`)) return "cursor";
-  if (path.includes(`${join(".qwen", "hooks")}`)) return "qwen";
-  if (path.includes(`${join(".claude", "hooks")}`)) return "claude";
-  if (path.includes(`${join(".gemini", "hooks")}`)) return "gemini";
-  if (path.includes(`${join(".codex", "hooks")}`)) return "codex";
-  if (path.includes(`${join(".grok", "hooks")}`)) return "grok";
-  if (path.includes(`${join(".kiro", "hooks")}`)) return "kiro";
-  return null;
-}
 
 function detectVendor(input: Record<string, unknown>): Vendor {
   const event = input.hook_event_name as string | undefined;
   const hookEventName = input.hookEventName as string | undefined;
-  const byScriptPath = inferVendorFromScriptPath();
+  const byScriptPath = inferVendorFromScriptPath(import.meta.filename);
   if (byScriptPath) return byScriptPath;
 
   // agy (Antigravity) sends no hook_event_name; detect by its stdin shape.
@@ -48,7 +35,6 @@ function detectVendor(input: Record<string, unknown>): Vendor {
   }
 
   if (event === "PreInvocation") return "antigravity";
-  if (event === "BeforeAgent") return "gemini";
   if (event === "beforeSubmitPrompt") return "cursor";
   if (
     event === "UserPromptSubmit" &&
@@ -59,45 +45,6 @@ function detectVendor(input: Record<string, unknown>): Vendor {
   }
   if (process.env.QWEN_PROJECT_DIR) return "qwen";
   return "claude";
-}
-
-function getProjectDir(vendor: Vendor, input: Record<string, unknown>): string {
-  let dir: string;
-  switch (vendor) {
-    case "codex":
-    case "cursor":
-      dir = (input.cwd as string) || process.cwd();
-      break;
-    case "gemini":
-      dir = process.env.GEMINI_PROJECT_DIR || process.cwd();
-      break;
-    case "grok":
-      dir =
-        process.env.GROK_WORKSPACE_ROOT ||
-        (input.cwd as string) ||
-        process.cwd();
-      break;
-    case "kiro":
-      dir =
-        process.env.KIRO_PROJECT_DIR || (input.cwd as string) || process.cwd();
-      break;
-    case "antigravity":
-      dir =
-        agyProjectDir(input) ||
-        (input.cwd as string) ||
-        process.env.ANTIGRAVITY_PROJECT_DIR ||
-        process.env.AGY_PROJECT_DIR ||
-        process.env.GEMINI_PROJECT_DIR ||
-        process.cwd();
-      break;
-    case "qwen":
-      dir = process.env.QWEN_PROJECT_DIR || process.cwd();
-      break;
-    default:
-      dir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-      break;
-  }
-  return resolveGitRoot(dir);
 }
 
 function getVendorSid(input: Record<string, unknown>): string {
@@ -152,6 +99,7 @@ export async function onBoundary(
   vendor: Vendor,
   vendorSid: string,
   promptText?: string,
+  forced = false,
 ): Promise<string | null> {
   const idx = readIndex(projectDir);
   const previous = idx.lastSession;
@@ -159,7 +107,9 @@ export async function onBoundary(
     !previous || previous.vendor !== vendor || previous.vendorSid !== vendorSid;
   const statelessTurnFlush = vendor === "kiro" && vendorSid === "unknown";
 
-  if (!boundary && !statelessTurnFlush) {
+  // `forced` = post-compaction SessionStart: the session id is unchanged (no
+  // boundary), but the snapshot was just compacted out of context — re-emit.
+  if (!boundary && !statelessTurnFlush && !forced) {
     setLastSession(projectDir, vendor, vendorSid);
     return null;
   }
@@ -176,7 +126,9 @@ export async function onBoundary(
     vendorSid,
     payload: {
       reason: !boundary
-        ? "stateless-vendor-turn"
+        ? statelessTurnFlush
+          ? "stateless-vendor-turn"
+          : "post-compact-rehydration"
         : previous
           ? "vendor-session-transition"
           : "session-created",
@@ -195,14 +147,21 @@ export async function onBoundary(
   // out, so the snapshot degrades to local L1 events only (design D33/D34).
   const recallQuery = buildRecallQuery(projectDir, recentEvents, promptText);
   const facts: MemoryFact[] = recallQuery
-    ? await recallFacts(recallQuery, 5)
+    ? await recallFacts(recallQuery, 5, projectDir)
     : [];
+  let evolution: string[] = [];
+  try {
+    evolution = evolutionNoticeLines(projectDir);
+  } catch {
+    // The notice is a courtesy; a damaged lineage log must not break the hook.
+  }
   const rendered = renderStateSnapshot({
     vendor,
     sid,
     reason: "vendor/session boundary",
     recentEvents,
     facts,
+    evolution,
   });
 
   // D52: forensic inject audit trail (best-effort, redacted, user-only perms).
@@ -216,11 +175,6 @@ export async function onBoundary(
     facts,
     rendered,
   });
-
-  // Grok ignores prompt-hook stdout, so mirror the snapshot to its session-start
-  // context file (CLAUDE.local.md). Loaded on the next Grok session = close-reopen
-  // resume on Grok. Best-effort; L1 events remain the SSOT.
-  if (vendor === "grok") syncGrokContext(projectDir, rendered);
 
   return rendered;
 }
@@ -243,12 +197,15 @@ export async function run(
 
   const { vendor, cwd: projectDir, sid: vendorSid = "unknown" } = ctx;
   // input.kind === "prompt" is guaranteed by the guard above; the user prompt is
-  // the primary recall signal for boundary rehydration.
+  // the primary recall signal for boundary rehydration. A post-compaction
+  // SessionStart (source === "compact") forces re-emission: the session id is
+  // unchanged, but the snapshot was just compacted out of the context window.
   const rendered = await onBoundary(
     projectDir,
     vendor,
     vendorSid,
     input.prompt,
+    input.source === "compact",
   );
   if (!rendered) return null;
   return { type: "context", additionalContext: rendered };
@@ -272,7 +229,7 @@ async function main() {
   // Delegate to run() — single logic source.
   const hookInput: HookInput = {
     kind: "prompt",
-    prompt: (input.prompt as string) ?? "",
+    prompt: normalizePromptInput(input.prompt),
     cwd: projectDir,
   };
   const ctxVal: HandlerCtx = { vendor, cwd: projectDir, sid: vendorSid };

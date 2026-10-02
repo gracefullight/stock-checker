@@ -26,26 +26,33 @@
       }
     ]
   },
-  "oma-serena-primer": {
+  "oma-code-intelligence-primer": {
     "PreInvocation": [
       {
         "type": "command",
-        "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/serena-primer.ts\"",
+        "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/code-intelligence-primer.ts\"",
         "timeout": 3
       }
     ]
   },
-  "oma-test-filter": {
-    "PreToolUse": [
+  "oma-refactor-guard": {
+    "PostToolUse": [
       {
-        "matcher": "run_command",
+        "matcher": "write_to_file|replace_file_content|notebook_edit",
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/test-filter.ts\"",
+            "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/refactor-guard.ts\"",
             "timeout": 5
           }
         ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/refactor-guard.ts\"",
+        "timeout": 5
       }
     ]
   },

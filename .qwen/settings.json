@@ -1,28 +1,23 @@
 {
   "mcpServers": {
-    "chrome-devtools": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "chrome-devtools-mcp@latest",
-        "--no-usage-statistics",
-        "--isolated"
-      ]
-    },
     "serena": {
-      "command": "serena",
+      "command": "oma",
       "args": [
-        "start-mcp-server",
+        "bridge",
         "--context",
-        "ide",
-        "--project",
-        ".",
-        "--open-web-dashboard",
-        "false"
+        "oma"
       ],
       "env": {
         "SERENA_LOG_LEVEL": "info"
-      }
+      },
+      "trust": true
+    },
+    "aside": {
+      "command": "aside",
+      "args": [
+        "mcp"
+      ],
+      "trust": true
     }
   },
   "privacy": {
@@ -47,11 +42,11 @@
           {
             "name": "oma-hook-PreToolUse",
             "type": "command",
-            "command": "\"$QWEN_PROJECT_DIR/.qwen/hooks/oma-hook.sh\" --vendor 'qwen' --event 'PreToolUse' --matcher 'Bash'",
-            "timeout": 10
+            "command": "\"$QWEN_PROJECT_DIR/.qwen/hooks/oma-hook.sh\" --vendor 'qwen' --event 'PreToolUse' --matcher 'run_shell_command'",
+            "timeout": 15
           }
         ],
-        "matcher": "Bash"
+        "matcher": "run_shell_command"
       }
     ],
     "Stop": [
@@ -61,7 +56,32 @@
             "name": "oma-hook-Stop",
             "type": "command",
             "command": "\"$QWEN_PROJECT_DIR/.qwen/hooks/oma-hook.sh\" --vendor 'qwen' --event 'Stop'",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-PostToolUse",
+            "type": "command",
+            "command": "\"$QWEN_PROJECT_DIR/.qwen/hooks/oma-hook.sh\" --vendor 'qwen' --event 'PostToolUse' --matcher 'write_file|edit|replace'",
             "timeout": 10
+          }
+        ],
+        "matcher": "write_file|edit|replace"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-SessionStart",
+            "type": "command",
+            "command": "\"$QWEN_PROJECT_DIR/.qwen/hooks/oma-hook.sh\" --vendor 'qwen' --event 'SessionStart'",
+            "timeout": 13
           }
         ]
       }
@@ -72,5 +92,14 @@
       "type": "command",
       "command": "'bun' \"$QWEN_PROJECT_DIR/.qwen/hooks/hud.ts\""
     }
+  },
+  "hooksConfig": {
+    "enabled": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(ls *)",
+      "Bash(oma *)"
+    ]
   }
 }

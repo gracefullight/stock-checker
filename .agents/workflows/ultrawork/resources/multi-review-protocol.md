@@ -5,6 +5,39 @@
 
 ---
 
+## Cross-Context Review (CCR) Mandate
+
+**Every review below runs in a fresh, context-isolated reviewer subagent — never inline in the main session, and never batched with implementation work or another review.**
+
+### Scope of this review contract
+Ultrawork is an explicitly selected review workflow. Fresh reviewer contexts separate evaluation from the implementer's reasoning. The twelve review steps remain its current execution contract; ordinary tasks do not activate them automatically.
+
+Do not infer that this review count is optimal for every model or task. Before changing the default contract, compare additional verified findings, completion, latency, and cost across the supported models and task risks using the evaluation guidance in `../../../skills/oma-skill-creation/resources/prompt-evaluation.md`. Keep current evidence and isolation requirements until a revised contract is validated.
+
+### Isolation contract (per review)
+Each reviewer subagent's prompt MUST contain ONLY:
+1. The **durable artifacts** under review, referenced by path so the reviewer reads them fresh: git diff, changed files, `.agents/results/plan-{sessionId}.json`, prior `result-*.md`, and test/lint output.
+2. **That single review's guide section** copied from below.
+
+Each reviewer subagent's prompt MUST NOT contain:
+- the main session's conversation history,
+- the implementation agent's reasoning or self-justification, or
+- any prior review's verdict — **unless** that review's guide explicitly requires chaining a specific prior finding (only the Meta Review, Step 3, does: it audits the Step 2 verdict).
+
+### Verdict output
+The reviewer writes a structured verdict to memory per `.agents/skills/_shared/runtime/memory-protocol.md`:
+
+```
+review: <name> (Step N)
+verdict: PASS | FAIL
+findings: [ { severity: CRITICAL|HIGH|MEDIUM|LOW, file:line, description, fix } ]
+evidence: <artifact paths the reviewer actually read>
+```
+
+The phase coordinator collects these verdicts and folds them into the phase's `result-*.md` and `session-ultrawork.md` records. Dispatch mechanics (native subagent vs `oma agent spawn`) are defined once in the **Cross-Context Review (CCR) Dispatch** section of `ultrawork.md`.
+
+---
+
 ## Review Types Guide
 
 ### 1. Completeness Review (Step 2)
@@ -14,7 +47,8 @@
 
 ### 2. Meta Review (Step 3)
 - **Question**: "Was the review done properly?"
-- **Check**: Self-verify previous review was sufficient
+- **Check**: Verify the Step 2 completeness review was sufficient
+- **Chaining exception**: this reviewer receives the Step 2 verdict as input — auditing it is the job (the only permitted verdict chaining in this protocol)
 - **Pass Condition**: No review gaps confirmed
 
 ### 3. Simplicity Review (Step 4)
@@ -53,15 +87,20 @@
 - **Check**: lint, types, coverage, complexity
 - **Pass Condition**: All quality metrics pass
 
-### 10. Cascade Impact Review (Step 16)
+### 10. UX Flow Review (Step 15)
+- **Question**: "Do the user-facing flows still work end to end?"
+- **Check**: Walk the primary user journeys affected by the diff — routes, navigation, forms, error/empty/loading states
+- **Pass Condition**: No broken or degraded user journey
+
+### 11. Cascade Impact Review (Step 16)
 - **Question**: "Did we break anything elsewhere?"
 - **Check**: Use find_referencing_symbols for impact scope
 - **Pass Condition**: No cascade impact or handled
 
-### 11. Final Review (Step 17)
+### 12. Final Review (Step 17)
 - **Question**: "Is this ready to deploy?"
 - **Check**: Complete checklist final verification
-- **Pass Condition**: User final approval
+- **Pass Condition**: Readiness criteria in `phase-gates.md` → SHIP_GATE are met; authorization follows the shared execution policy
 
 ---
 

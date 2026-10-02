@@ -1,6 +1,6 @@
 ---
 name: oma-recap
-description: Analyze conversation histories from multiple AI tools (Grok, Claude, Codex, Qwen, Cursor, Antigravity) and generate themed daily/period work summaries. Filter by date or time window.
+description: "Summarize AI conversation histories for a specified date or period. Use for daily work recaps and cross-tool activity summaries."
 ---
 
 # AI Tool Conversation History Summary
@@ -24,8 +24,8 @@ Collect AI tool conversation history for a date or window and synthesize it into
 
 ### When NOT to use
 - Git commit-based code change retrospective -> use `oma retro`
-- Real-time agent monitoring -> use `oma dashboard`
-- Productivity metrics -> use `oma stats`
+- Real-time agent monitoring -> use `oma dashboard terminal`
+- Productivity metrics -> use `oma stats get`
 
 ### Expected inputs
 - Date, relative date, time window, or tool filter
@@ -56,14 +56,14 @@ Collect AI tool conversation history for a date or window and synthesize it into
 
 ### Scenes
 1. **PREPARE**: Resolve time range and tool filters.
-2. **ACQUIRE**: Collect history through CLI or fallback.
-3. **REASON**: Group by content, infer themes/projects, decisions, artifacts, and tool-switching patterns.
+2. **ACQUIRE**: Collect history through CLI or fallback; retain completion evidence where available.
+3. **REASON**: Group by content and classify each item as requested, in progress, or completed from its evidence.
 4. **ACT**: Write recap Markdown in the required format.
-5. **VERIFY**: Check TL;DR, grouping, language, and output path.
+5. **VERIFY**: Check that every completion claim has direct evidence, then check grouping, language, and output path.
 6. **FINALIZE**: Save and display summary.
 
 ### Transitions
-- If no date is specified, use today.
+- If no date is specified, use today via `--date` (bare `--window` is a rolling window ending now, not calendar-aligned).
 - If window is 3 days or longer, group by project instead of day chronology.
 - If CLI is unavailable, use Claude fallback only and report scope limits.
 - If tasks are under threshold, group them into Miscellaneous or Side Projects.
@@ -85,7 +85,7 @@ Collect AI tool conversation history for a date or window and synthesize it into
 | Resolve date/window | `INFER` | Natural-language date rules |
 | Collect history | `CALL_TOOL` | `oma recap --json` or `jq` fallback |
 | Read extracted records | `READ` | Conversation history |
-| Group themes/projects | `INFER` | Time/content grouping rules |
+| Group and classify themes/projects | `INFER` | Time/content rules plus prompt, progress, completion, receipt, or artifact evidence |
 | Validate output shape | `VALIDATE` | Daily or multi-day template |
 | Write recap | `WRITE` | `.agents/results/recap/` |
 | Report summary | `NOTIFY` | Displayed recap |
@@ -97,9 +97,9 @@ Collect AI tool conversation history for a date or window and synthesize it into
 
 ### Canonical command path
 ```bash
-oma recap --json
-oma recap --window 7d --json
 oma recap --date YYYY-MM-DD --json
+oma recap --window 7d --json
+oma recap --json  # rolling last 24h, not "today"
 ```
 
 ### Resource scope
@@ -120,16 +120,17 @@ oma recap --date YYYY-MM-DD --json
 
 ### Guardrails
 
-1. **TL;DR required**: Top 3 lines of "what I accomplished". Project name + outcome. No tool names or technical details.
-2. **Overview**: After TL;DR, describe the flow. Start with "I" as subject.
-3. **Daily**: themes by time block (15+ min). Rest goes to "Miscellaneous".
-4. **Multi-day (3d+)**: sections by project, ordered by activity. Read like a sprint report, not a daily log.
-5. **2-4 bullets per theme/project**: Concise essentials only. Don't enumerate every step.
-6. **Themes by content**: Group by actual work, not by tool.
-7. **Time range (daily only)**: `(AM/PM/Evening HH:MM~HH:MM)`. AM: ~12:00, PM: 12:00~18:00, Evening: 18:00~.
-8. **Save results**: Write markdown to `.agents/results/recap/`.
-9. **Response language**: Follows `language` setting in `.agents/oma-config.yaml` if configured.
-10. **No em dashes**: Use commas, periods, or parentheses instead of `—` (em dash).
+1. **Evidence status**: A prompt alone proves a request, not a result. Mark work **completed** only with an explicit completion/result message, a receipt, or an artifact that supports the stated outcome. Mark it **in progress** with progress evidence; otherwise call it **requested**. Do not infer completion from a tool invocation or elapsed time.
+2. **TL;DR required**: Top 3 supported outcomes. Use "completed" only when the evidence-status rule permits it; otherwise summarize requested or in-progress work plainly. Project name + status/outcome. No tool names or unnecessary detail.
+3. **Overview**: After TL;DR, describe the flow. Start with "I" as subject and preserve evidence status.
+4. **Daily**: themes by time block (15+ min). Rest goes to "Miscellaneous".
+5. **Multi-day (3d+)**: sections by project, ordered by activity. Read like a sprint report, not a daily log.
+6. **2-4 bullets per theme/project**: Concise essentials only. Don't enumerate every step.
+7. **Themes by content**: Group by actual work, not by tool.
+8. **Time range (daily only)**: `(AM/PM/Evening HH:MM~HH:MM)`. AM: ~12:00, PM: 12:00~18:00, Evening: 18:00~.
+9. **Save results**: Write markdown to `.agents/results/recap/`.
+10. **Response language**: Follows `language` setting in `.agents/oma-config.yaml` if configured.
+11. **No em dashes**: Use commas, periods, or parentheses instead of `—` (em dash).
 
 ### Process
 
@@ -142,23 +143,27 @@ Determine the target date or window from the user's natural language input. Defa
 - Specific date mentions (month + day, or full date) → convert to `--date YYYY-MM-DD`
 - Relative weekday references (last Monday, this Friday, etc.) → calculate the date
 - Period references (this week, last 3 days, past 2 weeks, etc.) → convert to `--window Nd`
-- No date specified → today (`--window 1d`)
+- No date specified → today, resolved to `--date YYYY-MM-DD` (bare `--window 1d` is a rolling 24-hour window ending now, not the calendar day)
+- The CLI caps windows at 30 days (longer values are trimmed with a warning) — when a requested period gets capped, say so in the recap
 
 ### 2. Collect Data
 
 Extract normalized conversation history via CLI.
 
 ```bash
-# Default (today, all tools)
+# Today (calendar day, all tools)
+oma recap --date $(date +%F) --json
+
+# Last 24 hours (rolling window ending now)
 oma recap --json
 
-# Time window
+# Time window (rolling, ends now; capped at 30d)
 oma recap --window 7d --json
 
 # Specific date
 oma recap --date 2026-04-10 --json
 
-# Tool filter (supported: grok, claude, codex, qwen, cursor, antigravity)
+# Tool filter (supported: grok, claude, codex, gemini, qwen, cursor, antigravity)
 oma recap --tool claude,codex --json
 ```
 
@@ -196,7 +201,7 @@ Read **all** extracted data and analyze with the following criteria:
 
 **Cross-tool analysis:**
 - Track workflow when multiple tools are used in the same time window
-- Example: "Designed in Gemini -> Implemented in Claude -> Reviewed in Codex"
+- Example: "Designed in Antigravity -> Implemented in Claude -> Reviewed in Codex"
 - Derive insights from tool-switching patterns
 
 **Extract from each theme:**

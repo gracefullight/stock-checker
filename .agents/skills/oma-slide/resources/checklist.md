@@ -5,7 +5,7 @@ Every item maps to a SKILL.md guardrail or the validator contract in `fixed-stag
 
 ## Gate (must pass)
 
-- [ ] `oma slide validate --dir "$DECK_DIR" --format json` passes, or the surfaced diff was explicitly approved by the user after 3 auto-fix iterations
+- [ ] `oma slide validate --workspace "$DECK_DIR" --output json` passes, or the surfaced diff was explicitly approved by the user after 3 auto-fix iterations
 - [ ] Every slide root carries `data-om-validate` (validator contract)
 - [ ] All slides authored at the fixed 1920×1080 stage in px units (no vw/vh/% layout)
 - [ ] All `<img src>` / `<video src>` point to local `./assets/<file>` only — no remote URLs
@@ -19,12 +19,16 @@ Every item maps to a SKILL.md guardrail or the validator contract in `fixed-stag
 
 ## Delivery artifacts
 
-- [ ] `oma slide bundle --dir "$DECK_DIR"` produced `out/deck.html` and it opens in a browser
+<!-- oma-docs:ignore-start -->
+- [ ] `oma slide bundle --workspace "$DECK_DIR"` produced `out/deck.html` and it opens in a browser
+<!-- oma-docs:ignore-end -->
 - [ ] If `./assets/` contains video: user was warned the bundle is not fully self-contained
 - [ ] PPTX export (if requested) labeled **experimental** in user-facing output
 - [ ] Canva export (if performed): design URL included in the delivery summary
 
 ## Delivery summary (Phase 6c)
 
+<!-- oma-docs:ignore-start -->
 - [ ] Reported: workdir path, slide file list, `out/deck.html` path, export paths, validate status
+<!-- oma-docs:ignore-end -->
 - [ ] Reported: any `TODO(oma-deferred)` items (e.g., unresolved image generation placeholders)

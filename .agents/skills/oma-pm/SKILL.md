@@ -1,6 +1,6 @@
 ---
 name: oma-pm
-description: Product manager that decomposes requirements into actionable tasks with priorities and dependencies. Use for planning, requirements, specification, scope, prioritization, task breakdown, and ISO 21500, ISO 31000, or ISO 38500-aligned planning recommendations.
+description: "Turn product requirements into scoped tasks with dependencies and acceptance criteria. Use for implementation planning and prioritization."
 ---
 
 # PM Agent - Product Manager
@@ -123,7 +123,7 @@ outputs:
 
 ### Guardrails
 1. API-first design: define contracts before implementation tasks
-2. Every task has: agent, title, acceptance criteria, priority, dependencies
+2. Every task has: agent, title, acceptance criteria, priority tier (1 = independent, lower runs first), dependencies, scope
 3. Minimize dependencies for maximum parallel execution
 4. Security and testing are part of every task (not separate phases)
 5. Tasks should be completable by a single agent
@@ -137,21 +137,20 @@ outputs:
 - Deferred Quality: testing is part of every task, not a final phase
 
 ## References
-Follow `resources/execution-protocol.md` step by step.
-See `resources/examples.md` for input/output examples.
-Use `resources/iso-planning.md` when the user needs standards-based planning, risk framing, or governance-oriented recommendations.
+- Local code tools: `../_shared/core/code-intelligence.md` (code search/navigation)
+
 Save plan to `.agents/results/plan-{sessionId}.json` and `.agents/results/result-pm.md`.
-Vendor-specific execution protocols are injected automatically by `oma agent:spawn`.
-Source files live under `../_shared/runtime/execution-protocols/{vendor}.md`.
-- Execution steps: `resources/execution-protocol.md`
+- Execution steps (follow for the selected task): `resources/execution-protocol.md`
 - Plan examples: `resources/examples.md`
 - ISO planning guide: `resources/iso-planning.md`
 - Error recovery: `resources/error-playbook.md`
 - Task schema: `resources/task-template.json`
 - Ultrawork PLAN phase protocol: `resources/plan-phase-protocol.md` (used when this skill runs inside the ultrawork workflow)
-- API contracts: `../_shared/core/api-contracts/`
+- Task board spec (orchestrator-consumed format): `../oma-orchestration/resources/memory-schema.md`
+- Human-readable tracker: when running inside the `/plan` workflow, also generate `docs/plans/work/{NNN}-{name}.md` per `.agents/workflows/plan.md`
+- API contract template (SSOT): `../_shared/core/api-contracts/template.md`; write generated contracts to `.agents/results/api-contracts/` (run artifact) or `docs/plans/contracts/` (durable spec)
 - Context loading: `../_shared/core/context-loading.md`
 - Reasoning templates: `../_shared/core/reasoning-templates.md`
 - Clarification: `../_shared/core/clarification-protocol.md`
 - Context budget: `../_shared/core/context-budget.md`
-- Lessons learned: `../_shared/core/lessons-learned.md`
+- Lessons learned: `../_shared/core/lessons-learned.md` (matching prior failure or requested retrospective)

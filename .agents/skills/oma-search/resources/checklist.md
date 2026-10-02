@@ -12,7 +12,7 @@ Run this checklist before presenting results to the user.
 - [ ] docs route: Context7 library resolved, or fallback triggered with notice
 - [ ] web route: native search attempted first, `oma search fetch` only on failure
 - [ ] code route: platform detected from URL or default to gh
-- [ ] local route: delegated to Serena without duplication
+- [ ] local route: configured provider used, or native fallback recorded without automatic provider setup
 
 ## Result Quality
 - [ ] Results are relevant to the original query
@@ -22,6 +22,7 @@ Run this checklist before presenting results to the user.
 
 ## Trust Scoring
 - [ ] Every non-local result has a trust label attached
+- [ ] Scores resolved via `oma search trust` (agent overrides are upgrade-only: Context7 docs, official-site)
 - [ ] Unknown domains labeled as `—`, not excluded
 - [ ] `--strict` mode correctly filters below 0.85
 - [ ] `--strict` with 0 results shows rerun suggestion

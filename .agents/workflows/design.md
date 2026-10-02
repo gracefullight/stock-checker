@@ -4,17 +4,11 @@ description: Design workflow that creates design systems, DESIGN.md, and design 
 disable-model-invocation: true
 ---
 
-# MANDATORY RULES: VIOLATION IS FORBIDDEN
-
 - **Response language follows `language` setting in `.agents/oma-config.yaml` if configured.**
-- **NEVER skip phases.** Execute from Phase 1 in order.
+- Follow `.agents/skills/_shared/core/execution-policy.md` for authorization, clarification, verification, and completion. Execute required steps on the selected path in dependency order; apply documented branch and skip conditions.
 - **Do NOT write implementation code.** This workflow produces DESIGN.md, design tokens, and design guidance, not application code.
-- **You MUST use MCP tools throughout the workflow.**
-  - Use code analysis tools (`get_symbols_overview`, `find_symbol`, `search_for_pattern`) to analyze the existing codebase.
-  - Use memory tools (write/edit) to record design results.
-  - Memory path: configurable via `memoryConfig.basePath` (default: `.serena/memories`)
-  - Tool names: configurable via `memoryConfig.tools` in `.agents/mcp.json`
-  - Do NOT use raw file reads or grep as substitutes.
+- Follow `.agents/skills/_shared/core/code-intelligence.md`: discover the configured provider’s tools; use native search only for paths outside this project or ignored paths when unavailable or timed out. Do not install a provider or track a repository automatically.
+- Use native file tools and `.agents/skills/_shared/runtime/memory-protocol.md` for durable coordination state; code-intelligence memory tools are not required.
 
 ---
 
@@ -48,6 +42,9 @@ Phase 2 Branch B. No vendor match = no branch activated.
 
 **Do NOT proceed until design context is established.**
 
+If the target is an existing site or application, load
+`.agents/skills/oma-design/resources/redesign-protocol.md`, audit the current experience, and classify the request as Preserve or Overhaul before continuing. Preserve URLs, navigation labels, form field names, and brand marks unless the selected mode explicitly authorizes changing them.
+
 ---
 
 ## Phase 2: EXTRACT (Optional)
@@ -79,7 +76,7 @@ Otherwise, if the user request is vague (< 3 sentences, no section
 details):
 - Load `.agents/skills/oma-design/resources/prompt-enhancement.md`
 - Transform into section-by-section specification
-- Present enhanced prompt to user for confirmation
+- Present the enhanced prompt; clarify only material assumptions not resolved by the existing request
 
 If already detailed: skip to Phase 4.
 
@@ -87,7 +84,8 @@ If already detailed: skip to Phase 4.
 
 ## Phase 4: PROPOSE (Multi-Concept)
 
-// turbo
+Start with a one-line Design Read: `Reading this as: <page kind> for <audience>, with a <vibe> language.` If that reading is genuinely ambiguous, ask exactly one clarifying question before proposing directions.
+
 Default (no vendor seed): present 2-3 distinct design directions. Each
 direction includes:
 - Color palette (5-7 colors with semantic names and functional roles)
@@ -102,13 +100,12 @@ anti-patterns flagged in the Phase 2 pre-audit. Multi-vendor merges
 require the dimension-level selection dialog from
 `.agents/skills/oma-design/resources/getdesign-fetcher.md`.
 
-**You MUST get user confirmation on the chosen direction before proceeding.**
+Apply `.agents/skills/_shared/core/execution-policy.md`: proceed when the requested work or decision is already authorized; ask only for a material missing decision or new authorization.
 
 ---
 
 ## Phase 5: GENERATE
 
-// turbo
 Based on the chosen direction:
 1. Write `DESIGN.md` following `.agents/skills/oma-design/resources/design-md-spec.md` (9 sections,
    including the mandatory Agent Prompt Guide in Section 9)
@@ -120,7 +117,8 @@ Based on the chosen direction:
    - CSS Custom Properties
    - Tailwind config extensions
    - shadcn/ui theme variables (if applicable)
-4. Generate component code if requested
+4. For visual assets, follow `.agents/skills/oma-design/resources/asset-strategy.md`: use oma-image first, a deterministic picsum seed second, and a labelled placeholder last. Never fabricate screenshots with styled divs.
+5. Generate component code if requested
 
 ### Responsive-First Rule (MANDATORY)
 ALL output must be responsive by default. Never produce desktop-only layouts.

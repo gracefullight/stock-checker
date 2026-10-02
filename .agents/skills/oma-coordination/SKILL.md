@@ -1,6 +1,6 @@
 ---
 name: oma-coordination
-description: Guide for coordinating PM, Frontend, Backend, Mobile, and QA agents on complex projects via CLI. Use for manual step-by-step coordination and workflow guidance.
+description: "Coordinate assigned specialist tasks and handoffs manually. Use when supervising a multi-agent project step by step."
 ---
 
 # Multi-Agent Workflow Guide
@@ -38,8 +38,7 @@ Guide manual multi-agent coordination for complex work that spans PM, frontend, 
 
 ### Dependencies
 - PM, frontend, backend, mobile, QA, and orchestrator skills
-- `resources/examples.md`
-- CLI `oma agent:spawn` and progress/result memory conventions
+- CLI `oma agent spawn` and progress/result memory conventions
 
 ### Control-flow features
 - Branches by task complexity, priority tiers, dependency ordering, and whether automation is desired
@@ -80,23 +79,27 @@ Guide manual multi-agent coordination for complex work that spans PM, frontend, 
 |--------|---------------|----------|
 | Read request and domains | `READ` | User prompt and project context |
 | Select agent plan | `SELECT` | PM decomposition and priority tiers |
-| Spawn agents | `CALL_TOOL` | `oma agent:spawn` |
-| Monitor progress | `READ` | `progress-{agent}.md` |
+| Spawn agents | `CALL_TOOL` | `oma agent spawn` |
+| Monitor progress | `READ` | `progress-{agent}[-{sessionId}].md` |
 | Validate contracts | `VALIDATE` | API/data model alignment |
 | Notify coordination status | `NOTIFY` | Final coordination summary |
 
 ### Tools and instruments
-- `oma agent:spawn`, PM/frontend/backend/mobile/QA agents
+- `oma agent spawn`, PM/frontend/backend/mobile/QA agents
 - Memory/progress/result files
-- Serena MCP for exploration and modification when used by specialists
+- Configured code intelligence, with native fallback per `../_shared/core/code-intelligence.md`
 
 ### Canonical command path
 ```bash
-oma agent:spawn pm "<planning task>" <session-id> -w ./pm
-oma agent:spawn backend "<backend task>" <session-id> -w ./backend &
-oma agent:spawn frontend "<frontend task>" <session-id> -w ./frontend &
+oma agent spawn pm <pm-prompt-file> <session-id> --task-id <plan.pm_task.id> -w ./pm
+oma agent spawn backend <backend-prompt-file> <session-id> --task-id <plan.backend_task.id> -w ./backend &
+oma agent spawn frontend <frontend-prompt-file> <session-id> --task-id <plan.frontend_task.id> -w ./frontend &
 wait
 ```
+
+When native runtime dispatch is available (per-agent target vendor equals the current runtime vendor), prefer the runtime's native subagent path and use `oma agent spawn` as the cross-vendor fallback — same resolution rule as oma-orchestration.
+
+Useful `agent spawn` options: `--vendor <vendor>` (CLI vendor override), `--isolation worktree` (git worktree per spawn, prevents file conflicts), `--read-only` (non-destructive tools only, e.g. for review/QA passes).
 
 ### Resource scope
 | Scope | Resource target |
@@ -120,38 +123,39 @@ wait
 2. Spawn independent tasks in parallel (same priority tier)
 3. Define API contracts before frontend/mobile tasks
 4. QA review is always the final step
-5. Assign separate workspaces to avoid file conflicts
-6. Always use Serena MCP tools as the primary method for code exploration and modification
+5. Assign separate workspaces to avoid file conflicts (or use `--isolation worktree` for a git worktree per spawn)
+6. Follow `../_shared/core/code-intelligence.md`: discover configured tools, do not auto-install or track, and use native search only for paths outside this project or ignored paths when unavailable or timed out
 7. Never skip steps in the workflow; follow each step sequentially without omission
 
 ### Workflow
 
-### Step 1: Plan with PM Agent
+#### Step 1: Plan with PM Agent
 
 PM Agent analyzes requirements, selects tech stack, creates task breakdown with priorities.
 
-### Step 2: Spawn Agents by Priority
+#### Step 2: Spawn Agents by Priority
 
-Spawn agents via CLI:
+Resolve the dispatch path per agent, then spawn:
 
-1. Use `oma agent:spawn` for each task
-2. CLI selection follows `model_preset` (and per-agent overrides) in oma-config.yaml
-3. Spawn all same-priority tasks in parallel using background processes
+1. Resolve the per-agent target vendor from oma-config.yaml (`agents:` override, else `model_preset`)
+2. If the target vendor equals the current runtime vendor and a native subagent path exists, use native dispatch
+3. Otherwise use `oma agent spawn` for that agent
+4. Spawn all same-priority tasks in parallel using background processes
 
 ```bash
 # Example: spawn backend and frontend in parallel
-oma agent:spawn backend "task description" session-id -w ./backend &
-oma agent:spawn frontend "task description" session-id -w ./frontend &
+oma agent spawn backend backend-prompt.md session-id --task-id plan.backend_task.id -w ./backend &
+oma agent spawn frontend frontend-prompt.md session-id --task-id plan.frontend_task.id -w ./frontend &
 wait
 ```
 
-### Step 3: Monitor & Coordinate
+#### Step 3: Monitor & Coordinate
 
-- Use memory read tool to poll `progress-{agent}.md` files
+- Use memory read tool to poll `progress-{agent}[-{sessionId}].md` files (spawned agents write the session-suffixed form)
 - Verify API contracts align between agents
 - Ensure shared data models are consistent
 
-### Step 4: QA Review
+#### Step 4: QA Review
 
 Spawn QA Agent last to review all deliverables. Address CRITICAL issues by re-spawning agents.
 
@@ -160,5 +164,3 @@ Spawn QA Agent last to review all deliverables. Address CRITICAL issues by re-sp
 For fully automated execution without manual spawning, use the **orchestrator** skill instead.
 
 ## References
-
-- Workflow examples: `resources/examples.md`

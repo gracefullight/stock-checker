@@ -21,8 +21,9 @@ Most likely causes:
 ### 4. Missing or broken tables
 - Simple tables: GFM pipe syntax.
 - Tables with `colspan` / `rowspan`: kordoc falls back to HTML `<table>`. This is expected and correct.
-- Nested tables: large nested tables become separate blocks; small ones get flattened into the parent cell.
+- Nested tables: kordoc emits the nested `<table>` inside its parent cell. The post-processor preserves the complete balanced outer table as HTML rather than flattening it and risking structural loss.
 - If tables are completely absent, confirm the source file actually contains tables (sometimes they are images).
+- `flatten-tables.ts` scans balanced outer `<table>...</table>` blocks. If a block contains a nested table, it is kept as HTML so parent/child structure and closing tags remain intact.
 
 ### 5. Hyperlinks look wrong
 kordoc sanitizes links (XSS defense). If a legitimate link is stripped, verify the original URL scheme: only `http://`, `https://`, `mailto:`, and relative paths are preserved by default.
@@ -45,13 +46,14 @@ kordoc sanitizes links (XSS defense). If a legitimate link is stripped, verify t
 
 ### 9. Reproducibility vs freshness tradeoff
 - `bunx kordoc@latest` always pulls latest. Fixes land fast, but outputs may drift. A bare `bunx kordoc` reuses the bunx cache and can be arbitrarily old; always include `@latest` or a pinned version.
-- For long-running projects, pin a version: edit `config/hwp-config.yaml`:
+- For long-running projects, pin a version under `hwp:` in `.agents/oma-config.yaml` (not `config/hwp-config.yaml` — `oma update` overwrites the skill file):
   ```yaml
-  version:
-    channel: pinned
-    pinned: "2.4.0"
+  hwp:
+    version:
+      channel: pinned
+      pinned: "4.7.3"
   ```
-  Then invoke via `bunx kordoc@2.4.0 ...` in commands.
+  Then invoke via `bunx kordoc@4.7.3 ...` in commands. Check the current release with `npm view kordoc version` before pinning — the example above may itself be stale.
 
 ## kordoc limitations (upstream-owned)
 - Inline password entry for encrypted HWP: not yet supported.
@@ -64,4 +66,5 @@ kordoc sanitizes links (XSS defense). If a legitimate link is stripped, verify t
 | Input is `.pdf` | `oma-pdf` |
 | Input is `.xlsx` / `.docx` | `bunx kordoc@latest` directly (skill not advertising) |
 | Need OCR of scanned documents | Out of scope; use a dedicated OCR pipeline |
-| Need to author / fill HWPX | `bunx kordoc@latest fill ...` directly (skill not advertising) |
+| Need to author / edit HWPX (generate, fill, seal, patch) | `bunx kordoc@latest generate|fill|seal|patch ...` directly (skill not advertising; see Scope Reminder table in `execution-protocol.md`) |
+| Need personal-data masking, notation lint, structure validation, or SVG render | `bunx kordoc@latest redact|lint|validate|render ...` directly (skill not advertising) |

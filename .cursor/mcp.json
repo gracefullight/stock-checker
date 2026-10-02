@@ -1,27 +1,21 @@
 {
   "mcpServers": {
     "serena": {
-      "command": "serena",
+      "command": "oma",
       "args": [
-        "start-mcp-server",
+        "bridge",
         "--context",
-        "ide",
-        "--project",
-        ".",
-        "--open-web-dashboard",
-        "false"
+        "oma"
       ],
       "env": {
         "SERENA_LOG_LEVEL": "info"
       }
     },
-    "chrome-devtools": {
-      "command": "npx",
+    "aside": {
+      "type": "stdio",
+      "command": "aside",
       "args": [
-        "-y",
-        "chrome-devtools-mcp@latest",
-        "--no-usage-statistics",
-        "--isolated"
+        "mcp"
       ]
     }
   }

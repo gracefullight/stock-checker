@@ -12,3 +12,62 @@ vendors:
   - antigravity
   - qwen
   - copilot
+
+# Added by oma migration 022 — moved from .agents/skills/*/config/*.yaml, which `oma update` overwrites. Edit freely.
+hwp:
+  version:
+    pinned: 2.4.0
+default_cli: gemini
+
+# Added by oma update — new config keys (template defaults; edit freely)
+translation_voice: balanced
+auto_update_cli: true
+telemetry: false
+providers:
+  code_intelligence: serena
+agents:
+  eval:
+    model: anthropic/claude-sonnet-4-6
+docs:
+  auto_verify: false
+  check_urls: true
+  exclude:
+    - benchmarks/**
+    - web/i18n/**
+scm:
+  conventional_commits: true
+  branching_strategy: github-flow
+  require_pr_for_default_branch: true
+  co_author:
+    enabled: true
+    name: First Fluke
+    email: our.first.fluke@gmail.com
+    enforce_hook: true
+  forbidden_patterns:
+    - "*.env"
+    - "*.env.*"
+    - credentials.json
+    - secrets.yaml
+    - "*.pem"
+    - "*.key"
+    - .env.local
+    - "*.p12"
+    - "*.pfx"
+    - id_rsa*
+    - id_ed25519*
+    - .npmrc
+    - service-account*.json
+    - "*.keystore"
+    - "*.jks"
+    - "*.tfvars"
+    - "*.tfstate"
+    - "*.tfstate.*"
+    - .netrc
+    - .pypirc
+  allowed_exceptions:
+    - "*.example"
+    - "*.sample"
+    - "*.template"
+mcp:
+  devtools_browsers:
+    - aside

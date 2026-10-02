@@ -1,6 +1,6 @@
 ---
 name: oma-mobile
-description: Mobile specialist for Flutter, React Native, and Swift native iOS development. Use for mobile app, Flutter, Dart, React Native, Swift, SwiftUI, iOS, Android, Riverpod, swift-openapi-generator, and widget work.
+description: "Implement Flutter, React Native, or native Swift apps. Use for mobile screens, widgets, platform integrations, and application data flows."
 ---
 
 # Mobile Agent - Cross-Platform Mobile Specialist
@@ -115,40 +115,44 @@ Then run the project's mobile verification commands, typically unit/widget tests
 - May affect permissions, app lifecycle, offline data, or performance.
 
 ### Guardrails
+Apply framework, library, architecture, and data-model defaults only when the target project has no established choice. Scoped edits do not authorize a stack migration or unrelated infrastructure.
 1. Clean Architecture: domain -> data -> presentation
 2. Riverpod/Bloc for state management (no raw setState for complex logic)
 3. Material Design 3 (Android) + iOS HIG (iOS)
 4. All controllers disposed in `dispose()` method
-5. Dio with interceptors for API calls; handle offline gracefully
+5. Use the platform transport with auth/retry/logging interception and offline handling: Flutter uses Dio, React Native uses axios behind TanStack Query, and Swift uses generated `Client` middleware.
 6. 60fps target; test on both platforms
 7. Use Maestro for E2E testing of critical user flows
-8. Swift native: SwiftUI + `@Observable` (Observation framework, iOS 17+) for state management
+8. Swift native: SwiftUI + `@MainActor @Observable` view models (Observation framework, iOS 17+) — non-isolated VMs mutating observed state from a `Task` are a Swift 6 strict-concurrency error
 9. Swift native: use the generated `Client` from `swift-openapi-generator` — never hand-roll `URLRequest`/`JSONDecoder` for API calls
-10. Swift native: follow `App/Core/Features/Shared` project layout
-11. Swift native: iOS Human Interface Guidelines for all UI decisions
-12. Swift native: XCTest/XCUITest for critical flows; cancel `Task` in `deinit` to prevent leaks
+10. Swift native: cache API responses at the Repository layer via a `ResponseCache` actor over `hyperoslo/Cache` — cache DECODED models (never `HTTPBody`), serve stale-while-revalidate on reads, invalidate keys on writes; view models depend on a protocol seam, not the concrete service (see `variants/swift-ios/snippets.md` §10)
+11. Swift native: follow `App/Core/Features/Shared` project layout
+12. Swift native: iOS Human Interface Guidelines for all UI decisions
+13. Swift native: XCTest or Swift Testing for units, XCUITest for critical flows; cancel work via structured `.task {}` (auto-cancels on disappear) — never in `deinit`, which is nonisolated and cannot touch `@MainActor` state under Swift 6 (isolated deinit requires Swift 6.2+)
+14. Swift native: restore edge swipe-back at the route layer — nav-bar-hidden screens (`.toolbar(.hidden, for: .navigationBar)`) lose it, so register push routes via a `swipeBackDestination` wrapper, not per-screen (see `variants/swift-ios/snippets.md` §9)
+15. Flutter: mandate a repository-layer offline-first cache (Drift) — read cached entities then revalidate (stale-while-revalidate), invalidate/refresh affected rows on every write; cache decoded entities at the data layer, never at the Dio transport (see `variants/flutter/snippets.md` §3, §10)
+16. React Native: server state goes through TanStack Query (the repository-layer cache) with explicit `staleTime`/`gcTime` — invalidate affected query keys on every mutation, persist the cache to MMKV for offline; screens consume query/mutation hooks, never call axios directly (see `variants/react-native/snippets.md`)
 
 ## References
-Follow `resources/execution-protocol.md` step by step.
-See `resources/examples.md` for input/output examples.
-Before submitting, run `resources/checklist.md`.
-Vendor-specific execution protocols are injected automatically by `oma agent:spawn`.
-Source files live under `../_shared/runtime/execution-protocols/{vendor}.md`.
-- Execution steps: `resources/execution-protocol.md`
-- Code examples: `resources/examples.md`
-- Code snippets (Flutter/RN): `resources/snippets.md`
+- Execution steps (follow for the selected task): `resources/execution-protocol.md`
 - Code snippets (Swift): `variants/swift-ios/snippets.md`
-- Checklist: `resources/checklist.md`
+- Code snippets (Flutter): `variants/flutter/snippets.md`
+- Code snippets (React Native): `variants/react-native/snippets.md`
+- Checklist (run before handoff): `resources/checklist.md`
 - Error recovery: `resources/error-playbook.md`
-- Tech stack (Flutter/RN): `resources/tech-stack.md`
+- Tech stack index (all platforms): `resources/tech-stack.md`
 - Tech stack (Swift): `variants/swift-ios/tech-stack.md`
+- Tech stack (Flutter): `variants/flutter/tech-stack.md`
+- Tech stack (React Native): `variants/react-native/tech-stack.md`
 - Screen template (Flutter): `resources/screen-template.dart`
 - Screen template (Swift): `resources/screen-template.swift`
+- Screen template (React Native): `resources/screen-template.tsx`
 - API service template (Swift): `variants/swift-ios/api-template.swift`
+- API service template (Flutter): `variants/flutter/api-template.dart`
+- API service template (React Native): `variants/react-native/api-template.ts`
 - Variant registry: `variants/README.md`
 - Context loading: `../_shared/core/context-loading.md`
-- Reasoning templates: `../_shared/core/reasoning-templates.md`
 - Clarification: `../_shared/core/clarification-protocol.md`
 - Context budget: `../_shared/core/context-budget.md`
-- Lessons learned: `../_shared/core/lessons-learned.md`
+- Lessons learned: `../_shared/core/lessons-learned.md` (matching prior failure or requested retrospective)
 - Observability handoff: `../oma-observability/SKILL.md` §Integrations — offline queuing, crash analytics, battery-aware sampling

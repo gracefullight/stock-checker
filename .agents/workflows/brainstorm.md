@@ -4,36 +4,29 @@ description: Design-first ideation workflow that explores user intent, clarifies
 disable-model-invocation: true
 ---
 
-# MANDATORY RULES: VIOLATION IS FORBIDDEN
-
 - **Response language follows `language` setting in `.agents/oma-config.yaml` if configured.**
-- **NEVER skip steps.** Execute from Step 1 in order.
+- Follow `.agents/skills/_shared/core/execution-policy.md` for authorization, clarification, verification, and completion. Execute required steps on the selected path in dependency order; apply documented branch and skip conditions.
 - **Do NOT write any code.** This workflow produces a design document, not implementation.
-- **You MUST use MCP tools throughout the workflow.**
-  - Use code analysis tools (`get_symbols_overview`, `find_symbol`, `search_for_pattern`) to analyze the existing codebase.
-  - Use memory tools (write/edit) to record design results.
-  - Memory path: configurable via `memoryConfig.basePath` (default: `.serena/memories`)
-  - Tool names: configurable via `memoryConfig.tools` in `.agents/mcp.json`
-  - Do NOT use raw file reads or grep as substitutes.
+- Follow `.agents/skills/_shared/core/code-intelligence.md`: discover the configured provider’s tools; use native search only for paths outside this project or ignored paths when unavailable or timed out. Do not install a provider or track a repository automatically.
+- Use native file tools and `.agents/skills/_shared/runtime/memory-protocol.md` for durable coordination state; code-intelligence memory tools are not required.
 
 ---
 
-> **Vendor note:** This workflow executes inline (no subagent spawning). All vendors use their native code analysis and file tools.
+> **Vendor note:** This workflow executes inline (no subagent spawning), with one exception: the Step 5 blind-review escalation path may spawn fresh-context reviewer subagents for high-stakes designs. All vendors otherwise use their native code analysis and file tools.
 
 ---
 
 ## L1 Decision Events
 
-Use the `oma_emit` helper documented in `.agents/skills/_shared/runtime/event-spec.md` before required L1 decision checkpoints. The helper wraps `oma state:emit`.
+Emit required L1 decisions by calling `oma state emit` directly, as documented in `.agents/skills/_shared/runtime/event-spec.md`.
 
 ---
 
 ## Step 1: Explore Project Context
 
-// turbo
 Use MCP code analysis tools to understand the current codebase:
-- `get_symbols_overview` for project structure and existing architecture.
-- `find_symbol` and `search_for_pattern` to identify relevant modules, patterns, and conventions.
+- Configured structure tools or scoped directory/file inspection for project structure and existing architecture.
+- Configured symbol/pattern search or native search to identify relevant modules, patterns, and conventions.
 - Summarize what exists and what the user's idea would affect.
 
 ---
@@ -41,6 +34,7 @@ Use MCP code analysis tools to understand the current codebase:
 ## Step 2: Ask Clarifying Questions
 
 Ask the user clarifying questions **one at a time**. Prefer multiple-choice options when possible.
+For all clarification and approval questions in this workflow, follow `.agents/skills/_shared/core/clarification-protocol.md`: prefer an available asynchronous question tool, continue independent work, and wait for explicit answers before dependent approval steps.
 Key areas to clarify:
 - **Intent**: What problem are they solving? Who is the target user?
 - **Scope**: Must-have vs nice-to-have features
@@ -53,34 +47,88 @@ Do NOT proceed to Step 3 until you have a clear understanding of the user's inte
 
 ## Step 3: Propose Approaches
 
-Present **2-3 distinct approaches** to solve the problem:
-- For each approach: summary, pros, cons, effort estimate (S/M/L)
-- **Label each approach as `tactical` (patch/workaround/quick win) or `structural` (root-cause/proper engineering).**
-- Highlight the **recommended approach** with rationale
-- Include a brief trade-off comparison matrix
+Present **2-3 distinct approaches** to solve the problem.
 
-**Engineering-first default:** the recommended approach MUST be `structural` — addressing the root cause with proper engineering. Deadline pressure, effort delta, and "we'll fix it properly later" are NOT valid grounds for recommending tactical. Recommending `tactical` is only allowed when the problem itself is genuinely throwaway scope (e.g., one-line config flip, deprecated module being removed). The tighter the deadline, the more important it is to do it right the first time.
+### Optional TRIZ-lite (contradiction problems only)
 
-**You MUST get user confirmation on the chosen approach before proceeding to Step 4.**
+**Default: off.** If the core issue is a technical or UX tradeoff ("improving A worsens B"), draft approaches collapse into the same axis (only knob-turning: interval, TTL, debounce, log level), or the user asks for inventive / contradiction framing, load and follow:
 
-After the user chooses an option, emit and verify the required option-selection decision:
+`.agents/skills/oma-brainstorm/resources/triz-lite.md`
+
+Use T1–T4 only to **seed** mechanistically different options, then present them with the brief format below. Skip TRIZ-lite for ordinary product exploration without a contradiction. Do not run full TRIZ, ARIZ, classical matrices, or fake numeric scores.
+
+### Presentation order (mandatory)
+
+**Prose briefs first → comparison matrix → recommendation.** Do not lead with a matrix-only dump.
+
+For **each** approach, write a short choosable brief (enough to decide — not a full Step 4 design):
+
+```markdown
+## Approach {A|B|C} — {short name}
+**Label:** tactical | structural
+**One-liner:** {one sentence}
+
+### What changes (user / system scenario)
+- When the user {does X} → {what they see / what the system does}
+- How this differs from today: {1–2 sentences}
+
+### How it works (plain language)
+- {3–5 short bullets on the mechanism — no file lists or code}
+
+### What it solves vs leaves
+- Solves: ...
+- Intentionally leaves: ...
+- Residual risks: ...
+
+### Cost feel
+- Effort: S | M | L
+- Likely touch surface: {areas}
+- Reversibility: low | medium | high
+
+### Pros / Cons
+- Pros: ...
+- Cons: ...
+```
+
+Then:
+
+```markdown
+## Comparison at a glance
+| Criterion | A | B | C |
+|-----------|---|---|---|
+| ... | ... | ... | ... |
+
+## Recommendation
+**{X}** — {3–6 sentences: scenario + tradeoff + why structural fits}
+Questions that help choose: {1–2 optional prompts for the user}
+```
+
+### Approach rules
+
+- **Label each approach** as `tactical` (patch/workaround/quick win) or `structural` (root-cause/proper engineering).
+- Approaches must be **mechanistically distinct** when possible — not three intensities of the same knob.
+- **Engineering-first default:** the recommended approach MUST be `structural` — addressing the root cause with proper engineering. Deadline pressure, effort delta, and "we'll fix it properly later" are NOT valid grounds for recommending tactical. Recommending `tactical` is only allowed when the problem itself is genuinely throwaway scope (e.g., one-line config flip, deprecated module being removed). The tighter the deadline, the more important it is to do it right the first time.
+
+Apply `.agents/skills/_shared/core/execution-policy.md`: proceed when the requested work or decision is already authorized; ask only for a material missing decision or new authorization.
+
+Once the option is resolved from the user request, delegated choice, or a clarification, emit and verify the required option-selection decision. Record how the choice was authorized:
 
 ```bash
-oma_emit "decision.made" '{"subject":"brainstorm.option-selection","decision":"Proceed with the user-selected approach.","rationale":"The user selected one option after comparing alternatives and tradeoffs."}'
-oma state:verify --workflow brainstorm --checkpoint option-selection
+oma state emit "decision.made" '{"subject":"brainstorm.option-selection","decision":"<selected approach>","rationale":"<existing instruction, delegated choice, or new user selection authorizing this option>"}'
+oma state verify --workflow brainstorm --checkpoint option-selection
 ```
 
 ---
 
 ## Step 4: Present Design
 
-Present the detailed design **section by section**, getting user feedback at each step:
+Present the detailed design **section by section**:
 - Architecture overview (components, data flow)
 - Key interfaces and contracts
 - Integration points with existing code
 - Edge cases and error handling strategy
 
-Each section requires explicit user approval before moving to the next.
+Invite feedback on material decisions; reuse existing authorization under the execution policy. Pause only sections that depend on missing information or new authorization.
 
 ---
 
@@ -104,21 +152,31 @@ Groupthink and authority bias hide real gaps. A blind round, where each perspect
    - **Tier 2**: enhancement, should resolve or explicitly defer
    - **Tier 3**: nice-to-have, defer to next version
 
-4. **Check for suppressed compromises**: for each prior design decision where a reviewer voted `PARTIAL→PASS`, verify the objection was answered on principle (regulatory, consumer, architectural) rather than overridden by majority. Restore any principled objection that was suppressed.
+4. **Check for suppressed compromises**: revisit each Step 2–4 decision where a concern was raised but the design moved forward anyway (a clarification answered with an unvalidated assumption, a section approved with reservations, a tradeoff accepted under time pressure). Verify each was resolved on principle (regulatory, consumer, architectural) rather than waved through; restore any principled objection that was dropped.
 
 5. **Resolve Tier 1 issues** by updating Step 4 design with either new sections in existing files, new files, or explicit out-of-scope declarations.
 
-6. **Present resolved design** to the user for final approval before Step 6.
+6. **Present the resolved design**, noting changes from the critique. Apply the execution policy before Step 6; ask only for unresolved material decisions or new authorization.
 
-Skip only if the design is trivially small (1-2 files, low stakes). Otherwise mandatory.
+**Blind fidelity — inline vs. delegated:**
+
+The default inline lenses run in *this* session, so the model that authored the Step 4 design is also critiquing it. That satisfies the "lenses don't see each other's feedback" requirement, but it does **not** remove authorship bias — the reviewer knows every rationale and approval that produced the design and tends to rationalize rather than challenge. That is a *lower-grade* blind review, acceptable for most designs.
+
+**Escalation (high-stakes designs only):** when the design is architecturally significant, hard to reverse, or security-/compliance-sensitive, delegate the critique to **fresh-context reviewer subagents** instead of inline lenses, so each reviewer sees only the design artifact — not the conversation history, rationale, or approval flow that carries the author's bias.
+
+- Resolve `target_vendor_for_agent` per agent, then dispatch each reviewer lens using the standard per-agent path: native subagent when `target_vendor_for_agent === current_runtime_vendor`, otherwise `oma agent spawn {agent_id} {prompt_file} {session_id} --task-id {task.id} -w {workspace}`.
+- Pass **only the Step 4 design document** (and minimal domain constraints) in the prompt file. Do **not** include the clarification Q&A, prior reservations or accepted compromises, or user approvals — that context is exactly what a blind reviewer must not see.
+- Suggested reviewer agents: `qa-reviewer`, `architecture-reviewer`, plus domain lenses from the stakeholder map in point 1.
+- Consolidate their findings back through points 3-6 above.
+
+Skip only if the design is trivially small (1-2 files, low stakes). Otherwise the inline round is mandatory; the escalation path is recommended for high-stakes designs.
 
 ---
 
 ## Step 6: Save Design Document
 
-// turbo
 Save the approved design:
-1. Write to `docs/plans/designs/<NNN>-<feature-name>.md` where `<NNN>` is the next zero-padded 3-digit number (`ls docs/plans/designs/ | grep -E '^[0-9]{3}-' | tail -1`). Do not append `-design` to the filename; the folder already encodes type.
+1. Write to `docs/plans/designs/<NNN>-<feature-name>.md` where `<NNN>` is the next zero-padded 3-digit number (`ls docs/plans/designs/ | grep -E '^[0-9]{3}-' | tail -1`). Run the listing immediately before writing — not earlier in the session — and if `<NNN>` is already taken (concurrent sessions have produced duplicate numbers), take max+1. Do not append `-design` to the filename; the folder already encodes type.
 2. Use memory write tool to record design summary for future reference.
 
 ---

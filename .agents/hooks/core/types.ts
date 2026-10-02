@@ -1,5 +1,5 @@
 // Hook-runtime types shared across Claude Code, Codex CLI, Cursor,
-// Gemini CLI, and Qwen Code. Functions live in `fs-utils.ts` and
+// and the other host CLIs in VENDORS. Functions live in `fs-utils.ts` and
 // `hook-output.ts`; this file is types-only. The `Vendor` type is derived
 // from the `VENDORS` runtime constant in `constants.ts` so the two stay
 // in sync.
@@ -28,11 +28,39 @@ export interface RawHookInput {
   hook_event_name?: string;
   cwd?: string;
   workspace_roots?: string[];
-  // Gemini: AfterAgent fields
+  // Stop/AfterAgent response text fields (used for re-trigger suppression).
   prompt_response?: string;
   stop_hook_active?: boolean;
   // Claude/Qwen: Stop fields
   stopReason?: string;
+}
+
+/**
+ * Optional goal contract for a persistent workflow (design-prime-agent-adoption
+ * Track B). Written by `oma goal set`; read by the persistent-mode Stop hook.
+ */
+export interface ModeGoal {
+  /** Human description of the objective. Informational only. */
+  description?: string;
+  budget?: {
+    /**
+     * Wall-clock budget in minutes, measured from `activatedAt`. When
+     * exceeded the Stop hook deactivates the workflow and allows an honest
+     * partial stop (machine verdict, not model discretion).
+     */
+    wallClockMinutes?: number;
+  };
+  completion?: {
+    /**
+     * Deterministic stop gate. MUST be an allowlist keyword ("typecheck" |
+     * "test" | "lint") that maps to an existing package.json script; the hook
+     * runs it as an argv array with no shell. Free-form strings are NEVER
+     * executed — this value lives in an agent-writable state file, so
+     * executing it verbatim would be an arbitrary-command-execution path
+     * that bypasses the PreToolUse permission layer.
+     */
+    gate?: string;
+  };
 }
 
 export interface ModeState {
@@ -40,6 +68,12 @@ export interface ModeState {
   sessionId: string;
   activatedAt: string;
   reinforcementCount: number;
+  /**
+   * L1 session id (`oma-…`) recorded at activation so the Stop hook can emit
+   * gate.passed / gate.failed events onto the same events.jsonl trail.
+   */
+  omaSid?: string;
+  goal?: ModeGoal;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,11 +88,30 @@ export interface ModeState {
  * Discriminated on `kind`; produced by adapters.ts normalizeInput().
  */
 export type HookInput =
-  | { kind: "prompt"; prompt: string; cwd: string }
+  | {
+      kind: "prompt";
+      prompt: string;
+      cwd: string;
+      /**
+       * SessionStart trigger source (claude: startup|resume|clear|compact).
+       * `compact` lets session-once handlers (serena-primer, state-boundary)
+       * force re-injection: compaction keeps the session id, so their normal
+       * dedup would otherwise skip exactly the turn that lost the context.
+       */
+      source?: string;
+    }
   | {
       kind: "pre_tool";
       toolName: string;
       toolInput: Record<string, unknown>;
+      cwd: string;
+    }
+  | {
+      kind: "post_tool";
+      toolName: string;
+      toolInput: Record<string, unknown>;
+      /** Vendor tool result payload (claude: `tool_response`), when provided. */
+      toolResponse?: Record<string, unknown>;
       cwd: string;
     }
   | {
@@ -67,7 +120,7 @@ export type HookInput =
       /**
        * Assistant response / transcript text from the stop payload, if any.
        * Carries deactivation phrases ("workflow done") so persistent-mode can
-       * deactivate via the central `oma hook` path, matching the standalone path.
+       * deactivate via the central `oma hook run` path, matching the standalone path.
        */
       responseText?: string;
     };

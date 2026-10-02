@@ -1,6 +1,6 @@
 ---
 name: oma-tf-infra
-description: Infrastructure-as-code specialist for multi-cloud provisioning using Terraform across any provider (AWS, GCP, Azure, Oracle Cloud). Use for terraform plan/apply, state management, compute, databases, storage, networking, IAM, OIDC, cost optimization, policy-as-code, ISO/IEC 42001 AI controls, ISO 22301 continuity, and ISO/IEC/IEEE 42010 architecture documentation.
+description: "Create or review Terraform infrastructure and plans. Use for cloud resources, IAM, networking, state management, and infrastructure changes."
 ---
 
 # TF Infra Agent - Infrastructure-as-Code Specialist
@@ -95,12 +95,14 @@ Design, implement, review, and document Terraform-based infrastructure across cl
 | Report result | `NOTIFY` | Final infra summary |
 
 ### Tools and instruments
-- Terraform CLI and provider ecosystem
-- Checkov, tfsec, OPA/Sentinel, Terratest when applicable
+- Terraform CLI (or OpenTofu as a drop-in) and provider ecosystem
+- Checkov, Trivy (`trivy config`, successor to tfsec), OPA/Sentinel, native `terraform test`, Terratest when applicable
+- Infracost for plan-time cost estimation when available
 - Cost, policy, multi-cloud, and ISO resource guides
 
 ### Canonical command path
 ```bash
+terraform init            # required before validate/plan (-backend=false for static-only checks)
 terraform fmt -recursive
 terraform validate
 terraform plan -out=tfplan
@@ -109,7 +111,7 @@ terraform plan -out=tfplan
 Run scanners when available before any apply:
 ```bash
 checkov -d .
-tfsec .
+trivy config .   # tfsec is in maintenance mode; Trivy is its successor
 ```
 
 ### Resource scope
@@ -138,10 +140,10 @@ tfsec .
 4. **Plan Before Apply**: Always run `terraform validate`, `terraform fmt`, `terraform plan` before apply
 5. **Least Privilege**: IAM policies must follow least privilege; never use overly permissive policies
 6. **Tag Everything**: Apply Environment, Project, Owner, CostCenter tags/labels to all taggable resources
-7. **No Secrets in Code**: Never hardcode passwords, API keys, or tokens in .tf files; use provider secret management
+7. **No Secrets in Code or State**: Never hardcode passwords, API keys, or tokens in .tf files; use provider secret management. Remember secret data-source values still persist in plan/state — treat state as sensitive and prefer ephemeral resources (TF >= 1.10) / write-only arguments (TF >= 1.11) where provider support exists
 8. **Composable Modules**: Design reusable modules with clear interfaces; avoid monolithic modules
 9. **Environment Sizing**: Use environment-based sizing (smaller for dev/staging, production-grade for prod)
-10. **Policy as Code**: Run OPA/Sentinel and security scanning (Checkov, tfsec) in CI/CD before apply
+10. **Policy as Code**: Run OPA/Sentinel and security scanning (Checkov, Trivy) in CI/CD before apply
 11. **Version Pinning**: Version pin all providers and modules; use `for_each` over `count` (never `count` with computed values)
 12. **Cost Awareness**: Implement lifecycle policies, autoscaling schedules, and review cost estimates before apply
 13. **No Auto-Approve**: Never use `auto-approve` in production; never `terraform destroy` without backup/confirmation
@@ -179,18 +181,8 @@ tfsec .
 
 ## References
 
-Follow `resources/execution-protocol.md` step by step.
-See `resources/examples.md` for input/output examples.
-Use `resources/multi-cloud-examples.md` for provider-specific HCL patterns.
-Use `resources/cost-optimization.md` for cost reduction strategies.
-Use `resources/policy-testing-examples.md` for OPA, Sentinel, and Terratest patterns.
-Use `resources/iso-42001-infra.md` for AI governance, continuity, and architecture controls.
-Before submitting, run `resources/checklist.md`.
-Vendor-specific execution protocols are injected automatically by `oma agent:spawn`.
-Source files live under `../_shared/runtime/execution-protocols/{vendor}.md`.
-
-- Execution steps: `resources/execution-protocol.md`
-- Self-check: `resources/checklist.md`
+- Execution steps (follow for the selected task): `resources/execution-protocol.md`
+- Self-check (run before handoff): `resources/checklist.md`
 - Examples: `resources/examples.md`
 - Multi-cloud HCL patterns: `resources/multi-cloud-examples.md`
 - Cost optimization: `resources/cost-optimization.md`
@@ -198,12 +190,11 @@ Source files live under `../_shared/runtime/execution-protocols/{vendor}.md`.
 - ISO controls: `resources/iso-42001-infra.md`
 - Error recovery: `resources/error-playbook.md`
 - Context loading: `../_shared/core/context-loading.md`
-- Reasoning templates: `../_shared/core/reasoning-templates.md`
 - Clarification: `../_shared/core/clarification-protocol.md`
 - Context budget: `../_shared/core/context-budget.md`
-- Difficulty assessment: `../_shared/core/difficulty-guide.md`
-- Lessons learned: `../_shared/core/lessons-learned.md`
+- Task decomposition: `../_shared/core/difficulty-guide.md` (unresolved scope or dependencies)
+- Lessons learned: `../_shared/core/lessons-learned.md` (matching prior failure or requested retrospective)
 - Observability handoff: `../oma-observability/SKILL.md` §Integrations — Collector topology, transport tuning, release metadata
 
 ### Knowledge Reference
-terraform, infrastructure-as-code, iac, cloud, aws, gcp, azure, oracle, oci, multi-cloud, devops, provisioning, infrastructure, compute, database, storage, networking, iam, oidc, workload identity, container, kubernetes, serverless, vpc, subnet, load balancer, cdn, secrets management, state management, backend, provider
+terraform, opentofu, infrastructure-as-code, iac, cloud, aws, gcp, azure, oracle, oci, multi-cloud, devops, provisioning, infrastructure, compute, database, storage, networking, iam, oidc, workload identity, container, kubernetes, serverless, vpc, subnet, load balancer, cdn, secrets management, ephemeral resources, write-only arguments, state management, drift, import block, terraform test, trivy, checkov, infracost, backend, provider

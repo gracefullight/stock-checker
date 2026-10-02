@@ -5,11 +5,11 @@
 ## Structure
 
 - `core/`
-  - Always-on or commonly referenced rules and guides.
+  - Common policy and task-selected guides; not a task-start reading list.
   - Examples: context loading, clarification, difficulty, reasoning, lessons learned.
 - `conditional/`
   - Load only when the workflow reaches a specific trigger.
-  - Examples: quality score, experiment ledger, exploration loop.
+  - Examples: quality score, experiment ledger, exploration loop, diagram engine (archify ↔ Mermaid).
 - `runtime/`
   - Runtime-injected or CLI-specific protocols.
   - Examples: memory protocol, vendor execution protocols.
@@ -23,7 +23,7 @@ Workflow-specific materials do not belong in `_shared/`.
 
 ## Load Classes
 
-- `always`: load at task start or during normal execution
+- `always`: only the runtime policy/contract explicitly injected for a dispatched run
 - `conditional`: load only on the documented trigger
 - `runtime-injected`: supplied automatically by CLI/runtime code
 - `workflow-only`: owned by a single workflow, not shared across all skills

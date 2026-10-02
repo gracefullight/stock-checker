@@ -4,20 +4,19 @@ description: Coordinate multiple agents for a complex multi-domain project using
 disable-model-invocation: true
 ---
 
-# MANDATORY RULES: VIOLATION IS FORBIDDEN
-
 - **Response language follows `language` setting in `.agents/oma-config.yaml` if configured.**
-- **NEVER skip steps.** Execute from Step 0 in order. Explicitly report completion of each step to the user before proceeding to the next.
-- **You MUST use MCP tools throughout the entire workflow.** This is NOT optional.
-  - Use code analysis tools (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `search_for_pattern`) for code exploration.
-  - Use memory tools (read/write/edit) for progress tracking.
-  - Memory path: configurable via `memoryConfig.basePath` (default: `.serena/memories`)
-  - Tool names: configurable via `memoryConfig.tools` in `.agents/mcp.json`
-  - Do NOT use raw file reads or grep as substitutes. MCP tools are the primary interface for code and memory operations.
+- Follow `.agents/skills/_shared/core/execution-policy.md` for authorization, clarification, verification, and completion. Execute required steps on the selected path in dependency order; apply documented branch and skip conditions.
+- Follow `.agents/skills/_shared/core/code-intelligence.md`: discover the configured provider’s tools; use native search only for paths outside this project or ignored paths when unavailable or timed out. Do not install a provider or track a repository automatically.
+- Use native file tools and `.agents/skills/_shared/runtime/memory-protocol.md` for durable coordination state; code-intelligence memory tools are not required.
 - **Read the oma-coordination skill BEFORE starting.** Read `.agents/skills/oma-coordination/SKILL.md` and follow its Core Rules.
 - **Follow the context-loading guide.** Read `.agents/skills/_shared/core/context-loading.md` and load only task-relevant resources.
 
 ---
+
+## Agent execution evidence
+
+Follow `.agents/skills/_shared/core/execution-policy.md` and `.agents/skills/_shared/runtime/result-contract.md`. Include QA and REFINE task IDs in the plan. For each native agent, begin a run, record checks, and finalize its structured result. For CLI dispatch, pass `--task-id` and use the injected run identity. Complete phase logs before finalizing the QA/REFINE artifacts; code changes after verification require fresh checks.
+
 
 ## Vendor Detection
 
@@ -32,10 +31,11 @@ The detected runtime vendor and each agent's target vendor determine how agents 
 2. Read `.agents/skills/_shared/core/context-loading.md` for resource loading strategy.
 3. Read `.agents/skills/_shared/runtime/memory-protocol.md` for memory protocol.
 4. Read `.agents/skills/_shared/runtime/event-spec.md` for L1 event protocol.
-5. Use the `oma_emit` helper documented in `.agents/skills/_shared/runtime/event-spec.md` for required L1 decisions. The helper wraps `oma state:emit`.
-6. Record session start using memory write tool:
+5. Emit required L1 decisions by calling `oma state emit` directly, as documented in `.agents/skills/_shared/runtime/event-spec.md`.
+6. Generate a session ID (format: `YYYYMMDD-HHmmss`). It keys `plan-{sessionId}.json` and all session-scoped memory artifacts (`progress-*-{sessionId}.md`, `result-*-{sessionId}.md`).
+7. Record session start using memory write tool:
    - Create `session-work.md` in the memory base path
-   - Include: session start time, user request summary.
+   - Include: session start time, session ID, user request summary.
 
 ---
 
@@ -45,14 +45,13 @@ Analyze the user's request and identify involved domains (frontend, backend, mob
 
 - Single domain: suggest using the specific agent directly.
 - Multiple domains: proceed to Step 2.
-- Use MCP code analysis tools (`get_symbols_overview` or `search_for_pattern`) to understand the existing codebase structure relevant to the request.
+- Use configured code-intelligence tools to understand the existing codebase structure relevant to the request. Native search is only for paths outside this project or ignored paths.
 - Report analysis results to the user.
 
 ---
 
 ## Step 2: Run PM Agent for Task Decomposition
 
-// turbo
 Activate PM Agent to:
 
 1. Analyze requirements.
@@ -67,23 +66,22 @@ Activate PM Agent to:
 
 Present the PM Agent's task breakdown to the user:
 
-- Priorities (P0, P1, P2)
+- Priority tiers (1, 2, 3 — lower runs first)
 - Agent assignments
 - Dependencies
-- **You MUST get user confirmation before proceeding to Step 4.** Do NOT proceed without confirmation.
+- Apply `.agents/skills/_shared/core/execution-policy.md`: proceed when the requested work or decision is already authorized; ask only for a material missing decision or new authorization.
 
 ---
 
 ## Step 4: Spawn Agents by Priority Tier
 
-// turbo
-Spawn agents for each task by priority tier (P0 first, then P1, etc.).
+Spawn agents for each task by priority tier (lowest first: tier 1, then tier 2, etc.).
 Spawn all same-priority tasks in parallel. Assign separate workspaces to avoid file conflicts.
 
 ### Per-Agent Dispatch
 Resolve the target vendor for each agent from `.agents/oma-config.yaml`.
 Use native subagents only when `target_vendor === current_runtime_vendor` and that runtime supports the vendor's role-subagent path.
-Otherwise use `oma agent:spawn` for that agent.
+Otherwise use `oma agent spawn` for that agent.
 
 ### If Claude Code and target vendor is Claude
 Use the Agent tool to spawn subagents:
@@ -96,16 +94,16 @@ Use the Agent tool to spawn subagents:
 Spawn native Codex custom agents using `.codex/agents/{agent}.toml` when available.
 Native CLI executor path: `codex exec "@{agent} ..."` using the generated agent file.
 Pass each agent its task description, API contracts, and relevant context.
-If native dispatch is not verified in the current runtime, fall back to `oma agent:spawn`.
+If native dispatch is not verified in the current runtime, fall back to `oma agent spawn`.
 
 ### If Gemini CLI and target vendor is Gemini
-Use native Gemini subagents when available, otherwise fall back to `oma agent:spawn`.
+Use native Gemini subagents when available, otherwise fall back to `oma agent spawn`.
 Native CLI executor path: `gemini -p "@{agent} ..."` using `.gemini/agents/{agent}.md`.
 
 ### If target vendor differs from current runtime, or native dispatch is unavailable
 ```bash
-oma agent:spawn backend "task description" session-id -w ./backend &
-oma agent:spawn frontend "task description" session-id -w ./frontend &
+oma agent spawn backend "task description" session-id --task-id {backend_task.id} -w ./backend &
+oma agent spawn frontend "task description" session-id --task-id {frontend_task.id} -w ./frontend &
 wait
 ```
 
@@ -113,9 +111,11 @@ wait
 
 ## Step 5: Monitor Agent Progress
 
-- Use memory read tool to poll `progress-{agent}.md` files
-- Use MCP code analysis tools (`find_symbol` and `search_for_pattern`) to verify API contract alignment between agents
+- Use memory read tool to poll `progress-{agent}[-{sessionId}].md` files
+- Use configured symbol/pattern tools or native search to verify API contract alignment between agents
 - Use memory edit tool to record monitoring results
+
+> **Claude Code note**: the Agent tool returns results synchronously (or notifies on background completion), so no file polling is needed. Check status, files changed, and issues directly in each agent's return value.
 
 ---
 
@@ -130,12 +130,12 @@ After all implementation agents complete, spawn QA Agent to review all deliverab
 
 ---
 
-## Step 6.1: Measure Quality Score (Conditional)
+## Step 6.1: Measure Relevant Baseline (Conditional)
 
-If automated measurement is available:
-1. Load `quality-score.md` (conditional, per `context-loading.md`)
-2. Measure Quality Score based on QA findings
-3. Record as baseline in Experiment Ledger via memory tools
+If the task needs a baseline or experiment comparison with defined metrics:
+1. Load `.agents/skills/_shared/conditional/quality-score.md`.
+2. Reuse current evidence or measure the relevant behavior with project commands. Preserve independent acceptance checks.
+3. For an actual experiment, record comparable evidence in the ledger; ordinary QA does not require scoring.
 
 ---
 
@@ -143,23 +143,32 @@ If automated measurement is available:
 
 If QA finds CRITICAL or HIGH issues:
 
+Apply the shared per-task attempt and cost budget in `.agents/skills/oma-orchestration/SKILL.md`. Count the original attempt, each retry, and every exploration hypothesis; the workflow cycle limit never grants additional attempts.
+
 1. Re-spawn the responsible agent with QA findings. **The fix prompt MUST instruct root-cause remediation, not symptom suppression.** Forbid tactical patches (try/catch swallowing, validation bypass, hardcoded values, feature flags hiding the bug, silencing the failing test) unless the agent can explicitly justify why a structural fix is out of scope for this iteration (e.g., upstream library bug, deprecated path, hotfix window). Bias toward the orthodox engineering fix even when it costs more lines or touches more files.
 2. Emit and verify the remediation decision before accepting any fix/ignore choice:
    ```bash
-   oma_emit "decision.made" '{"subject":"work.remediation-choice","decision":"Fix the responsible QA finding with root-cause remediation or explicitly defer it.","rationale":"QA identified a CRITICAL/HIGH issue requiring a recorded remediation choice."}'
-   oma state:verify --workflow work --checkpoint remediation-choice
+   oma state emit "decision.made" '{"subject":"work.remediation-choice","decision":"Fix the responsible QA finding with root-cause remediation or explicitly defer it.","rationale":"QA identified a CRITICAL/HIGH issue requiring a recorded remediation choice."}'
+   oma state verify --workflow work --checkpoint remediation-choice
    ```
-3. If Quality Score is active: measure after fix, apply Keep/Discard rule, record in Experiment Ledger.
-4. Repeat Steps 5-7.
-5. **If same issue persists after 2 fix attempts**: Activate **Exploration Loop** (load `exploration-loop.md` per `context-loading.md`):
-   - Generate 2-3 alternative approaches via Exploration Decision template
-   - Re-spawn the same agent type with different hypothesis prompts (separate workspaces)
-   - QA scores each result
+3. If a defined comparison is active, refresh affected measurements after the fix and verify required checks. Record actual experiment decisions with evidence.
+4. Before each new fix cycle, apply the loop termination check:
+
+   > **Fix Loop termination conditions** (OR, whichever fires first wins):
+   > 1. Total fix cycles have reached the configured maximum (default: 5). Do not start another cycle; report the remaining CRITICAL/HIGH findings and stop.
+   > 2. Session cost cap exceeded: if `loadQuotaCap()` from `cli/io/session-cost.ts` returns non-null, call `checkCap(sessionId, cap)` (no cap configured → skip this condition). If `exceeded === true`, print `formatPromptMessage(result)` to the user and stop the loop immediately. Save current results before stopping, then report early termination due to quota.
+   >
+   > If neither condition is met, repeat Steps 5-7.
+
+5. **If reactive recovery has failed and budget remains**: choose an exploration round using `exploration-loop.md`; reserve all 2–3 hypothesis attempts before dispatch. If there is insufficient budget, preserve the remaining issues and report `partial` or `failed`.
+   - Generate the reserved alternative approaches via Exploration Decision template
+   - Re-spawn the same agent type with different hypothesis prompts, the same plan task ID, unique run IDs, and separate workspaces
+   - QA checks each result against required behavior and comparable measurements
    - Best result adopted, others discarded
    - All experiments recorded in Experiment Ledger
-6. Continue until all critical issues are resolved.
+6. Continue until all critical issues are resolved or a termination condition fires.
 7. Use memory write tool to record final results.
-8. If Quality Score was measured: generate Experiment Ledger summary and auto-generate lessons from discarded experiments.
+8. If experiments were run, summarize their evidence and decisions. Record a lesson only when a reusable cause and prevention method are supported; do not edit installed skill definitions.
 
 ---
 

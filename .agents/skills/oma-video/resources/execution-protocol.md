@@ -10,12 +10,12 @@ plan when the brief is a one-liner.
 ## Step 0: Parse Request
 
 1. Extract the brief and flags from the invocation.
-2. Resolve defaults from `config/video-config.yaml` -> env vars -> CLI flags (lowest to highest precedence).
+2. Resolve defaults from shipped code defaults -> the `video:` section of `.agents/oma-config.yaml` -> env vars -> CLI flags (lowest to highest precedence). `config/video-config.yaml` is not consulted.
 3. Validate:
    - `mode` ∈ {`shorts`, `explainer`, `demo`}.
    - `aspect` ∈ {`9:16`, `16:9`, `1:1`, `auto`} (`auto` snaps to the mode default: shorts -> 9:16, explainer/demo -> 16:9).
    - `captions` ∈ {`tiktok`, `lower-third`, `none`}; `visual` ∈ {`auto`, `generate`, `stock`, `aigc`, `slide`}.
-   - `music` ∈ {`upbeat`, `calm`, `none`}; `compositor` ∈ {`remotion`, `mpt`}.
+   - `music` ∈ {`upbeat`, `calm`, `cinematic`, `lofi`, `piano`, `none`}; `compositor` ∈ {`hyperframes`, `mpt`}.
    - `duration` ≤ `limits.max_duration_sec` (180); resulting `scenes` ≤ `limits.max_scenes` (40).
    - `out` is inside `$PWD` unless `--allow-external-out`.
    - For `demo`: `--capture` (if given) exists, is absolute + `$PWD`-guarded, and is a valid video format.
@@ -29,7 +29,7 @@ plan when the brief is a one-liner.
 
 ## Step 1: Provider Availability + Selection
 
-1. Call `available()` on every registered provider in parallel (`oma video list-providers`).
+1. Call `available()` on every registered provider in parallel (`oma video provider list`).
 2. For each capability, walk `providers.<capability>.order`:
    - The first available provider wins.
    - Paid providers (`pexels`, `pixelle`) are skipped unless their env key is present (`enabled` gate).
@@ -53,16 +53,16 @@ plan when the brief is a one-liner.
 ```
 brief ─► [ScriptProvider] ─► script.json {scenes[], narration[], onScreenText[]}
 script.json ─► parallel:
-   ├► [VoiceProvider]   ─► audio/narration-*.wav + timing.json
+   ├► [VoiceProvider]   ─► audio/narration-01.wav (single joined track) + timing.json
    ├► [VisualProvider]  ─► visuals/scene-NN.*
    └► [CaptionProvider] ─► captions.srt / captions.vtt
-all assets ─► render-spec.json ─► [Compositor: Remotion] ─► <mode>-<slug>.mp4
+all assets ─► render-spec.json ─► [Compositor: HyperFrames] ─► <mode>-<slug>.mp4
 ```
 
 1. **Script**: AgentScriptProvider writes `script.json` (start of the determinism boundary).
-2. **Voice**: oma-voice synthesizes narration -> `audio/narration-NN.wav` + `timing.json`. Fallback: estimated timing (no wav).
-3. **Visuals**: walk the visual chain. oma-image stills (key-free default) / oma-slide frames (explainer) / Pexels (key) / Pixelle (key). Aspect -> 16-multiple size; Remotion crops to the exact frame.
-4. **Captions**: oma-captions builds `captions.srt` + `captions.vtt` from `timing.json`. For a non-source locale, translate via oma-translator (key-free); absent -> warn + keep source.
+2. **Voice**: oma-voice synthesizes narration -> a **single** `audio/narration-01.wav` (all scene lines joined into one track; per-line offsets live in `timing.json`). Fallback: estimated timing (no wav).
+3. **Visuals**: walk the visual chain. oma-image stills (key-free default) / oma-slide frames (explainer) / Pexels (key) / Pixelle (key). Aspect -> 16-multiple size; HyperFrames crops to the exact frame.
+4. **Captions**: oma-captions builds `captions.srt` + `captions.vtt` from `timing.json`. For a non-source locale, translate via oma-translation (key-free); absent -> warn + keep source.
 5. **render-spec**: compose `render-spec.json` (the deterministic compute boundary) from the assets + seed.
 6. **Render**: the compositor consumes `render-spec.json`.
 
@@ -75,9 +75,11 @@ State plainly to the user: **"Demo capture is performed by a human."** Then:
 
 ## Step 5: Compositor Render
 
-- **Remotion (default)**: when the vendored toolchain (Node + Chromium + FFmpeg) is bootstrapped, run `npx remotion render <entry> <CompId> <mode>-<slug>.mp4 --props=render-spec.json` from `resources/remotion/`. The live invocation is deferred at the CLI adapter (`TODO(oma-deferred): remotion render`).
-- **Fallback**: write a deterministic placeholder mp4 derived from the render-spec so the run dir + manifest are still well-formed with zero toolchain.
-- **MPT (`--compositor mpt`)**: inject the agent-written script (custom-script mode); keys env-only + log masking.
+<!-- oma-docs:ignore-start -->
+- **HyperFrames (default, live)**: `generate` emits the asset bus and a pending HTML project at `<runDir>/hyperframes/`. Read its `AUTHORING.md`, the listed upstream API skills, and `resources/hyperframes-authoring/<mode>.md`. Author `index.html` with local assets and seekable animation. Run `oma video render <runDir> --output json`: lint → strict render → ffprobe stream/dimensions/duration checks → manifest update. Fix reported failures and re-render.
+<!-- oma-docs:ignore-end -->
+- **Failure**: a missing toolchain, render failure, missing video stream, or non-positive duration is a failure with diagnostics. Keep the run directory and recovery artifacts; do not write a placeholder MP4. `OMA_VIDEO_MOCK=1` permits deterministic placeholders for tests only.
+- **MPT (`--compositor mpt`)**: inject the agent-written script (custom-script mode); keys env-only + log masking. It requires the installed checkout, venv, and ffmpeg; setup or render failures fail with diagnostics.
 
 ## Step 6: Write Artifacts
 
@@ -91,12 +93,12 @@ State plainly to the user: **"Demo capture is performed by a human."** Then:
 1. Print a one-line status per capability to stderr:
    - `[oma video] <capability> <provider> ok (Xs)`
    - `[oma video] <capability> <provider> fallback -> <fallback>`
-2. Print the run-dir path + the mp4 path.
-3. For `--format json`: write `{exitCode, runDir, manifestPath, outputs}` to stdout as one JSON object.
+2. Print the run-dir path and, only on success, the validated mp4 path.
+3. For `--format json`: write `{exitCode, runDir, manifestPath, scriptPath, renderSpecPath, warnings, error}` to stdout as one JSON object (no `outputs` key — read output/asset paths from the manifest at `manifestPath`).
 
 ## Step 8: Exit Code Aggregation (aligned with `oma search fetch`)
 
-- Success (mp4 + valid manifest) -> exit 0 (fallbacks recorded in `warnings`).
+- Success (playable mp4 with a video stream and positive duration + valid manifest) -> exit 0. Asset-provider fallbacks are recorded in `warnings`.
 - Otherwise pick the most specific code:
   - `safety-refused` -> 2
   - `not-found` (profile/asset) -> 3
@@ -110,8 +112,8 @@ State plainly to the user: **"Demo capture is performed by a human."** Then:
 | Situation | Action |
 |-----------|--------|
 | No provider for a required capability | Exit 5, print `Run: oma video doctor` |
-| Remotion toolchain not bootstrapped | Exit 1 (CompositorBootstrapError) + doctor remediation; MPT fallback where applicable |
-| Voicebox MCP down | Fall back voicebox-stt -> whisper.cpp -> estimated timing; still emit captions |
+| HyperFrames or MPT toolchain not bootstrapped | Exit 1 + `oma video doctor` remediation; retain render-spec and authored composition for recovery |
+| Voicebox MCP down | Fall back to estimated timing; still emit captions (whisper.cpp hop deferred: `TODO(oma-deferred): whisper-cpp`) |
 | Pexels / Pixelle key absent | Skip provider; fall through to oma-image stills; annotate coverage in `warnings` |
 | `demo` with no capture + no Cap | Guided protocol (Step 4b); stop without rendering |
 | `--capture` outside `$PWD` or wrong format | Exit 4 with the path/format problem |

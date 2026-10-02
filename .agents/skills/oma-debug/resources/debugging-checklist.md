@@ -312,7 +312,9 @@ Escalate to other agents if:
 
 ## Documentation Template
 
-After fixing, document in `.agents/results/bugs/`:
+After fixing, document in `.agents/results/bugs/`. For Complex or CRITICAL/HIGH
+severity bugs, use the full `bug-report-template.md`; for Simple/Medium bugs,
+this condensed form is sufficient:
 
 ```markdown
 # Bug: [Title]
@@ -355,8 +357,8 @@ After fixing, document in `.agents/results/bugs/`:
 ## Tools Reference
 
 - **Browser DevTools**: F12 (Console, Network, React DevTools)
-- **Serena MCP**: find_symbol, search_for_pattern, find_referencing_symbols
-- **Antigravity Browser**: Automated testing and reproduction
+- **Code intelligence**: configured symbol, pattern, and reference tools; native search of paths outside this project or ignored paths as fallback
+- **Browser automation**: Browser verification uses the installed MCPs selected in `mcp.devtools_browsers`: Aside (`aside`, default), Chrome DevTools MCP (`chrome`), and Firefox DevTools MCP (`firefox`). Multiple selections are supported; use `oma update mcp` to change them. Discover the selected server’s actual tools before use; tool names and capabilities differ between servers. An empty selection disables browser MCP verification; report any unverified UI checks.
 - **React Profiler**: Performance analysis
 - **Lighthouse**: Performance audit
 - **Git bisect**: Find when bug was introduced

@@ -6,9 +6,32 @@
   "projectDirEnv": null,
   "runtime": "bun",
   "events": {
-    "Stop": {
-      "hook": "persistent-mode.ts",
-      "timeout": 5
-    }
+    "SessionStart": [
+      {
+        "hook": "code-intelligence-primer.ts",
+        "timeout": 3
+      },
+      {
+        "hook": "state-boundary.ts",
+        "timeout": 5
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hook": "refactor-guard.ts",
+        "matcher": "write|edit",
+        "timeout": 5
+      }
+    ],
+    "Stop": [
+      {
+        "hook": "persistent-mode.ts",
+        "timeout": 5
+      },
+      {
+        "hook": "refactor-guard.ts",
+        "timeout": 5
+      }
+    ]
   }
 }

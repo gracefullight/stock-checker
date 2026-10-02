@@ -3,7 +3,7 @@
 ## Security Checklist
 
 ### Authentication & Authorization
-- [ ] Passwords hashed with bcrypt/argon2 (not MD5/SHA1)
+- [ ] Passwords hashed with Argon2id (scrypt/bcrypt acceptable; never MD5/SHA1)
 - [ ] Password strength requirements enforced (min 8 chars)
 - [ ] JWT tokens properly signed and validated
 - [ ] Refresh tokens implemented (if long sessions needed)
@@ -127,7 +127,8 @@
 ## Testing Checklist
 
 ### Unit Tests
-- [ ] Test coverage > 80%
+- [ ] Coverage meets the project's declared baseline or changed-code target when coverage is applicable; otherwise record risk-focused tests or alternative verification and its limits
+- [ ] Tasks marked `test_approach: tdd` have a `TDD_EVIDENCE` block in the implementation result (focused test command, RED failure, GREEN pass) — see `../../_shared/core/test-approach.md`; do not require this evidence for `test_after` / `not_applicable` tasks
 - [ ] All business logic functions tested
 - [ ] Edge cases covered
 - [ ] Error handling tested
@@ -270,7 +271,7 @@
 - [ ] No data loss scenarios
 
 ### Important (Should Pass)
-- [ ] Test coverage > 80%
+- [ ] Applicable coverage target or documented alternative verification met
 - [ ] Accessibility WCAG 2.2 AA
 - [ ] Code quality metrics met
 - [ ] Documentation complete
@@ -313,8 +314,8 @@
 ## Notes
 
 - Run automated tools FIRST: `npm audit`, `bandit`, `lighthouse`
-- Use Serena MCP for code analysis patterns
-- Use Chrome DevTools MCP (`new_page` with `isolatedContext: "qa-test"`) for runtime verification and E2E testing
+- Use configured code intelligence or the documented native fallback for code analysis patterns
+- Browser verification follows `mcp.devtools_browsers`: Aside (`aside`, default), Chrome DevTools MCP (`chrome`), and Firefox DevTools MCP (`firefox`). Multiple selections are supported; change them with `oma update mcp`. Discover the selected server’s tools before use. Chrome-specific calls below are examples only; use supported equivalents for Aside and Firefox. An empty selection disables browser MCP verification; report unverified UI checks.
 - Document all findings with file:line references
 - Provide remediation code examples
 - Estimate fix time for each issue

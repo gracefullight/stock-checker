@@ -1,6 +1,6 @@
 ---
 name: oma-dev-workflow
-description: Use when setting up or optimizing developer workflows in a monorepo, managing mise tasks, git hooks, CI/CD pipelines, database migrations, or release automation. Invoke for development environment setup, build automation, testing workflows, and release coordination.
+description: "Configure development tasks, git hooks, CI/CD, or release automation. Use when creating or fixing a repository development workflow."
 ---
 
 # Dev Workflow - Monorepo Task Automation Specialist
@@ -154,6 +154,8 @@ mise run //{path}:{task}
 22. Never assume task availability - always verify with `mise tasks`
 23. Never run destructive tasks (clean, reset) without confirmation
 24. Never skip reading task definitions before running unfamiliar tasks
+25. Always quote task names containing `:` in mise.toml (`[tasks."lint:changed"]`) — unquoted colons fail TOML parsing
+26. Always set `monorepo_root = true` (plus `[monorepo].config_roots`) in the root mise.toml before using `//path:task` syntax
 
 ### Technical Guidelines
 
@@ -191,6 +193,16 @@ project-root/
 └── scripts/            # Utility scripts
 ```
 
+The root `mise.toml` must enable monorepo task paths, or every `//path:task` invocation fails with "require a monorepo root configuration":
+
+```toml
+# Root mise.toml — monorepo_root is a top-level key (before any [table])
+monorepo_root = true
+
+[monorepo]
+config_roots = ["apps/*", "packages/*"]
+```
+
 ### Task Syntax
 
 **Root-level tasks:**
@@ -204,10 +216,13 @@ mise run build       # Production builds
 **App-specific tasks:**
 ```bash
 # Syntax: mise run //{path}:{task}
+# Requires monorepo_root = true in root mise.toml (see Project Structure)
 mise run //apps/api:dev
 mise run //apps/api:test
 mise run //apps/web:build
 ```
+
+**TOML quoting rule:** task names containing `:` must be quoted — `[tasks."gen:api"]`, never `[tasks.gen:api]` (unquoted colons are a TOML parse error).
 
 ### Common Task Patterns
 
@@ -249,8 +264,11 @@ depends = ["//apps/api:dev", "//apps/web:dev"]
 
 **Parallel (independent tasks):**
 ```bash
-# Runs all lint tasks simultaneously
+# Runs all lint tasks simultaneously (via depends)
 mise run lint
+
+# mise-native parallel execution of multiple tasks
+mise run lint ::: test
 ```
 
 **Sequential (dependent tasks):**
@@ -330,13 +348,10 @@ Follow the core workflow step by step:
 
 ### Execution Protocol (CLI Mode)
 
-Vendor-specific execution protocols are injected automatically by `oma agent:spawn`.
-Source files live under `../_shared/runtime/execution-protocols/{vendor}.md`.
-
 ## References
 
 - Clarification: `../_shared/core/clarification-protocol.md`
-- Difficulty assessment: `../_shared/core/difficulty-guide.md`
+- Task decomposition: `../_shared/core/difficulty-guide.md` (unresolved scope or dependencies)
 
 ### Knowledge Reference
 

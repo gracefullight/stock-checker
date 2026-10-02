@@ -4,11 +4,9 @@ description: Daily or period recap via `oma-recap`. Resolves a date or window fr
 disable-model-invocation: true
 ---
 
-# MANDATORY RULES: VIOLATION IS FORBIDDEN
-
 - **Response language follows `language` setting in `.agents/oma-config.yaml` if configured.**
-- **NEVER skip steps.** Execute from Step 1 in order.
-- **Never modify `.agents/`.** SSOT protection applies.
+- Follow `.agents/skills/_shared/core/execution-policy.md` for authorization, clarification, verification, and completion. Execute required steps on the selected path in dependency order; apply documented branch and skip conditions.
+- **Never modify `.agents/` definitions.** SSOT protection covers skills, workflows, rules, agents, and config. It does NOT cover this workflow's own output at `.agents/results/recap/` — writing there is the expected behaviour, not a violation.
 - **Follow the host-LLM contract** in `.agents/skills/oma-recap/SKILL.md`: theme analysis, grouping rules, and Markdown output format are owned by the skill. This workflow only resolves intent, runs the CLI, and reports.
 - **Never auto-translate technical terms** in the saved recap (project names, tool names, CLI flags).
 
@@ -24,16 +22,16 @@ Inspect the user's request and resolve **at most three** arguments. Default mode
 
 | Mode | Triggers | CLI flag |
 |------|----------|----------|
-| `daily` | No date, "today", "오늘", "yesterday", "어제", specific date ("4월 10일", "2026-04-10") | `--date YYYY-MM-DD` (or omitted for today) |
+| `daily` | No date, "today", "오늘", "yesterday", "어제", specific date ("4월 10일", "2026-04-10") | `--date YYYY-MM-DD` (always pass it — the bare default is a rolling 24h window, not today) |
 | `period` | "this week", "지난 7일", "last month", "past 2 weeks", "이번달" | `--window Nd` |
 
-Only extract a tool filter when the user **explicitly names** one or more tools (e.g., "코덱스만", "claude only", "qwen과 codex"). Supported values: `grok, claude, codex, qwen, cursor, antigravity`. Otherwise omit `--tool`.
+Only extract a tool filter when the user **explicitly names** one or more tools (e.g., "코덱스만", "claude only", "qwen과 codex"). Supported values: `grok, claude, codex, gemini, qwen, cursor, antigravity`. Otherwise omit `--tool`.
 
 Resolution rules (delegate ambiguous cases to the skill):
 - Relative day references → `--date YYYY-MM-DD`
 - Relative weekday references → calculate the date
-- Period phrases → `--window Nd` (1w=7d, 1mo=30d)
-- No date specified → today (omit flags)
+- Period phrases → `--window Nd` (1w=7d, 1mo=30d; the CLI caps windows at 30d)
+- No date specified → today's date as `--date YYYY-MM-DD` (do not omit flags: the bare default `--window 1d` is a rolling 24h window ending now)
 
 If the user supplies multiple conflicting signals (e.g., "지난주 어제"), pick the more specific one and state the assumption in Step 5.
 
@@ -51,12 +49,11 @@ If the user supplies multiple conflicting signals (e.g., "지난주 어제"), pi
 
 ## Step 3A: Daily Recap
 
-// turbo
 Use one of:
 
 ```bash
 # Today
-oma recap --json
+oma recap --date $(date +%F) --json
 
 # Specific date
 oma recap --date 2026-05-11 --json
@@ -69,7 +66,6 @@ oma recap --date 2026-05-11 --tool claude,codex --json
 
 ## Step 3B: Period Recap
 
-// turbo
 Use one of:
 
 ```bash

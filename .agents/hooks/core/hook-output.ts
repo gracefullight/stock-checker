@@ -1,5 +1,5 @@
 // Vendor-specific hook output builders.
-// Each runtime (Claude Code, Codex CLI, Cursor, Gemini CLI, Qwen Code)
+// Each runtime (Claude Code, Codex CLI, Cursor, Qwen Code)
 // expects a slightly different stdout JSON shape; centralize the dialect
 // translation here so individual hooks can stay vendor-agnostic.
 
@@ -8,6 +8,11 @@ import type { Vendor } from "./types.ts";
 export function makePromptOutput(
   vendor: Vendor,
   additionalContext: string,
+  // Native hook event the context is injected for. Defaults to the prompt-submit
+  // event; the dispatch layer passes "SessionStart" for session-start injection
+  // (commandcode / cursor sessionStart) so the emitted hookSpecificOutput names
+  // the correct event. Standalone core-script callers use the default.
+  hookEventName: string = "UserPromptSubmit",
 ): string {
   switch (vendor) {
     case "antigravity":
@@ -19,40 +24,43 @@ export function makePromptOutput(
         injectSteps: [{ ephemeralMessage: additionalContext }],
       });
     case "claude":
-    case "commandcode":
+    case "commandcode": {
       // Official Claude Code docs (code.claude.com/docs/en/hooks) specify
       // `hookSpecificOutput.additionalContext` — the top-level field is kept
       // for back-compat with older builds that read it.
       // commandcode (Command Code, commandcode.ai) mirrors the Claude hook
-      // dialect, but has NO prompt event (only PreToolUse/PostToolUse/Stop),
-      // so this branch never fires for it — kept for Vendor exhaustiveness.
-      return JSON.stringify({
+      // dialect. It has no prompt-submit event, but DOES inject context on
+      // SessionStart (additionalContext) — dispatch passes hookEventName
+      // "SessionStart" for that path.
+      const hookSpecificOutput: Record<string, unknown> = {
+        hookEventName,
         additionalContext,
-        hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit",
-          additionalContext,
-        },
-      });
+      };
+      // Claude Code re-scans skill/command directories after SessionStart hooks
+      // complete when the output sets `reloadSkills` (docs: SessionStart
+      // hookSpecificOutput.reloadSkills). It is Claude-only and only meaningful
+      // for SessionStart; this builder is called solely when context was
+      // actually injected, so the "only when injecting" condition is inherent.
+      if (vendor === "claude" && hookEventName === "SessionStart") {
+        hookSpecificOutput.reloadSkills = true;
+      }
+      return JSON.stringify({ additionalContext, hookSpecificOutput });
+    }
     case "codex":
       return JSON.stringify({
         hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit",
+          hookEventName,
           additionalContext,
         },
       });
     case "cursor":
+      // Cursor reads the top-level `additional_context` (sessionStart) /
+      // `additionalContext`; the hookSpecificOutput block is informational.
       return JSON.stringify({
         additionalContext,
         additional_context: additionalContext,
         hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit",
-          additionalContext,
-        },
-      });
-    case "gemini":
-      return JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: "BeforeAgent",
+          hookEventName,
           additionalContext,
         },
       });
@@ -64,6 +72,10 @@ export function makePromptOutput(
     case "kiro":
       // Kiro CLI adds stdout directly to the agent context for prompt hooks.
       return additionalContext;
+    case "kimi":
+      // Kimi Code CLI: a blockable hook that exits 0 has its stdout appended to
+      // the model context (kimi.com/code/docs hooks). Plain text injects directly.
+      return additionalContext;
     case "pi":
       // pi (Earendil) reads this via the in-process bridge in
       // `.pi/extensions/oma/index.ts`, which lifts `additionalContext` into the
@@ -73,7 +85,7 @@ export function makePromptOutput(
       // Qwen Code fork uses hookSpecificOutput (same as Codex)
       return JSON.stringify({
         hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit",
+          hookEventName,
           additionalContext,
         },
       });
@@ -85,26 +97,156 @@ export function makeBlockOutput(vendor: Vendor, reason: string): string {
     case "claude":
     case "codex":
     case "commandcode":
-    case "cursor":
     case "kiro":
     case "qwen":
       return JSON.stringify({ decision: "block", reason });
+    case "cursor":
+      // Cursor's `stop` hook ignores Claude-style `{decision:"block"}`. It
+      // re-enters the loop via `{followup_message}`, which is auto-submitted as
+      // the next turn (capped by the entry's loop_limit). Cursor's only
+      // block-producing chain is `stop` — its sole preToolUse handler
+      // (test-filter) never blocks, only mutates — so followup_message is
+      // always the correct dialect here.
+      return JSON.stringify({ followup_message: reason });
     case "antigravity":
       // agy Stop: `decision:"continue"` re-enters the loop (= block the stop);
       // `reason` is injected as a system message. (Any other value allows stop.)
       return JSON.stringify({ decision: "continue", reason });
-    case "gemini":
-      // Gemini AfterAgent uses "deny" to reject response and force retry
-      return JSON.stringify({ decision: "deny", reason });
     case "pi":
-      // pi has no stop-blocking event (agent_end is notification-only), so
-      // persistent-mode never runs under pi. This shape mirrors pi's native
-      // tool_call block return for completeness/forward-compat.
+      // pi's bridge implements persistent-mode via agent_settled +
+      // pi.sendUserMessage: it runs the persistent-mode subprocess (which
+      // resolves to the Claude dialect `{decision:"block", reason}`) and also
+      // accepts this `{block:true, reason}` shape, re-submitting `reason` as the
+      // next turn so the workflow continues.
       return JSON.stringify({ block: true, reason });
     case "grok":
       // Grok Stop hooks are generally advisory. Emit block decision + rich
       // stderr message (persistent-mode already prints the reason to stderr).
       return JSON.stringify({ decision: "block", reason });
+    case "kimi":
+      // Kimi documents two blocking mechanisms: exit 2 + stderr, and a JSON
+      // `hookSpecificOutput.permissionDecision: "deny"` response. The oma hook
+      // router always exits 0 and writes the dialect to stdout, so we emit the
+      // JSON form. We also include the Claude-style `{decision:"block"}` keys so
+      // whichever shape Kimi's Stop handler honours, persistent-mode re-enters.
+      return JSON.stringify({
+        decision: "block",
+        reason,
+        hookSpecificOutput: {
+          permissionDecision: "deny",
+          permissionDecisionReason: reason,
+        },
+      });
+  }
+}
+
+/**
+ * Post-tool BLOCK dialect — used when a PostToolUse handler wants the tool
+ * result fed back to the model with a mandatory instruction (refactor-guard).
+ * The tool has already run, so this is feedback, not prevention.
+ *
+ * Claude Code's current spec (code.claude.com/docs/en/hooks, verified 2026-08)
+ * feeds `additionalContext` directly to the model and no longer documents
+ * `{decision:"block"}` for PostToolUse; older builds read the decision keys.
+ * Codex / Qwen / Command Code document BOTH `decision:"block"` + `reason` and
+ * `hookSpecificOutput.additionalContext` on PostToolUse, so emitting the
+ * combined shape covers every wired dialect. Vendors without a usable
+ * post-tool feedback channel (grok: passive stdout-ignored; kiro: output not
+ * processed; antigravity: audit-only `{}`) fall through to the closest
+ * best-effort shape — they are not wired for post_tool events.
+ */
+export function makePostToolBlockOutput(
+  vendor: Vendor,
+  reason: string,
+): string {
+  switch (vendor) {
+    case "claude":
+    case "codex":
+    case "commandcode":
+    case "qwen":
+      return JSON.stringify({
+        decision: "block",
+        reason,
+        hookSpecificOutput: {
+          hookEventName: "PostToolUse",
+          additionalContext: reason,
+        },
+      });
+    case "cursor":
+      // Cursor's postToolUse feedback channel is `additional_context` only
+      // (no block). Include the snake_case field its dialect documents.
+      return JSON.stringify({
+        additional_context: reason,
+        hookSpecificOutput: {
+          hookEventName: "PostToolUse",
+          additionalContext: reason,
+        },
+      });
+    case "kimi":
+    case "kiro":
+    case "grok":
+    case "antigravity":
+    case "pi":
+      // Best-effort — no documented post-tool feedback channel (or disputed).
+      return makeBlockOutput(vendor, reason);
+  }
+}
+
+/**
+ * Pre-tool DENY dialect — used when a PreToolUse handler blocks a tool call
+ * (scm-guard). Distinct from makeBlockOutput, whose dialects are Stop-shaped
+ * (e.g. cursor's followup_message re-submits a turn instead of denying).
+ * scm-guard is wired for claude/codex/qwen/kimi/kiro/grok/cursor (plus the
+ * opencode/pi bridges, which read the claude dialect from the standalone
+ * entry); the remaining cases are best-effort so the switch stays exhaustive.
+ */
+export function makePreToolDenyOutput(vendor: Vendor, reason: string): string {
+  switch (vendor) {
+    case "claude":
+    case "codex":
+    case "commandcode":
+    case "qwen":
+      // Claude-documented PreToolUse deny shape (Codex/Qwen follow the dialect).
+      return JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: reason,
+        },
+      });
+    case "kimi":
+      // Kimi honours both the Claude-style decision keys and the
+      // hookSpecificOutput deny form (same rationale as makeBlockOutput).
+      return JSON.stringify({
+        decision: "block",
+        reason,
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: reason,
+        },
+      });
+    case "kiro":
+      return JSON.stringify({ decision: "block", reason });
+    case "grok":
+      // Grok PreToolUse output is a gate decision (see makePreToolOutput).
+      return JSON.stringify({ decision: "deny", reason });
+    case "antigravity":
+      // agy PreToolUse output is a gate decision; deny analog of the allow gate.
+      return JSON.stringify({ decision: "deny", reason });
+    case "cursor":
+      // Documented preToolUse output (cursor.com/docs/hooks): permission
+      // allow|deny, user_message shown in the client, agent_message sent to
+      // the agent. Cursor also accepts Claude's nested hookSpecificOutput
+      // form, but the native flat shape is authoritative.
+      return JSON.stringify({
+        permission: "deny",
+        user_message: reason,
+        agent_message: reason,
+      });
+    case "pi":
+      // pi's bridge accepts {block:true, reason} on tool_call interception.
+      return JSON.stringify({ block: true, reason });
   }
 }
 
@@ -113,16 +255,6 @@ export function makePreToolOutput(
   updatedInput: Record<string, unknown>,
 ): string {
   switch (vendor) {
-    case "gemini":
-      // Official BeforeTool rewrite contract (geminicli.com/docs/hooks/reference):
-      // `hookSpecificOutput.tool_input` merges with and overrides the model's
-      // arguments. There is no "rewrite" decision value (only allow/deny).
-      return JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: "BeforeTool",
-          tool_input: updatedInput,
-        },
-      });
     case "cursor":
       return JSON.stringify({
         updated_input: updatedInput,
@@ -134,6 +266,7 @@ export function makePreToolOutput(
     case "claude":
     case "codex":
     case "commandcode":
+    case "kimi":
     case "kiro":
     case "qwen":
       // Codex requires `permissionDecision: "allow"` alongside `updatedInput`

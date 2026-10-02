@@ -1,19 +1,21 @@
 {
   "mcpServers": {
     "serena": {
-      "command": "serena",
+      "command": "oma",
       "args": [
-        "start-mcp-server",
+        "bridge",
         "--context",
-        "claude-code",
-        "--project",
-        ".",
-        "--open-web-dashboard",
-        "false"
+        "oma"
       ],
       "env": {
         "SERENA_LOG_LEVEL": "info"
       }
+    },
+    "aside": {
+      "command": "aside",
+      "args": [
+        "mcp"
+      ]
     }
   }
 }

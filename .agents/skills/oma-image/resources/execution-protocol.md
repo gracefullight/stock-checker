@@ -7,21 +7,27 @@ Run the **Clarification Protocol** in `SKILL.md` before shelling out.
 ## Step 0: Parse Request
 
 1. Extract prompt and flags from the invocation.
-2. Resolve defaults from `config/image-config.yaml` → env vars → CLI flags (lowest to highest precedence).
+2. Resolve defaults from shipped code defaults → the `image:` section of `.agents/oma-config.yaml` → env vars → CLI flags (lowest to highest precedence). `config/image-config.yaml` is not consulted.
 3. Validate:
    - `count` ∈ [1, 5]
    - `size` is `auto` or any `WxH` passing `size-guard.ts` (each edge ∈ [16, 3840], multiples of 16, aspect ratio 1:3..3:1).
    - `quality` ∈ {`low`, `medium`, `high`, `auto`}
    - `vendor` ∈ {`auto`, `codex`, `pollinations`, `antigravity`, `all`} or a concrete registered name.
+   - `model` (optional): vendor-specific override passed through as-is; applies to every vendor in the run set. `antigravity` ignores it.
    - `reference` (if any): each path exists, is a regular file ≤ 5MB, magic-byte-matches PNG/JPEG/GIF/WebP, ≤ 10 total, and duplicate paths are rejected with exit 4.
 4. If invalid: exit code 4 and a message identifying the offending field.
 
-## Step 0.5: Reference Image Handling
+## Step 0.5: Reference-guided regeneration
 
-When `--reference <path...>` is supplied:
+When `--reference <path...>` is supplied, the operation is reference-guided regeneration: it may
+follow subject, style, lighting, or composition, but it cannot promise a pixel-preserving edit.
+Before continuing, reject pixel/mask operations (inpainting, object removal, selective replacement,
+crop, resize, or conversion) and route them to an editor or deterministic image processor.
 
 1. Validate every path via `reference-guard.ts`. On failure → exit 4.
-2. Reject the request if the selected vendor(s) do not support references (currently only `codex` and `antigravity`). Pollinations returns exit 4 with a hint to switch vendor.
+2. Vendor support check (only `codex` and `antigravity` support references):
+   - Explicit `--vendor <name>` / `--vendor all`: reject with exit 4 and a hint to switch vendor if any requested vendor lacks reference support.
+   - `--vendor auto`: silently drop reference-unsupported vendors from the healthy set. If no reference-supporting vendor remains: exit 4 when none is registered at all, exit 5 (with per-vendor setup hints) when some are registered but unhealthy.
 3. Pass validated absolute paths through `GenerateInput.referenceImages`:
    - `codex` provider appends `-i <path>` per reference to `codex exec` and adds a guidance sentence to the instruction text.
    - `antigravity` provider copies each reference into a per-run temp dir, exposes it to agy via `--add-dir <tmpdir>`, and lists the resulting paths inline in the agy prompt.
@@ -29,7 +35,7 @@ When `--reference <path...>` is supplied:
 
 ### Auto-forward attached images (MANDATORY)
 
-If the user asks to generate/edit an image AND a host-attached image is visible to the agent (e.g. `[Image: source: <path>]` in a Claude Code system message, Antigravity workspace upload, or explicit user-provided path), the agent MUST pass it via `--reference <path>`. Do not fall back to describing the image in prose. Do not ask the user to re-type the path. If `oma image generate --help` shows no `--reference` flag, instruct the user to run `oma update` and retry; do not silently degrade.
+If the user asks for a reference-guided regeneration and a host-attached image is visible to the agent (e.g. `[Image: source: <path>]` in a Claude Code system message, Antigravity workspace upload, or explicit user-provided path), the agent MUST pass it via `--reference <path>`. Do not fall back to describing the image in prose. Do not ask the user to re-type the path. If `oma image generate --help` shows no `--reference` flag, instruct the user to run `oma update` and retry; do not silently degrade.
 
 ### Host-Specific Reference Paths
 
@@ -61,8 +67,8 @@ Agents should prefer user-supplied explicit paths (e.g., `~/Downloads/otter.jpeg
 1. Estimate cost as `sum(per_image_usd[vendor][model][quality] × count)` over all selected vendors.
 2. If `--dry-run`: print the plan (vendors, counts, outDir, cost) and exit 0.
 3. If estimate ≥ `cost_guardrail.estimate_threshold_usd` and not `--yes`/`OMA_IMAGE_YES=1`:
-   - Prompt user on stderr: `Estimated cost $X.XX. Proceed? (y/N)`
-   - Decline → exit 1.
+   - Interactive terminal (stdin is a TTY): prompt user on stderr: `Estimated cost $X.XX. Proceed? (y/N)`. Decline → exit 1.
+   - Non-interactive (no TTY — agents, CI): no prompt is possible; exit 1 with a message naming `--yes`/`OMA_IMAGE_YES=1`. **Calling agents**: confirm the cost with the user in-conversation (`--dry-run` prints the estimate), then re-run with `-y`. Pass `-y` only when the run fits an existing budget authorization or newly approved spend.
 
 ## Step 3: Cancellation Setup
 
@@ -78,7 +84,7 @@ Agents should prefer user-supplied explicit paths (e.g., `~/Downloads/otter.jpeg
 
 ## Step 5: Write Artifacts
 
-1. Save each image to `outDir/<vendor>-<model>[-<n>].png`.
+1. Save each image to `outDir/<vendor>[-<model>]-<runShortid>[-<n>].<ext>` — the model segment is omitted when the vendor has no caller-visible model (`antigravity`), and `<ext>` reflects the magic-byte-sniffed format (`png`/`jpg`/`webp`/`gif`), not a fixed `.png`.
 2. Build `manifest.json` with schema version 1 (see `vendor-matrix.md` for fields).
 3. If `--no-prompt-in-manifest` is set, replace `prompt` with `prompt_sha256`.
 
@@ -108,4 +114,4 @@ Agents should prefer user-supplied explicit paths (e.g., `~/Downloads/otter.jpeg
 | Specific vendor unhealthy | Exit 5 with the vendor's setup guide (URL + env var + steps, rendered by `oma image doctor`) |
 | All sub-strategies failed for a provider | Exit 1 with last classified error; include `strategy_attempts` in manifest |
 | Timeout | Exit 6, manifest records `after_ms` |
-| Cancelled (Ctrl+C) | Exit 130 (signal); no manifest if abort was pre-write |
+| Cancelled (Ctrl+C/SIGTERM) | In-flight calls abort, failures are recorded as `timeout`, the manifest is written, and the command exits 6 when no provider succeeded |
