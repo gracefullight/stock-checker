@@ -7,9 +7,7 @@ const ANALYZE_TTL = 10 * MINUTE;
 const cache = cacheStore.define(
   'analyze',
   {
-    // fearGreed is baked into the cached result; it has its own 30m cache so
-    // entries stay consistent within a window — key on ticker only.
-    serialize: (args: { ticker: string }) => args.ticker,
+    // The default key includes ticker and fearGreed, both of which affect the result.
     ttl: ttlUnlessEmpty(ANALYZE_TTL, (v) => v == null),
   },
   ({ ticker, fearGreed }: { ticker: string; fearGreed: number | null }) =>
