@@ -67,30 +67,68 @@ export async function getHistoricalPrices(symbol: string, daysAgo = 365) {
   return [];
 }
 
-const benchmarkCache = new Map<string, BenchmarkCandle[]>();
+const BENCHMARK_TTL_MS = 5 * 60 * 1_000;
+const benchmarkCache = new Map<
+  string,
+  {
+    candles: BenchmarkCandle[];
+    expiresAt: number;
+    calendarDate: string | null;
+  }
+>();
+const benchmarkInFlight = new Map<string, Promise<BenchmarkCandle[]>>();
 
 export async function fetchBenchmarkPrices(
   symbol: string,
   daysAgo = 730
 ): Promise<BenchmarkCandle[]> {
-  if (benchmarkCache.has(symbol)) return benchmarkCache.get(symbol)!;
-  const raw = await getHistoricalPrices(symbol, daysAgo);
-  const candles: BenchmarkCandle[] = raw.map((d) => ({
-    date: d.date,
-    close: d.adjClose ?? d.close,
-    volume: d.volume,
-    high: d.high,
-    low: d.low,
-  }));
-  benchmarkCache.set(symbol, candles);
-  return candles;
+  const key = JSON.stringify([symbol, daysAgo]);
+  const calendarDate = DateTime.now().setZone('America/New_York').toISODate();
+  const cached = benchmarkCache.get(key);
+  if (cached && cached.calendarDate === calendarDate && cached.expiresAt > Date.now()) {
+    return cached.candles;
+  }
+  benchmarkCache.delete(key);
+  const inFlight = benchmarkInFlight.get(key);
+  if (inFlight) return inFlight;
+
+  const request = (async () => {
+    const raw = await getHistoricalPrices(symbol, daysAgo);
+    const candles: BenchmarkCandle[] = raw.map((d) => ({
+      date: d.date,
+      // Adapters return coherent adjusted OHLC, or coherent raw OHLC when
+      // adjustment fields are unavailable; never replace just the close.
+      close: d.close,
+      volume: d.volume,
+      high: d.high,
+      low: d.low,
+    }));
+    if (candles.length > 0) {
+      benchmarkCache.set(key, {
+        candles,
+        calendarDate,
+        expiresAt: Date.now() + BENCHMARK_TTL_MS,
+      });
+    }
+    return candles;
+  })();
+  benchmarkInFlight.set(key, request);
+  try {
+    return await request;
+  } finally {
+    benchmarkInFlight.delete(key);
+  }
 }
 
+/** Alternative.me's index measures Bitcoin sentiment, not equity sentiment. */
 export async function getFearGreedIndex(): Promise<number | null> {
   try {
     const res = await axiosInstance.get('https://api.alternative.me/fng/?limit=1&format=json');
-    const value = parseInt(res.data?.data?.[0]?.value, 10);
-    return Number.isNaN(value) ? null : value;
+    const raw = res.data?.data?.[0]?.value;
+    if ((typeof raw !== 'string' && typeof raw !== 'number') || String(raw).trim() === '')
+      return null;
+    const value = Number(raw);
+    return Number.isInteger(value) && value >= 0 && value <= 100 ? value : null;
   } catch (error) {
     logger.error({ error }, 'Failed to fetch fear/greed index');
     return null;

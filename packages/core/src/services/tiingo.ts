@@ -21,6 +21,8 @@ export interface TiingoCandle {
   close: number;
   adjClose: number;
   volume: number;
+  /** Nominal session close times raw share volume, before corporate-action adjustment. */
+  dollarVolume?: number;
 }
 
 interface RawTiingoRow {
@@ -43,17 +45,43 @@ export function isTiingoConfigured(): boolean {
 }
 
 export function mapTiingoRows(rows: RawTiingoRow[]): TiingoCandle[] {
-  return rows
-    .filter((r) => r.close != null && r.date)
-    .map((r) => ({
-      date: new Date(r.date),
-      open: r.open,
-      high: r.high,
-      low: r.low,
-      close: r.close,
-      adjClose: r.adjClose ?? r.close,
-      volume: r.volume ?? 0,
-    }));
+  const candles = new Map<string, TiingoCandle>();
+  for (const r of rows) {
+    const sessionDate = DateTime.fromISO(r.date, { zone: 'utc' }).toISODate();
+    if (!sessionDate || !Number.isFinite(r.close) || r.close <= 0) continue;
+    const close = r.adjClose ?? r.close;
+    const factor = close / r.close;
+    // Tiingo adjusted prices include both splits and dividends. Preserve one
+    // scale even when an optional adjusted range field is absent.
+    const open = r.adjClose == null ? r.open : (r.adjOpen ?? r.open * factor);
+    const high = r.adjClose == null ? r.high : (r.adjHigh ?? r.high * factor);
+    const low = r.adjClose == null ? r.low : (r.adjLow ?? r.low * factor);
+    const volume = (r.adjClose == null ? r.volume : (r.adjVolume ?? r.volume)) ?? 0;
+    const rawVolume = r.volume ?? 0;
+    const dollarVolume = r.close * rawVolume;
+    if (
+      ![open, high, low, close].every((v) => Number.isFinite(v) && v > 0) ||
+      high < Math.max(open, close) ||
+      low > Math.min(open, close) ||
+      !Number.isFinite(volume) ||
+      volume < 0 ||
+      !Number.isFinite(rawVolume) ||
+      rawVolume < 0 ||
+      !Number.isFinite(dollarVolume)
+    )
+      continue;
+    candles.set(sessionDate, {
+      date: new Date(`${sessionDate}T00:00:00.000Z`),
+      open,
+      high,
+      low,
+      close,
+      adjClose: close,
+      volume,
+      dollarVolume,
+    });
+  }
+  return [...candles.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
 /**
@@ -67,7 +95,7 @@ export async function fetchTiingoDaily(symbol: string, daysAgo: number): Promise
     throw new Error('TIINGO_API_KEY is not set');
   }
 
-  const startDate = DateTime.now().minus({ days: daysAgo }).toISODate();
+  const startDate = DateTime.now().setZone('America/New_York').minus({ days: daysAgo }).toISODate();
   const res = await axiosInstance.get<RawTiingoRow[]>(
     `/tiingo/daily/${encodeURIComponent(symbol)}/prices`,
     { params: { startDate, token } }

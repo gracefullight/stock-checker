@@ -9,7 +9,7 @@ vi.mock('@/services/tiingo', () => ({
   fetchTiingoDaily: vi.fn(),
 }));
 
-import { getHistoricalPrices } from '@/services/data-fetcher';
+import { fetchBenchmarkPrices, getHistoricalPrices } from '@/services/data-fetcher';
 import { fetchTiingoDaily, isTiingoConfigured } from '@/services/tiingo';
 import { fetchYahooDaily } from '@/services/yahoo-finance';
 
@@ -36,6 +36,7 @@ describe('getHistoricalPrices fallback chain', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('returns Yahoo data without touching Tiingo when Yahoo succeeds', async () => {
@@ -87,5 +88,68 @@ describe('getHistoricalPrices fallback chain', () => {
     const rows = await getHistoricalPrices('AAPL', 30);
 
     expect(rows).toEqual([]);
+  });
+
+  it('keeps short and long benchmark windows separate', async () => {
+    mockedHistorical
+      .mockResolvedValueOnce([yahooRow])
+      .mockResolvedValueOnce([{ ...yahooRow, date: new Date('2025-01-01') }, yahooRow]);
+
+    expect(await fetchBenchmarkPrices('WINDOW', 30)).toHaveLength(1);
+    expect(await fetchBenchmarkPrices('WINDOW', 730)).toHaveLength(2);
+
+    expect(mockedHistorical).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains a coherent price range when adjustment metadata is absent', async () => {
+    mockedHistorical.mockResolvedValue([{ ...yahooRow, adjClose: 52 }]);
+
+    const [row] = await fetchBenchmarkPrices('COHERENT');
+
+    expect(row).toMatchObject({ close: 104, high: 105, low: 99 });
+  });
+
+  it('retries benchmarks after an empty upstream result', async () => {
+    mockedHistorical.mockResolvedValueOnce([]).mockResolvedValueOnce([yahooRow]);
+
+    expect(await fetchBenchmarkPrices('RECOVERY')).toEqual([]);
+    expect(await fetchBenchmarkPrices('RECOVERY')).toHaveLength(1);
+    expect(mockedHistorical).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes a benchmark when the trading calendar day changes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-09T03:59:00Z'));
+    mockedHistorical.mockResolvedValue([yahooRow]);
+
+    await fetchBenchmarkPrices('DAILY');
+    vi.setSystemTime(new Date('2026-06-09T04:01:00Z'));
+    await fetchBenchmarkPrices('DAILY');
+
+    expect(mockedHistorical).toHaveBeenCalledTimes(2);
+  });
+
+  it('expires benchmarks during the same day so a newly closed session becomes available', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-09T19:55:00Z'));
+    mockedHistorical.mockResolvedValue([yahooRow]);
+
+    await fetchBenchmarkPrices('SESSION');
+    vi.setSystemTime(new Date('2026-06-09T20:05:00Z'));
+    await fetchBenchmarkPrices('SESSION');
+
+    expect(mockedHistorical).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares concurrent benchmark requests without duplicating upstream calls', async () => {
+    mockedHistorical.mockResolvedValue([yahooRow]);
+
+    const rows = await Promise.all([
+      fetchBenchmarkPrices('CONCURRENT'),
+      fetchBenchmarkPrices('CONCURRENT'),
+    ]);
+
+    expect(rows[0]).toEqual(rows[1]);
+    expect(mockedHistorical).toHaveBeenCalledTimes(1);
   });
 });

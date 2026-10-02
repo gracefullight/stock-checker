@@ -40,5 +40,19 @@ describe('data-fetcher', () => {
       const result = await getFearGreedIndex();
       expect(result).toBeNull();
     });
+
+    it.each([
+      '42oops',
+      '',
+      ' ',
+      '-1',
+      '101',
+      '42.5',
+      Number.POSITIVE_INFINITY,
+    ])('rejects malformed or out-of-range sentiment %s', async (value) => {
+      mocks.get.mockResolvedValue({ data: { data: [{ value }] } });
+
+      expect(await getFearGreedIndex()).toBeNull();
+    });
   });
 });
