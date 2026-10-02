@@ -15,8 +15,14 @@ import { DataLoader } from '@/optimization/data-loader';
 import {
   type BacktestSignal,
   buildTickerContext,
-  measure5DayWinRate,
+  type Candle,
+  createExecutionMonthBreakdown,
+  type EvaluationWindow,
+  getFixedHoldTrade,
+  measure5DayWinRate as measureShared5DayWinRate,
+  rankTrainingCandidates,
   runSignalsWithContext,
+  splitSignalsByExecutionDate,
   type TickerContext,
   type WinRateResult,
 } from '@/optimization/engine';
@@ -94,9 +100,9 @@ function measureSellAccuracy(
  * realized per-trade win rate / return — the essay's "ride the trend, exit on
  * color flip" approach vs the fixed 5-day horizon.
  */
-function measureTrendHoldWinRate(
+export function measureTrendHoldWinRate(
   signals: BacktestSignal[],
-  allData: Map<string, { date: Date; close: number }[]>,
+  allData: Map<string, Candle[]>,
   opts: {
     maxHold?: number;
     stopPct?: number;
@@ -104,6 +110,7 @@ function measureTrendHoldWinRate(
     trailPct?: number;
     tpPct?: number;
     costPct?: number;
+    evaluationWindow?: EvaluationWindow;
   } = {}
 ): WinRateResult {
   const maxHold = opts.maxHold ?? 60;
@@ -118,7 +125,7 @@ function measureTrendHoldWinRate(
   let wins = 0;
   let total = 0;
   const returns: number[] = [];
-  const monthly: Record<string, { wins: number; total: number }> = {};
+  const monthly = createExecutionMonthBreakdown(allData, 1, opts.evaluationWindow);
 
   for (const sig of signals) {
     if (sig.decision !== 'BUY') continue;
@@ -133,34 +140,66 @@ function measureTrendHoldWinRate(
       gcCache.set(sig.ticker, series);
     }
 
-    const entry = sig.close;
+    const entryIdx = idx + 1;
+    if (opts.evaluationWindow?.start && prices[entryIdx].date < opts.evaluationWindow.start)
+      continue;
+    if (opts.evaluationWindow?.end && prices[entryIdx].date > opts.evaluationWindow.end) continue;
+    const entry = prices[entryIdx].open;
     const stop = entry * (1 - stopPct / 100);
-    const lastK = Math.min(idx + maxHold, prices.length - 1);
+    const target = tpPct !== undefined ? entry * (1 + tpPct / 100) : Infinity;
+    const lastK = Math.min(entryIdx + maxHold - 1, prices.length - 1);
     let exitBar = lastK;
     let exitPrice = prices[lastK].close;
     let peak = entry;
-    for (let k = idx + 1; k <= lastK; k++) {
+    for (let k = entryIdx; k <= lastK; k++) {
+      const bar = prices[k];
       const c = prices[k].close;
-      if (c > peak) peak = c;
-      const hardStop = c <= stop;
-      const trailStop = trailPct !== undefined && c <= peak * (1 - trailPct / 100);
-      const tpHit = tpPct !== undefined && c >= entry * (1 + tpPct / 100);
+      // Trailing levels use earlier bars only; today's unknown intrabar path
+      // cannot raise a stop and retroactively trigger it at today's low.
+      const activeStop = Math.max(
+        stop,
+        trailPct !== undefined ? peak * (1 - trailPct / 100) : stop
+      );
+      if (bar.open <= activeStop) {
+        exitPrice = bar.open;
+        exitBar = k;
+        break;
+      }
+      if (bar.open >= target) {
+        exitPrice = bar.open;
+        exitBar = k;
+        break;
+      }
+      // Once the open is known to be inside the bracket, a bar touching both
+      // levels is ambiguous. Choose the stop rather than a favorable price path.
+      if (bar.low <= activeStop) {
+        exitPrice = activeStop;
+        exitBar = k;
+        break;
+      }
+      if (bar.high >= target) {
+        exitPrice = target;
+        exitBar = k;
+        break;
+      }
       // With a take-profit bracket, the trend rule is disabled (pure TP/stop).
       const ruleExit =
         tpPct === undefined &&
         (exitRule === 'mid' ? c < series[k].mid : series[k].direction === 'down');
-      if (hardStop || trailStop || tpHit || ruleExit) {
-        exitPrice = c;
-        exitBar = k;
+      if (ruleExit && k < lastK) {
+        // A color flip is known only at the close; execute at the next open.
+        exitBar = Math.min(k + 1, prices.length - 1);
+        exitPrice = k + 1 < prices.length ? prices[k + 1].open : c;
         break;
       }
+      peak = Math.max(peak, bar.high);
     }
     holdBarsTotal += exitBar - idx;
 
     const ret = ((exitPrice - entry) / entry) * 100 - costPct;
     returns.push(ret);
     total++;
-    const month = sig.date.toISOString().slice(0, 7);
+    const month = prices[entryIdx].date.toISOString().slice(0, 7);
     if (!monthly[month]) monthly[month] = { wins: 0, total: 0 };
     monthly[month].total++;
     if (ret > 0) {
@@ -198,6 +237,12 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   const COST_PCT = opts.costBps != null ? opts.costBps / 100 : DEFAULT_ROUND_TRIP_COST_PCT;
   console.log(
     `Transaction cost model: ${(COST_PCT * 100).toFixed(0)}bps round-trip deducted from every trade\n`
+  );
+  console.log(
+    'Execution: signals at completed closes; BUY entry at next open; fixed exit after 5 trading sessions.'
+  );
+  console.log(
+    'Research diagnostics and searched configurations are exploratory; later-period comparisons are not independent validation.\n'
   );
   const tickers = Object.keys(TICKER_SECTOR_ETF);
 
@@ -285,12 +330,9 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   console.log(`Sector ETFs loaded: ${[...sectorData.keys()].join(', ')}\n`);
 
   // Price data for win rate measurement
-  const priceData = new Map<string, { date: Date; close: number }[]>();
+  const priceData = new Map<string, Candle[]>();
   for (const [ticker, data] of allData) {
-    priceData.set(
-      ticker,
-      data.map((d) => ({ date: d.date, close: d.close }))
-    );
+    priceData.set(ticker, data);
   }
 
   // Build the config-INDEPENDENT context ONCE per ticker (indicators, benchmark
@@ -303,6 +345,38 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     if (ctx) ctxMap.set(ticker, ctx);
   }
   console.log(`Built reusable indicator context for ${ctxMap.size} tickers\n`);
+  if (ctxMap.size === 0) throw new Error('No usable historical data for backtest');
+
+  const evaluationStart = new Date(
+    Math.min(...[...ctxMap.values()].map((ctx) => ctx.evaluationStart.getTime()))
+  );
+  const yearWindow = (year: string): EvaluationWindow => ({
+    start: new Date(`${year}-01-01T00:00:00.000Z`),
+    end: new Date(`${year}-12-31T23:59:59.999Z`),
+  });
+  const trainingWindow: EvaluationWindow = { end: new Date('2024-12-31T23:59:59.999Z') };
+  const laterWindow: EvaluationWindow = { start: new Date('2025-01-01T00:00:00.000Z') };
+  const signalsEnteredInYear = (signals: BacktestSignal[], year: string) =>
+    signals.filter((signal) => {
+      const prices = priceData.get(signal.ticker);
+      if (!prices) return false;
+      const idx = prices.findIndex((bar) => bar.date.getTime() === signal.date.getTime());
+      return (
+        idx >= 0 &&
+        idx + 1 < prices.length &&
+        prices[idx + 1].date.toISOString().slice(0, 4) === year
+      );
+    });
+  const measure5DayWinRate = (
+    signals: BacktestSignal[],
+    prices: Map<string, Candle[]>,
+    costPct: number,
+    window: EvaluationWindow = {}
+  ) =>
+    measureShared5DayWinRate(signals, prices, costPct, {
+      ...window,
+      start: window.start && window.start > evaluationStart ? window.start : evaluationStart,
+    });
 
   // Phase 0: V2 vs V3 vs V4 comparison
   // V2 = mean-reversion, no new patterns, no institutional
@@ -450,7 +524,10 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   const v4Result = measure5DayWinRate(v4Signals, priceData, COST_PCT);
   const v5Result = measure5DayWinRate(v5Signals, priceData, COST_PCT);
   // V6 = same institutional entries as V5, but exit on Gaussian Channel flip (trend-hold).
-  const v6Result = measureTrendHoldWinRate(v5Signals, priceData, { costPct: COST_PCT });
+  const v6Result = measureTrendHoldWinRate(v5Signals, priceData, {
+    costPct: COST_PCT,
+    evaluationWindow: { start: evaluationStart },
+  });
   // V7 = institutional + entry-quality gate, through the real pipeline (the shipped improvement).
   const v7Result = measure5DayWinRate(v7Signals, priceData, COST_PCT);
   // V9 = V7 + SPY-Gaussian market kill-switch, through the real pipeline.
@@ -484,9 +561,9 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   );
   console.log('  V7 by entry year:');
   for (const yr of ENTRY_YEARS) {
-    const sub = v7Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+    const sub = signalsEnteredInYear(v7Signals, yr);
     if (sub.length === 0) continue;
-    const r = measure5DayWinRate(sub, priceData, COST_PCT);
+    const r = measure5DayWinRate(sub, priceData, COST_PCT, yearWindow(yr));
     console.log(
       `    ${yr}: WR=${r.winRate5d.toFixed(1)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.totalSignals}  AvgRet=${r.avgReturn.toFixed(2)}%`
     );
@@ -499,9 +576,9 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   );
   console.log('  V9 by entry year:');
   for (const yr of ENTRY_YEARS) {
-    const sub = v9Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+    const sub = signalsEnteredInYear(v9Signals, yr);
     if (sub.length === 0) continue;
-    const r = measure5DayWinRate(sub, priceData, COST_PCT);
+    const r = measure5DayWinRate(sub, priceData, COST_PCT, yearWindow(yr));
     console.log(
       `    ${yr}: WR=${r.winRate5d.toFixed(1)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.totalSignals}  AvgRet=${r.avgReturn.toFixed(2)}%`
     );
@@ -518,9 +595,9 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   );
   console.log('  V10 by entry year:');
   for (const yr of ENTRY_YEARS) {
-    const sub = v10Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+    const sub = signalsEnteredInYear(v10Signals, yr);
     if (sub.length === 0) continue;
-    const r = measure5DayWinRate(sub, priceData, COST_PCT);
+    const r = measure5DayWinRate(sub, priceData, COST_PCT, yearWindow(yr));
     console.log(
       `    ${yr}: WR=${r.winRate5d.toFixed(1)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.totalSignals}  AvgRet=${r.avgReturn.toFixed(2)}%`
     );
@@ -935,9 +1012,12 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     const r = measure5DayWinRate(sigs, priceData, COST_PCT);
     let minYr = 100;
     for (const yr of ENTRY_YEARS) {
-      const sub = sigs.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+      const sub = signalsEnteredInYear(sigs, yr);
       if (sub.length < 15) continue; // ignore tiny (partial-year) samples
-      minYr = Math.min(minYr, measure5DayWinRate(sub, priceData, COST_PCT).winRate5d);
+      minYr = Math.min(
+        minYr,
+        measure5DayWinRate(sub, priceData, COST_PCT, yearWindow(yr)).winRate5d
+      );
     }
     console.log(
       `${variant.name.padEnd(34)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${String(r.totalSignals).padStart(5)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${minYr.toFixed(1)}%`.padStart(6)}`
@@ -947,7 +1027,9 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   // Deep-dive on the strong-leader (rs ≥ 0.7) family — the WR+R/R dominance
   // candidates. Train/holdout split (hard-won rule #4) + per-year robustness,
   // all through the real pipeline, net of costs.
-  console.log('\n🔬 Strong-leader family deep-dive (train ≤2024 / holdout ≥2025, real pipeline):');
+  console.log(
+    '\n🔬 Strong-leader family deep-dive (train ≤2024 / later period ≥2025, real pipeline):'
+  );
   for (const name of [
     'LDR rs.7+50b ibs.3 atr3.5',
     'LDR7 + mktUp',
@@ -971,23 +1053,26 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   ]) {
     const sigs = sigsByVariant.get(name);
     if (!sigs) continue;
-    const train = sigs.filter((s) => s.date.toISOString().slice(0, 4) <= '2024');
-    const test = sigs.filter((s) => s.date.toISOString().slice(0, 4) >= '2025');
+    const { train, holdout: test } = splitSignalsByExecutionDate(
+      sigs,
+      priceData,
+      new Date('2025-01-01')
+    );
     const a = measure5DayWinRate(sigs, priceData, COST_PCT);
-    const tr = measure5DayWinRate(train, priceData, COST_PCT);
-    const te = measure5DayWinRate(test, priceData, COST_PCT);
+    const tr = measure5DayWinRate(train, priceData, COST_PCT, trainingWindow);
+    const te = measure5DayWinRate(test, priceData, COST_PCT, laterWindow);
     console.log(`  ${name}`);
     console.log(
       `    FULL : WR=${a.winRate5d.toFixed(1)}%  R/R=${a.rewardRisk.toFixed(2)}  N=${a.totalSignals}  avgRet=${a.avgReturn.toFixed(2)}%`
     );
     console.log(
-      `    TRAIN: WR=${tr.winRate5d.toFixed(1)}%  R/R=${tr.rewardRisk.toFixed(2)}  N=${tr.totalSignals}   HOLDOUT: WR=${te.winRate5d.toFixed(1)}%  R/R=${te.rewardRisk.toFixed(2)}  N=${te.totalSignals}`
+      `    TRAIN: WR=${tr.winRate5d.toFixed(1)}%  R/R=${tr.rewardRisk.toFixed(2)}  N=${tr.totalSignals}   LATER PERIOD: WR=${te.winRate5d.toFixed(1)}%  R/R=${te.rewardRisk.toFixed(2)}  N=${te.totalSignals}`
     );
     const years: string[] = [];
     for (const yr of ENTRY_YEARS) {
-      const sub = sigs.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+      const sub = signalsEnteredInYear(sigs, yr);
       if (sub.length === 0) continue;
-      const r = measure5DayWinRate(sub, priceData, COST_PCT);
+      const r = measure5DayWinRate(sub, priceData, COST_PCT, yearWindow(yr));
       years.push(`${yr} ${r.winRate5d.toFixed(0)}%/${r.totalSignals}`);
     }
     console.log(`    BY YR: ${years.join('  ')}`);
@@ -1010,10 +1095,10 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       const sub = sigs.filter((s) => tierOf(s.ticker) === tier);
       const r = measure5DayWinRate(sub, priceData, COST_PCT);
       if (r.totalSignals === 0) continue;
-      const hold = sub.filter((s) => s.date.toISOString().slice(0, 4) >= '2025');
-      const h = measure5DayWinRate(hold, priceData, COST_PCT);
+      const { holdout: hold } = splitSignalsByExecutionDate(sub, priceData, new Date('2025-01-01'));
+      const h = measure5DayWinRate(hold, priceData, COST_PCT, laterWindow);
       console.log(
-        `    ${tier.padEnd(7)}: WR=${r.winRate5d.toFixed(1).padStart(5)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${String(r.totalSignals).padStart(5)}  avgRet=${r.avgReturn.toFixed(2)}%  | holdout WR=${h.totalSignals > 0 ? h.winRate5d.toFixed(1) : '—'}% N=${h.totalSignals}`
+        `    ${tier.padEnd(7)}: WR=${r.winRate5d.toFixed(1).padStart(5)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${String(r.totalSignals).padStart(5)}  avgRet=${r.avgReturn.toFixed(2)}%  | later-period WR=${h.totalSignals > 0 ? h.winRate5d.toFixed(1) : '—'}% N=${h.totalSignals}`
       );
     }
   }
@@ -1039,7 +1124,11 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     const r =
       ex.opts === undefined
         ? measure5DayWinRate(v7Signals, priceData, COST_PCT)
-        : measureTrendHoldWinRate(v7Signals, priceData, { ...ex.opts, costPct: COST_PCT });
+        : measureTrendHoldWinRate(v7Signals, priceData, {
+            ...ex.opts,
+            costPct: COST_PCT,
+            evaluationWindow: { start: evaluationStart },
+          });
     const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
     console.log(
       `${ex.name.padEnd(22)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${String(r.totalSignals).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
@@ -1188,9 +1277,12 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     `${'Year'.padEnd(6)} | ${'Signals'.padStart(7)} | ${'WinRate'.padStart(7)} | ${'AvgRet'.padStart(7)} | ${'PerBar'.padStart(7)} | ${'R/R'.padStart(5)} | ${'Hold'.padStart(5)}`
   );
   for (const yr of ENTRY_YEARS) {
-    const sub = v5Signals.filter((s) => s.date.toISOString().slice(0, 4) === yr);
+    const sub = signalsEnteredInYear(v5Signals, yr);
     if (sub.length === 0) continue;
-    const r = measureTrendHoldWinRate(sub, priceData, { costPct: COST_PCT });
+    const r = measureTrendHoldWinRate(sub, priceData, {
+      costPct: COST_PCT,
+      evaluationWindow: yearWindow(yr),
+    });
     const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
     console.log(
       `${yr.padEnd(6)} | ${String(r.totalSignals).padStart(7)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
@@ -1214,7 +1306,11 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     { name: 'flip + trail15', opts: { exitRule: 'flip', stopPct: 8, trailPct: 15 } },
   ];
   for (const v of exitVariants) {
-    const r = measureTrendHoldWinRate(v5Signals, priceData, { ...v.opts, costPct: COST_PCT });
+    const r = measureTrendHoldWinRate(v5Signals, priceData, {
+      ...v.opts,
+      costPct: COST_PCT,
+      evaluationWindow: { start: evaluationStart },
+    });
     const pb = r.avgHoldBars > 0 ? r.avgReturn / r.avgHoldBars : 0;
     console.log(
       `${v.name.padEnd(20)} | ${`${r.winRate5d.toFixed(1)}%`.padStart(7)} | ${`${r.avgReturn.toFixed(2)}%`.padStart(7)} | ${`${pb.toFixed(3)}%`.padStart(7)} | ${r.rewardRisk.toFixed(2).padStart(5)} | ${r.avgHoldBars.toFixed(1).padStart(5)}`
@@ -1260,8 +1356,9 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       if (sig.decision !== 'BUY') continue;
       const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
       if (idx === -1 || idx + 5 >= prices.length) continue;
-      const futurePrice = prices[idx + 5].close;
-      const ret5d = ((futurePrice - sig.close) / sig.close) * 100 - COST_PCT;
+      const trade = getFixedHoldTrade(prices, idx, 5, COST_PCT);
+      if (!trade) continue;
+      const ret5d = trade.returnPct;
 
       diagSignals.push({
         ...sig,
@@ -1537,7 +1634,9 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
       if (idx === -1 || idx + period >= prices.length) continue;
       total++;
-      const ret = ((prices[idx + period].close - sig.close) / sig.close) * 100 - COST_PCT;
+      const trade = getFixedHoldTrade(prices, idx, period, COST_PCT);
+      if (!trade) continue;
+      const ret = trade.returnPct;
       if (ret > 0) wins++;
     }
     const wr = total > 0 ? ((wins / total) * 100).toFixed(1) : 'N/A';
@@ -1557,7 +1656,9 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
       if (idx === -1 || idx + period >= prices.length) continue;
       total++;
-      const ret = ((prices[idx + period].close - sig.close) / sig.close) * 100 - COST_PCT;
+      const trade = getFixedHoldTrade(prices, idx, period, COST_PCT);
+      if (!trade) continue;
+      const ret = trade.returnPct;
       if (ret > 0) wins++;
     }
     const wr = total > 0 ? ((wins / total) * 100).toFixed(1) : 'N/A';
@@ -1686,24 +1787,37 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   //   Eval is O(N) over precomputed 5-day returns, so the FULL discrete grid is
   //   enumerated deterministically — no sampling variance, fully reproducible
   //   (cheaper and more honest than Bayesian search when each eval is O(N)).
-  //   Discipline against overfit: the config is SELECTED on train (entries ≤
-  //   2024) and must INDEPENDENTLY hold on holdout (entries ≥ 2025); per-year
-  //   robustness is printed for the winner.
+  //   Select on outcomes through 2024. The previously inspected period from
+  //   2025 is reported descriptively; independent validation needs fresh data.
   // ==========================================================================
   console.log('\n\n📋 Phase 4: Goal search — WR ≥ 60% & R/R > baseline');
   console.log('='.repeat(130));
 
-  const BASELINE_RR = v5Result.rewardRisk;
-  const BASELINE_WR = v5Result.winRate5d;
-  console.log(
-    `Baseline (V5, fixed 5-day): WR=${BASELINE_WR.toFixed(1)}%  R/R=${BASELINE_RR.toFixed(2)}  N=${v5Result.totalSignals}`
+  const { train: baselineTrain } = splitSignalsByExecutionDate(
+    v5Signals,
+    priceData,
+    new Date('2025-01-01')
   );
-  console.log('Goal: WR ≥ 60.0%  AND  R/R > baseline, holding on BOTH train and holdout.\n');
+  const baselineTrainResult = measure5DayWinRate(
+    baselineTrain,
+    priceData,
+    COST_PCT,
+    trainingWindow
+  );
+  const BASELINE_RR = baselineTrainResult.rewardRisk;
+  const BASELINE_WR = baselineTrainResult.winRate5d;
+  console.log(
+    `Training baseline (V5, fixed 5-day, outcomes ≤2024): WR=${BASELINE_WR.toFixed(1)}%  R/R=${BASELINE_RR.toFixed(2)}  N=${baselineTrainResult.totalSignals}`
+  );
+  console.log(
+    'Training goal: WR ≥ 60.0% AND R/R > training baseline; later outcomes are descriptive.\n'
+  );
 
   interface Enriched {
     ret5d: number;
     win: boolean; // ret5d > 0 (matches measure5DayWinRate)
     year: string;
+    outcomeYear: string;
     ibs: number;
     atrPct: number;
     volR: number;
@@ -1731,11 +1845,14 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     if (!prices) continue;
     const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
     if (idx === -1 || idx + 5 >= prices.length) continue;
-    const ret5d = ((prices[idx + 5].close - sig.close) / sig.close) * 100 - COST_PCT;
+    const trade = getFixedHoldTrade(prices, idx, 5, COST_PCT);
+    if (!trade) continue;
+    const ret5d = trade.returnPct;
     enriched.push({
       ret5d,
       win: ret5d > 0,
-      year: sig.date.toISOString().slice(0, 4),
+      year: trade.entryDate.slice(0, 4),
+      outcomeYear: trade.exitDate.slice(0, 4),
       ibs: sig.ibs,
       atrPct: sig.close > 0 ? (sig.atr / sig.close) * 100 : 0,
       volR: sig.volumeRatio,
@@ -1749,10 +1866,10 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       sma200Above: sig.sma200dist > 0,
     });
   }
-  const trainRows = enriched.filter((e) => e.year <= '2024');
+  const trainRows = enriched.filter((e) => e.outcomeYear <= '2024');
   const testRows = enriched.filter((e) => e.year >= '2025');
   console.log(
-    `Enriched BUY signals: ${enriched.length} (train ≤2024: ${trainRows.length}, holdout ≥2025: ${testRows.length})\n`
+    `Enriched BUY signals: ${enriched.length} (train ≤2024: ${trainRows.length}, later period ≥2025: ${testRows.length})\n`
   );
 
   interface Filt {
@@ -1856,8 +1973,8 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       .filter(Boolean)
       .join(' ') || 'all';
 
-  // Selection criteria — TRAIN must meet the goal with a non-trivial N; HOLDOUT
-  // must independently confirm (slightly relaxed to allow normal sample noise).
+  // Select with a non-trivial training sample. Later-period thresholds are
+  // descriptive summaries only and cannot affect selection.
   const MIN_TRAIN_N = 40;
   const MIN_TEST_N = 20;
   interface Cand {
@@ -1959,41 +2076,36 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
 
   console.log(`Enumerated ${evaluated} filter configs deterministically.\n`);
 
-  // Generalizing = holdout independently meets a (mildly relaxed) bar.
-  const generalizes = (c: Cand): boolean =>
+  // Later-period outcomes are reporting only; they cannot select or rank candidates.
+  const laterPeriodPasses = (c: Cand): boolean =>
     c.test.n >= MIN_TEST_N && c.test.wr >= 58 && c.test.rr > 1.15;
-  const ranked = feasible
-    .filter(generalizes)
-    .sort(
-      (a, b) =>
-        Math.min(b.train.wr, b.test.wr) - Math.min(a.train.wr, a.test.wr) ||
-        b.full.rr - a.full.rr ||
-        b.full.n - a.full.n
-    );
+  const ranked = rankTrainingCandidates(feasible);
 
   console.log(
     `Feasible on train (WR≥60 & R/R>${BASELINE_RR.toFixed(2)} & N≥${MIN_TRAIN_N}): ${feasible.length}`
   );
-  console.log(`Of those, generalizing to holdout: ${ranked.length}\n`);
+  console.log(
+    `Later-period descriptive threshold passes: ${feasible.filter(laterPeriodPasses).length}; not used for candidate choice.\n`
+  );
 
   const hdr = `${'Filter'.padEnd(46)} | ${'trWR'.padStart(5)} ${'trRR'.padStart(5)} ${'trN'.padStart(4)} | ${'teWR'.padStart(5)} ${'teRR'.padStart(5)} ${'teN'.padStart(4)} | ${'fullWR'.padStart(6)} ${'fullRR'.padStart(6)} ${'N'.padStart(4)}`;
   const rowOf = (c: Cand): string =>
     `${describe(c.f).padEnd(46)} | ${c.train.wr.toFixed(1).padStart(5)} ${c.train.rr.toFixed(2).padStart(5)} ${String(c.train.n).padStart(4)} | ${c.test.wr.toFixed(1).padStart(5)} ${c.test.rr.toFixed(2).padStart(5)} ${String(c.test.n).padStart(4)} | ${c.full.wr.toFixed(1).padStart(6)} ${c.full.rr.toFixed(2).padStart(6)} ${String(c.full.n).padStart(4)}`;
 
   if (ranked.length > 0) {
-    console.log('🏆 Generalizing configs (train-selected, holdout-confirmed):');
+    console.log('Training-ranked exploratory configs (later-period outcomes shown):');
     console.log(hdr);
     console.log('-'.repeat(hdr.length));
     for (const c of ranked.slice(0, 25)) console.log(rowOf(c));
 
     const best = ranked[0];
-    console.log('\n✅ GOAL CANDIDATE (best generalizing):');
+    console.log('\nTraining-selected candidate (requires fresh independent validation):');
     console.log(`  Filter: ${describe(best.f)}`);
     console.log(
       `  TRAIN ≤2024 : WR=${best.train.wr.toFixed(1)}%  R/R=${best.train.rr.toFixed(2)}  N=${best.train.n}  avgRet=${best.train.avgRet.toFixed(2)}%`
     );
     console.log(
-      `  HOLDOUT ≥2025: WR=${best.test.wr.toFixed(1)}%  R/R=${best.test.rr.toFixed(2)}  N=${best.test.n}  avgRet=${best.test.avgRet.toFixed(2)}%`
+      `  LATER PERIOD ≥2025: WR=${best.test.wr.toFixed(1)}%  R/R=${best.test.rr.toFixed(2)}  N=${best.test.n}  avgRet=${best.test.avgRet.toFixed(2)}%`
     );
     console.log(
       `  FULL        : WR=${best.full.wr.toFixed(1)}%  R/R=${best.full.rr.toFixed(2)}  N=${best.full.n}  avgRet=${best.full.avgRet.toFixed(2)}%`
@@ -2011,42 +2123,29 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       `\n  ${wrOk ? '✅' : '⚠️'} Full-sample goal ${wrOk ? 'MET' : 'NOT fully met'}: WR ${best.full.wr.toFixed(1)}% (≥60), R/R ${best.full.rr.toFixed(2)} (>${BASELINE_RR.toFixed(2)})`
     );
   } else {
-    console.log('⚠️ No train-selected config generalized to holdout under the goal bar.');
-    console.log('   Closest feasible-on-train configs (may be overfit — holdout shown):');
+    console.log('No training candidate met the goal bar.');
+    console.log('   Closest feasible-on-train configs (may be overfit; later period shown):');
     console.log(hdr);
     console.log('-'.repeat(hdr.length));
-    for (const c of feasible
-      .sort((a, b) => b.test.wr - a.test.wr || b.full.rr - a.full.rr)
-      .slice(0, 20))
-      console.log(rowOf(c));
+    for (const c of rankTrainingCandidates(feasible).slice(0, 20)) console.log(rowOf(c));
   }
 
   // ==========================================================================
-  // Dominance goal — beat V7 on BOTH axes at once, net of costs:
-  //   WR ≥ 70% AND R/R ≥ V7's, independently on train AND holdout.
-  // A higher WR bought by giving back R/R is a re-allocation, not an edge.
+  // Additional training-ranked candidates, net of costs. Their later-period
+  // outcomes remain descriptive and need independent validation.
   // ==========================================================================
-  const V7_RR = v7Result.rewardRisk;
-  const dominant = feasible
-    .filter(
-      (c) =>
-        c.test.n >= MIN_TEST_N &&
-        c.train.wr >= 65 &&
-        c.test.wr >= 65 &&
-        c.train.rr >= V7_RR * 0.9 &&
-        c.test.rr >= V7_RR * 0.9 &&
-        c.full.wr >= 68 &&
-        c.full.rr >= V7_RR
-    )
-    .sort(
-      (a, b) =>
-        Math.min(b.train.wr, b.test.wr) - Math.min(a.train.wr, a.test.wr) ||
-        b.full.rr - a.full.rr ||
-        b.full.n - a.full.n
-    );
+  const { train: v7Train } = splitSignalsByExecutionDate(
+    v7Signals,
+    priceData,
+    new Date('2025-01-01')
+  );
+  const V7_RR = measure5DayWinRate(v7Train, priceData, COST_PCT, trainingWindow).rewardRisk;
+  const dominant = rankTrainingCandidates(
+    feasible.filter((c) => c.train.wr >= 65 && c.train.rr >= V7_RR * 0.9)
+  );
 
   console.log(
-    `\n🥊 Dominance candidates — WR ≥ 68 full / ≥ 65 both splits AND R/R ≥ V7 (${V7_RR.toFixed(2)}):`
+    `\nExploratory training candidates — WR ≥ 65 and R/R ≥ 90% of training V7 (${V7_RR.toFixed(2)}):`
   );
   if (dominant.length === 0) {
     console.log('  None. The WR↑-without-R/R↓ region is empty in this lever space —');
@@ -2063,7 +2162,7 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       `  TRAIN ≤2024 : WR=${champ.train.wr.toFixed(1)}%  R/R=${champ.train.rr.toFixed(2)}  N=${champ.train.n}  avgRet=${champ.train.avgRet.toFixed(2)}%`
     );
     console.log(
-      `  HOLDOUT ≥2025: WR=${champ.test.wr.toFixed(1)}%  R/R=${champ.test.rr.toFixed(2)}  N=${champ.test.n}  avgRet=${champ.test.avgRet.toFixed(2)}%`
+      `  LATER PERIOD ≥2025: WR=${champ.test.wr.toFixed(1)}%  R/R=${champ.test.rr.toFixed(2)}  N=${champ.test.n}  avgRet=${champ.test.avgRet.toFixed(2)}%`
     );
     console.log(
       `  FULL        : WR=${champ.full.wr.toFixed(1)}%  R/R=${champ.full.rr.toFixed(2)}  N=${champ.full.n}  avgRet=${champ.full.avgRet.toFixed(2)}%`

@@ -84,6 +84,11 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
   return (
     <div className="space-y-4">
       <SectionCard title="PARAMETERS">
+        <p className="mb-3 text-xs font-mono text-muted-foreground">
+          Signals use completed daily bars. Entries use the next session's open, followed by a
+          five-session hold. Returns include 10 bps per round trip. Daily closing marks determine
+          drawdown. Results are simulations; optimized parameters are selected on these same bars.
+        </p>
         <BacktestControls value={params} onChange={setParams} disabled={busy} />
         <div className="mt-4 flex items-center gap-2 flex-wrap">
           <Button
@@ -153,7 +158,7 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
       {state.result && (
         <>
           <BacktestMetrics result={state.result} />
-          <SectionCard title="EQUITY CURVE (5-bar hold, compounded)">
+          <SectionCard title="EQUITY CURVE (next-open entry, 5-session hold)">
             <EquityCurveChart points={state.result.equity.points} />
           </SectionCard>
           <SectionCard title={`TRADES (${state.result.trades.length})`}>

@@ -9,6 +9,7 @@ export interface SerializedCandle {
   low: number;
   close: number;
   volume: number;
+  dollarVolume?: number;
 }
 
 export interface SerializedBenchmarkCandle {

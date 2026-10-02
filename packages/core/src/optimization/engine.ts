@@ -4,7 +4,16 @@
  * same code paths run in the CLI, the API, and the browser (Web Worker). No
  * I/O: callers inject candles and benchmark series.
  */
-import { BollingerBands, EMA, MACD, RSI, SMA, Stochastic, WilliamsR } from 'technicalindicators';
+import {
+  ATR,
+  BollingerBands,
+  EMA,
+  MACD,
+  RSI,
+  SMA,
+  Stochastic,
+  WilliamsR,
+} from 'technicalindicators';
 import { DEFAULT_ROUND_TRIP_COST_PCT } from '@/constants';
 import { type GaussianChannelPoint, gaussianChannel } from '@/services/gaussian-channel';
 import { detectPatterns } from '@/services/patterns';
@@ -20,6 +29,22 @@ export interface Candle {
   close: number;
   volume: number;
   adjClose?: number;
+  /** Nominal source close × source volume; adjusted prices alone are not USD turnover. */
+  dollarVolume?: number;
+}
+
+export type ExecutionCandle = Pick<Candle, 'date' | 'open' | 'close'>;
+
+export interface EvaluationWindow {
+  /** Inclusive entry-session bounds, after any indicator warmup. */
+  start?: Date;
+  end?: Date;
+}
+
+interface MacdPoint {
+  MACD?: number;
+  signal?: number;
+  histogram?: number;
 }
 
 export interface BacktestSignal {
@@ -82,16 +107,18 @@ export function buildIndicatorsAtBar(
   donchLowerArr: number[],
   donchUpperArr: number[],
   volMaArr: number[],
-  i: number
+  i: number,
+  macdArr: MacdPoint[] = []
 ): IndicatorValues | null {
   const rsiVal = rsiArr[i - 14];
-  const stochVal = stochArr[i - 14];
-  const bbVal = bbArr[i - 20];
-  const sma20Val = sma20Arr[i - 20];
-  const ema20Val = ema20Arr[i - 20];
-  const sma50Val = sma50Arr[i - 50];
-  const sma200Val = sma200Arr[i - 200];
-  const williamsVal = williamsArr[i - 14];
+  const stochVal = stochArr[i - 13];
+  const bbVal = bbArr[i - 19];
+  const sma20Val = sma20Arr[i - 19];
+  const ema20Val = ema20Arr[i - 19];
+  const sma50Val = sma50Arr[i - 49];
+  const sma200Val = sma200Arr[i - 199];
+  const williamsVal = williamsArr[i - 13];
+  const macd = macdArr[i - 25];
 
   if (rsiVal == null || stochVal == null || bbVal == null || sma20Val == null || ema20Val == null) {
     return null;
@@ -106,9 +133,9 @@ export function buildIndicatorsAtBar(
     donchUpper: donchUpperArr[i],
     williamsR: williamsVal ?? -50,
     atr: atrArr[i],
-    macd: 0,
-    macdSignal: 0,
-    macdHistogram: 0,
+    macd: macd?.MACD ?? 0,
+    macdSignal: macd?.signal ?? 0,
+    macdHistogram: (macd?.MACD ?? 0) - (macd?.signal ?? 0),
     sma20: sma20Val,
     ema20: ema20Val,
     sma50: sma50Val ?? NaN,
@@ -136,7 +163,8 @@ export function alignBenchmark(bench: BenchmarkCandle[], data: { date: Date }[])
  * needs no GPU — the work was simply being recomputed 140×.
  */
 export interface TickerContext {
-  data: { date: Date; open: number; high: number; low: number; close: number; volume: number }[];
+  data: Candle[];
+  evaluationStart: Date;
   closes: number[];
   highs: number[];
   lows: number[];
@@ -159,6 +187,7 @@ export interface TickerContext {
   donchUpperArr: number[];
   volMaArr: number[];
   macdHistArr: number[];
+  macdArr: MacdPoint[];
   avgDollarVolArr: number[];
   gaussianSeries: GaussianChannelPoint[];
   /** SPY Gaussian Channel green per SPY bar (causal) — market-level regime. */
@@ -166,7 +195,7 @@ export interface TickerContext {
 }
 
 export function buildTickerContext(
-  data: { date: Date; open: number; high: number; low: number; close: number; volume: number }[],
+  data: Candle[],
   spy: BenchmarkCandle[] = [],
   sector: BenchmarkCandle[] = []
 ): TickerContext | null {
@@ -210,45 +239,33 @@ export function buildTickerContext(
   const sma200Arr = SMA.calculate({ values: closes, period: 200 });
   const williamsArr = WilliamsR.calculate({ high: highs, low: lows, close: closes, period: 14 });
 
-  // ATR
-  const atrArr: number[] = [];
-  for (let i = 0; i < closes.length; i++) {
-    if (i < 14) {
-      atrArr.push(0);
-      continue;
-    }
-    let sum = 0;
-    for (let j = i - 13; j <= i; j++) {
-      sum += Math.max(
-        highs[j] - lows[j],
-        Math.abs(highs[j] - closes[j - 1]),
-        Math.abs(lows[j] - closes[j - 1])
-      );
-    }
-    atrArr.push(sum / 14);
-  }
+  // Wilder ATR, matching the live indicator service. The first output is bar 14.
+  const atrArr = [
+    ...new Array<number>(14).fill(0),
+    ...ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }),
+  ];
 
   // Donchian
   const donchLowerArr: number[] = [];
   const donchUpperArr: number[] = [];
   for (let i = 0; i < closes.length; i++) {
-    if (i < 20) {
+    if (i < 19) {
       donchLowerArr.push(lows[i]);
       donchUpperArr.push(highs[i]);
       continue;
     }
-    donchLowerArr.push(Math.min(...lows.slice(i - 20, i)));
-    donchUpperArr.push(Math.max(...highs.slice(i - 20, i)));
+    donchLowerArr.push(Math.min(...lows.slice(i - 19, i + 1)));
+    donchUpperArr.push(Math.max(...highs.slice(i - 19, i + 1)));
   }
 
   // Volume MA
   const volMaArr: number[] = [];
   for (let i = 0; i < volumes.length; i++) {
-    if (i < 20) {
+    if (i < 19) {
       volMaArr.push(volumes[i] || 1);
       continue;
     }
-    volMaArr.push(volumes.slice(i - 20, i).reduce((a, b) => a + b, 0) / 20);
+    volMaArr.push(volumes.slice(i - 19, i + 1).reduce((a, b) => a + b, 0) / 20);
   }
 
   // MACD histogram array
@@ -263,7 +280,9 @@ export function buildTickerContext(
   for (let i = 0; i < closes.length; i++) {
     const dvFrom = Math.max(0, i - 19);
     let dollarVolSum = 0;
-    for (let k = dvFrom; k <= i; k++) dollarVolSum += data[k].close * data[k].volume;
+    for (let k = dvFrom; k <= i; k++) {
+      dollarVolSum += data[k].dollarVolume ?? data[k].close * data[k].volume;
+    }
     avgDollarVolArr[i] = dollarVolSum / (i - dvFrom + 1);
   }
 
@@ -278,6 +297,7 @@ export function buildTickerContext(
 
   return {
     data,
+    evaluationStart: data[206].date,
     closes,
     highs,
     lows,
@@ -300,6 +320,7 @@ export function buildTickerContext(
     donchUpperArr,
     volMaArr,
     macdHistArr,
+    macdArr,
     avgDollarVolArr,
     gaussianSeries,
     spyUptrend,
@@ -336,6 +357,7 @@ export function runSignalsWithContext(
     donchUpperArr,
     volMaArr,
     macdHistArr,
+    macdArr,
     avgDollarVolArr,
     gaussianSeries,
   } = ctx;
@@ -361,7 +383,8 @@ export function runSignalsWithContext(
       donchLowerArr,
       donchUpperArr,
       volMaArr,
-      i
+      i,
+      macdArr
     );
     if (!indicators) continue;
 
@@ -376,8 +399,8 @@ export function runSignalsWithContext(
       });
     }
 
-    const histStart = Math.max(0, i - 26 - 4);
-    const histEnd = i - 26 + 1;
+    const histStart = Math.max(0, i - 25 - 4);
+    const histEnd = i - 25 + 1;
     const recentMacdHistogram = histEnd > 0 ? macdHistArr.slice(histStart, histEnd) : [0];
 
     // Detect chart patterns
@@ -414,6 +437,7 @@ export function runSignalsWithContext(
       allHighs: highs.slice(0, i + 1),
       allLows: lows.slice(0, i + 1),
       allVolumes: volumes.slice(0, i + 1),
+      allDates: data.slice(0, i + 1).map((bar) => bar.date),
       spyCandles,
       sectorCandles,
       avgDailyDollarVol,
@@ -483,13 +507,14 @@ export function runSignalsWithContext(
 
 export function measure5DayWinRate(
   signals: BacktestSignal[],
-  allData: Map<string, { date: Date; close: number }[]>,
-  costPct: number = DEFAULT_ROUND_TRIP_COST_PCT
+  allData: Map<string, ExecutionCandle[]>,
+  costPct: number = DEFAULT_ROUND_TRIP_COST_PCT,
+  evaluationWindow: EvaluationWindow = {}
 ): WinRateResult {
   let wins = 0;
   let total = 0;
   const returns: number[] = [];
-  const monthly: Record<string, { wins: number; total: number }> = {};
+  const monthly = createExecutionMonthBreakdown(allData, 5, evaluationWindow);
 
   for (const sig of signals) {
     if (sig.decision !== 'BUY') continue;
@@ -498,16 +523,17 @@ export function measure5DayWinRate(
     if (!prices) continue;
 
     const idx = prices.findIndex((p) => p.date.getTime() === sig.date.getTime());
-    if (idx === -1 || idx + 5 >= prices.length) continue;
+    const trade = getFixedHoldTrade(prices, idx, 5, costPct);
+    if (!trade) continue;
+    const entryDate = prices[trade.entryIdx].date;
+    if (evaluationWindow.start && entryDate < evaluationWindow.start) continue;
+    if (evaluationWindow.end && entryDate > evaluationWindow.end) continue;
 
-    const futurePrice = prices[idx + 5].close;
-    // Net return: round-trip transaction cost comes out of every trade, and a
-    // "win" means the trade made money AFTER costs.
-    const ret = ((futurePrice - sig.close) / sig.close) * 100 - costPct;
+    const ret = trade.returnPct;
     returns.push(ret);
     total++;
 
-    const month = sig.date.toISOString().slice(0, 7);
+    const month = trade.entryDate.slice(0, 7);
     if (!monthly[month]) monthly[month] = { wins: 0, total: 0 };
     monthly[month].total++;
 
@@ -547,6 +573,34 @@ export interface EquityPoint {
   equity: number;
 }
 
+/** Include quiet calendar months in the supplied price window's signal rate. */
+export function createExecutionMonthBreakdown(
+  allData: Map<string, ExecutionCandle[]>,
+  holdBars = 5,
+  evaluationWindow: EvaluationWindow = {}
+): Record<string, { wins: number; total: number }> {
+  let first = Infinity;
+  let last = -Infinity;
+  for (const prices of allData.values()) {
+    if (prices.length <= holdBars) continue;
+    first = Math.min(first, prices[1].date.getTime());
+    last = Math.max(last, prices[prices.length - holdBars].date.getTime());
+  }
+  if (evaluationWindow.start) first = Math.max(first, evaluationWindow.start.getTime());
+  if (evaluationWindow.end) last = Math.min(last, evaluationWindow.end.getTime());
+  const monthly: Record<string, { wins: number; total: number }> = {};
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first > last) return monthly;
+  const start = new Date(first);
+  const end = new Date(last);
+  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  const endMonth = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1);
+  while (cursor.getTime() <= endMonth) {
+    monthly[cursor.toISOString().slice(0, 7)] = { wins: 0, total: 0 };
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return monthly;
+}
+
 export interface BacktestTrade {
   entryDate: string;
   exitDate: string;
@@ -562,18 +616,92 @@ export interface EquityCurveResult {
   maxDrawdown: number;
 }
 
+/** A closed-bar signal enters at the next open and holds complete trading sessions. */
+export function getFixedHoldTrade(
+  prices: ExecutionCandle[],
+  signalIdx: number,
+  holdBars = 5,
+  costPct: number = DEFAULT_ROUND_TRIP_COST_PCT
+): (BacktestTrade & { entryIdx: number; exitIdx: number }) | null {
+  if (!Number.isInteger(holdBars) || holdBars < 1) {
+    throw new Error('holdBars must be a positive integer');
+  }
+  if (!Number.isFinite(costPct) || costPct < 0) {
+    throw new Error('costPct must be a finite non-negative number');
+  }
+  const entryIdx = signalIdx + 1;
+  const exitIdx = signalIdx + holdBars;
+  if (signalIdx < 0 || exitIdx >= prices.length) return null;
+  const entryPrice = prices[entryIdx].open;
+  const exitPrice = prices[exitIdx].close;
+  if (
+    !Number.isFinite(entryPrice) ||
+    entryPrice <= 0 ||
+    !Number.isFinite(exitPrice) ||
+    exitPrice <= 0
+  ) {
+    return null;
+  }
+  return {
+    entryIdx,
+    exitIdx,
+    entryDate: prices[entryIdx].date.toISOString().slice(0, 10),
+    exitDate: prices[exitIdx].date.toISOString().slice(0, 10),
+    entryPrice,
+    exitPrice,
+    returnPct: ((exitPrice - entryPrice) / entryPrice) * 100 - costPct,
+  };
+}
+
+/** Keep validation-period outcomes out of the training sample. */
+export function splitSignalsByExecutionDate(
+  signals: BacktestSignal[],
+  allData: Map<string, ExecutionCandle[]>,
+  boundary: Date,
+  holdBars = 5
+): { train: BacktestSignal[]; holdout: BacktestSignal[]; purged: BacktestSignal[] } {
+  const train: BacktestSignal[] = [];
+  const holdout: BacktestSignal[] = [];
+  const purged: BacktestSignal[] = [];
+  for (const signal of signals) {
+    if (signal.decision !== 'BUY') continue;
+    const prices = allData.get(signal.ticker);
+    if (!prices) continue;
+    const idx = prices.findIndex((bar) => bar.date.getTime() === signal.date.getTime());
+    const trade = getFixedHoldTrade(prices, idx, holdBars, 0);
+    if (!trade) continue;
+    if (prices[trade.entryIdx].date >= boundary) holdout.push(signal);
+    else if (prices[trade.exitIdx].date < boundary) train.push(signal);
+    else purged.push(signal);
+  }
+  return { train, holdout, purged };
+}
+
+/** Candidate choice must not depend on outcomes in a later comparison period. */
+export function rankTrainingCandidates<T extends { train: { wr: number; rr: number; n: number } }>(
+  candidates: T[]
+): T[] {
+  return [...candidates].sort(
+    (a, b) => b.train.wr - a.train.wr || b.train.rr - a.train.rr || b.train.n - a.train.n
+  );
+}
+
 /**
  * Compound a single-ticker equity curve from BUY signals using the same
- * fixed-hold semantics as measure5DayWinRate: enter at the signal close, exit
- * `holdBars` bars later, one position at a time (overlapping BUYs are skipped).
+ * fixed-hold semantics as measure5DayWinRate: enter at the next open and exit
+ * after `holdBars` completed sessions, one position at a time. Equity is marked
+ * at every session close, including unrealized drawdowns and exit costs.
  */
 export function buildEquityCurve(
   signals: BacktestSignal[],
-  prices: { date: Date; close: number }[],
+  prices: ExecutionCandle[],
   holdBars = 5,
   initialCapital = 10_000,
   costPct: number = DEFAULT_ROUND_TRIP_COST_PCT
 ): EquityCurveResult {
+  if (!Number.isFinite(initialCapital) || initialCapital <= 0) {
+    throw new Error('initialCapital must be a finite positive number');
+  }
   const buySignals = signals
     .filter((s) => s.decision === 'BUY')
     .sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -584,43 +712,42 @@ export function buildEquityCurve(
   });
 
   const points: EquityPoint[] = [];
-  const trades: BacktestTrade[] = [];
+  const scheduled: NonNullable<ReturnType<typeof getFixedHoldTrade>>[] = [];
   let equity = initialCapital;
   let peak = initialCapital;
   let maxDrawdown = 0;
   let busyUntil = -1;
 
-  if (prices.length > 0) {
-    points.push({ date: prices[0].date.toISOString().slice(0, 10), equity });
-  }
-
   for (const sig of buySignals) {
     const idx = idxByTime.get(sig.date.getTime());
-    if (idx === undefined || idx <= busyUntil || idx + holdBars >= prices.length) continue;
+    if (idx === undefined) continue;
+    const trade = getFixedHoldTrade(prices, idx, holdBars, costPct);
+    if (!trade || trade.entryIdx <= busyUntil) continue;
+    scheduled.push(trade);
+    busyUntil = trade.exitIdx;
+  }
 
-    const exitIdx = idx + holdBars;
-    const entryPrice = sig.close;
-    const exitPrice = prices[exitIdx].close;
-    const returnPct = ((exitPrice - entryPrice) / entryPrice) * 100 - costPct;
-
-    equity *= 1 + returnPct / 100;
-    peak = Math.max(peak, equity);
-    maxDrawdown = Math.max(maxDrawdown, ((peak - equity) / peak) * 100);
-    busyUntil = exitIdx;
-
-    trades.push({
-      entryDate: sig.date.toISOString().slice(0, 10),
-      exitDate: prices[exitIdx].date.toISOString().slice(0, 10),
-      entryPrice,
-      exitPrice,
-      returnPct,
-    });
-    points.push({ date: prices[exitIdx].date.toISOString().slice(0, 10), equity });
+  let tradeIdx = 0;
+  for (let i = 0; i < prices.length; i++) {
+    const trade = scheduled[tradeIdx];
+    let markedEquity = equity;
+    if (trade && i >= trade.entryIdx) {
+      if (i === trade.exitIdx) {
+        equity *= 1 + trade.returnPct / 100;
+        markedEquity = equity;
+        tradeIdx++;
+      } else {
+        markedEquity = equity * (prices[i].close / trade.entryPrice);
+      }
+    }
+    peak = Math.max(peak, markedEquity);
+    maxDrawdown = Math.max(maxDrawdown, ((peak - markedEquity) / peak) * 100);
+    points.push({ date: prices[i].date.toISOString().slice(0, 10), equity: markedEquity });
   }
 
   return {
     points,
-    trades,
+    trades: scheduled.map(({ entryIdx: _entryIdx, exitIdx: _exitIdx, ...trade }) => trade),
     totalReturn: ((equity - initialCapital) / initialCapital) * 100,
     maxDrawdown,
   };

@@ -10,6 +10,7 @@ interface Candle {
   close: number;
   volume: number;
   adjClose?: number;
+  dollarVolume?: number;
 }
 
 export interface OptimizeProgress {
@@ -36,7 +37,7 @@ export function optimizeWithData(
   onProgress?: (progress: OptimizeProgress) => void,
   benchmarkData?: { spy: BenchmarkCandle[]; sector: BenchmarkCandle[] }
 ): OptimizeWithDataResult {
-  if (data.length < 200) {
+  if (data.length < 210) {
     throw new Error(`Insufficient data: ${data.length} bars`);
   }
 

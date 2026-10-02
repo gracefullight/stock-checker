@@ -16,6 +16,7 @@ export interface Candle {
   close: number;
   volume: number;
   adjClose?: number;
+  dollarVolume?: number;
 }
 
 export const DataLoader = {
@@ -35,6 +36,7 @@ export const DataLoader = {
         close: q.close,
         volume: q.volume,
         adjClose: q.adjClose,
+        dollarVolume: q.dollarVolume,
       }));
     } catch (e) {
       logger.error({ symbol, err: e }, 'Failed to load data');

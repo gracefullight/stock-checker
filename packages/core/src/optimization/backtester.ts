@@ -1,9 +1,11 @@
-import { BollingerBands, EMA, MACD, RSI, SMA, Stochastic, WilliamsR } from 'technicalindicators';
 import { DEFAULT_ROUND_TRIP_COST_PCT } from '@/constants';
+import {
+  buildTickerContext,
+  runSignalsWithContext,
+  type TickerContext,
+} from '@/optimization/engine';
 import type { BacktestMetrics } from '@/optimization/types';
-import { detectPatterns } from '@/services/patterns';
-import { evaluateSignal } from '@/services/pipeline';
-import type { CandleData, IndicatorValues, PipelineConfig } from '@/types';
+import type { PipelineConfig } from '@/types';
 
 interface Candle {
   date: Date;
@@ -13,6 +15,7 @@ interface Candle {
   close: number;
   volume: number;
   adjClose?: number;
+  dollarVolume?: number;
 }
 
 interface Trade {
@@ -32,11 +35,11 @@ interface BenchmarkData {
 
 export class Backtester {
   private data: Candle[];
-  private benchmarkData?: BenchmarkData;
+  private context: TickerContext | null;
 
   constructor(data: Candle[], benchmarkData?: BenchmarkData) {
     this.data = data;
-    this.benchmarkData = benchmarkData;
+    this.context = buildTickerContext(data, benchmarkData?.spy, benchmarkData?.sector);
   }
 
   public run(params: PipelineConfig, initialCapital = 10000): BacktestMetrics {
@@ -46,191 +49,13 @@ export class Backtester {
   }
 
   private generateSignals(params: PipelineConfig): ('BUY' | 'SELL' | 'HOLD')[] {
-    const closes = this.data.map((d) => d.close);
-    const highs = this.data.map((d) => d.high);
-    const lows = this.data.map((d) => d.low);
-    const volumes = this.data.map((d) => d.volume);
-
-    // Pre-compute all indicator arrays once
-    const rsiArr = RSI.calculate({ values: closes, period: 14 });
-    const stochArr = Stochastic.calculate({
-      high: highs,
-      low: lows,
-      close: closes,
-      period: 14,
-      signalPeriod: 3,
-    });
-    const bbArr = BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 });
-    const macdArr = MACD.calculate({
-      values: closes,
-      fastPeriod: 12,
-      slowPeriod: 26,
-      signalPeriod: 9,
-      SimpleMAOscillator: true,
-      SimpleMASignal: true,
-    });
-    const sma20Arr = SMA.calculate({ values: closes, period: 20 });
-    const ema20Arr = EMA.calculate({ values: closes, period: 20 });
-    const sma50Arr = SMA.calculate({ values: closes, period: 50 });
-    const sma200Arr = SMA.calculate({ values: closes, period: 200 });
-    const williamsArr = WilliamsR.calculate({
-      high: highs,
-      low: lows,
-      close: closes,
-      period: 14,
-    });
-
-    // Pre-compute ATR
-    const atrPeriod = 14;
-    const atrArr: number[] = [];
-    for (let i = 0; i < closes.length; i++) {
-      if (i < atrPeriod) {
-        atrArr.push(0);
-        continue;
-      }
-      let sum = 0;
-      for (let j = i - atrPeriod + 1; j <= i; j++) {
-        const tr = Math.max(
-          highs[j] - lows[j],
-          Math.abs(highs[j] - closes[j - 1]),
-          Math.abs(lows[j] - closes[j - 1])
-        );
-        sum += tr;
-      }
-      atrArr.push(sum / atrPeriod);
+    const signals: ('BUY' | 'SELL' | 'HOLD')[] = new Array(this.data.length).fill('HOLD');
+    if (!this.context) return signals;
+    const idxByTime = new Map(this.data.map((bar, i) => [bar.date.getTime(), i]));
+    for (const signal of runSignalsWithContext(this.context, 'BACKTEST', params)) {
+      const idx = idxByTime.get(signal.date.getTime());
+      if (idx !== undefined) signals[idx] = signal.decision;
     }
-
-    // Pre-compute Donchian channels
-    const donchPeriod = 20;
-    const donchLowerArr: number[] = [];
-    const donchUpperArr: number[] = [];
-    for (let i = 0; i < closes.length; i++) {
-      if (i < donchPeriod) {
-        donchLowerArr.push(lows[i]);
-        donchUpperArr.push(highs[i]);
-        continue;
-      }
-      donchLowerArr.push(Math.min(...lows.slice(i - donchPeriod, i)));
-      donchUpperArr.push(Math.max(...highs.slice(i - donchPeriod, i)));
-    }
-
-    // Pre-compute volume moving average
-    const volMaArr: number[] = [];
-    for (let i = 0; i < volumes.length; i++) {
-      if (i < 20) {
-        volMaArr.push(volumes[i] || 1);
-        continue;
-      }
-      volMaArr.push(volumes.slice(i - 20, i).reduce((a, b) => a + b, 0) / 20);
-    }
-
-    // Extract MACD histogram array
-    const macdHistArr = macdArr.map((m) => {
-      const macdVal = (m as { MACD?: number }).MACD ?? 0;
-      const sigVal = (m as { signal?: number }).signal ?? 0;
-      return macdVal - sigVal;
-    });
-
-    const signals: ('BUY' | 'SELL' | 'HOLD')[] = new Array(closes.length).fill('HOLD');
-    const recentBuyDates: Date[] = [];
-
-    // Start at 200 to ensure SMA200 is available
-    const startIdx = Math.max(200, 50);
-    for (let i = startIdx; i < closes.length; i++) {
-      const rsiVal = rsiArr[i - 14];
-      const stochVal = stochArr[i - 14];
-      const bbVal = bbArr[i - 20];
-      const sma20Val = sma20Arr[i - 20];
-      const ema20Val = ema20Arr[i - 20];
-      const sma50Val = sma50Arr[i - 50];
-      const sma200Val = sma200Arr[i - 200];
-      const williamsVal = williamsArr[i - 14];
-
-      if (
-        rsiVal == null ||
-        stochVal == null ||
-        bbVal == null ||
-        sma20Val == null ||
-        ema20Val == null
-      ) {
-        continue;
-      }
-
-      const indicators: IndicatorValues = {
-        rsi: rsiVal,
-        stochasticK: stochVal.k,
-        bbLower: bbVal.lower,
-        bbUpper: bbVal.upper,
-        donchLower: donchLowerArr[i],
-        donchUpper: donchUpperArr[i],
-        williamsR: williamsVal ?? -50,
-        atr: atrArr[i],
-        macd: 0,
-        macdSignal: 0,
-        macdHistogram: macdHistArr[i - 26] ?? 0,
-        sma20: sma20Val,
-        ema20: ema20Val,
-        sma50: sma50Val ?? NaN,
-        sma200: sma200Val ?? NaN,
-        volumeRatio: volMaArr[i] > 0 ? volumes[i] / volMaArr[i] : 1.0,
-      };
-
-      // Recent candles for reversal confirmation
-      const recentCandles: CandleData[] = [];
-      for (let j = Math.max(0, i - 2); j <= i; j++) {
-        recentCandles.push({
-          open: this.data[j].open,
-          close: this.data[j].close,
-          high: this.data[j].high,
-          low: this.data[j].low,
-          volume: this.data[j].volume,
-        });
-      }
-
-      // Recent MACD histogram for crossover detection
-      const histStart = Math.max(0, i - 26 - 4);
-      const histEnd = i - 26 + 1;
-      const recentMacdHistogram = histEnd > 0 ? macdHistArr.slice(histStart, histEnd) : [0];
-
-      // Detect chart patterns from recent price window
-      const patternWindow = Math.min(i + 1, 50);
-      const patternHighs = highs.slice(i - patternWindow + 1, i + 1);
-      const patternLows = lows.slice(i - patternWindow + 1, i + 1);
-      const patternCloses = closes.slice(i - patternWindow + 1, i + 1);
-      const { score: patternScore } = detectPatterns(
-        { highs: patternHighs, lows: patternLows, closes: patternCloses },
-        params.patternWeights
-      );
-
-      const result = evaluateSignal({
-        ticker: 'BACKTEST',
-        indicators,
-        close: closes[i],
-        open: this.data[i].open,
-        fearGreed: null,
-        patternScore,
-        recentCandles,
-        recentMacdHistogram,
-        config: params,
-        recentBuyDates,
-        currentDate: this.data[i].date,
-        allCloses: closes.slice(0, i + 1),
-        allHighs: highs.slice(0, i + 1),
-        allLows: lows.slice(0, i + 1),
-        allVolumes: volumes.slice(0, i + 1),
-        spyCandles: this.benchmarkData?.spy ?? [],
-        sectorCandles: this.benchmarkData?.sector ?? [],
-        avgDailyDollarVol: closes[i] * volumes[i],
-        earningsBeat: null,
-        earningsEstimateUp: null,
-      });
-
-      signals[i] = result.finalDecision;
-      if (result.finalDecision === 'BUY') {
-        recentBuyDates.push(this.data[i].date);
-      }
-    }
-
     return signals;
   }
 
@@ -240,9 +65,9 @@ export class Backtester {
     const closes = this.data.map((d) => d.close);
     const dates = this.data.map((d) => d.date);
 
-    for (let i = 0; i < signals.length; i++) {
-      const signal = signals[i];
-      const price = closes[i];
+    for (let i = 1; i < signals.length; i++) {
+      const signal = signals[i - 1];
+      const price = this.data[i].open;
       const date = dates[i];
 
       if (position && signal === 'SELL') {
@@ -294,6 +119,7 @@ export class Backtester {
     let entryPrice = 0;
 
     let tradeIdx = 0;
+    const realizedProfits: number[] = [];
     for (let i = 0; i < closes.length; i++) {
       if (tradeIdx < trades.length && !inPosition) {
         const trade = trades[tradeIdx];
@@ -310,7 +136,9 @@ export class Backtester {
         if (tradeIdx < trades.length) {
           const trade = trades[tradeIdx];
           if (this.data[i].date.getTime() === trade.exitDate.getTime()) {
+            realizedProfits.push(currentBalance * (trade.profitPercent / 100));
             currentBalance *= 1 + trade.profitPercent / 100;
+            dailyEquity[i] = currentBalance;
             inPosition = false;
             tradeIdx++;
           }
@@ -341,11 +169,14 @@ export class Backtester {
     }
 
     const winTrades = trades.filter((t) => t.profit > 0);
-    const loseTrades = trades.filter((t) => t.profit <= 0);
     const winRate = trades.length > 0 ? (winTrades.length / trades.length) * 100 : 0;
 
-    const grossProfit = winTrades.reduce((sum, t) => sum + t.profit, 0);
-    const grossLoss = Math.abs(loseTrades.reduce((sum, t) => sum + t.profit, 0));
+    const grossProfit = realizedProfits
+      .filter((profit) => profit > 0)
+      .reduce((sum, profit) => sum + profit, 0);
+    const grossLoss = Math.abs(
+      realizedProfits.filter((profit) => profit <= 0).reduce((sum, profit) => sum + profit, 0)
+    );
     const profitFactor =
       grossLoss === 0 ? (grossProfit > 0 ? Infinity : 0) : grossProfit / grossLoss;
 

@@ -31,25 +31,37 @@ function Metric({
 
 export function BacktestMetrics({ result }: BacktestMetricsProps) {
   const { winRate, equity } = result;
+  const hasObservations = winRate.totalSignals > 0;
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
       <Metric
         label="WIN RATE (5D)"
-        value={`${winRate.winRate5d.toFixed(1)}%`}
+        value={hasObservations ? `${winRate.winRate5d.toFixed(1)}%` : 'N/A'}
         tone={
-          winRate.winRate5d >= 55 ? 'success' : winRate.winRate5d >= 45 ? 'warning' : 'destructive'
+          !hasObservations
+            ? undefined
+            : winRate.winRate5d >= 55
+              ? 'success'
+              : winRate.winRate5d >= 45
+                ? 'warning'
+                : 'destructive'
         }
       />
       <Metric
-        label="REWARD / RISK"
-        value={winRate.rewardRisk.toFixed(2)}
+        label="PAYOFF RATIO"
+        value={hasObservations && winRate.avgLoss > 0 ? winRate.rewardRisk.toFixed(2) : 'N/A'}
         tone={winRate.rewardRisk >= 1.2 ? 'success' : undefined}
       />
-      <Metric label="TRADES" value={String(winRate.totalSignals)} />
+      <Metric label="BUY OBSERVATIONS" value={String(winRate.totalSignals)} />
+      <Metric label="EXECUTED TRADES" value={String(result.trades.length)} />
       <Metric
         label="AVG RETURN"
-        value={`${winRate.avgReturn >= 0 ? '+' : ''}${winRate.avgReturn.toFixed(2)}%`}
-        tone={winRate.avgReturn >= 0 ? 'success' : 'destructive'}
+        value={
+          hasObservations
+            ? `${winRate.avgReturn >= 0 ? '+' : ''}${winRate.avgReturn.toFixed(2)}%`
+            : 'N/A'
+        }
+        tone={!hasObservations ? undefined : winRate.avgReturn >= 0 ? 'success' : 'destructive'}
       />
       <Metric
         label="TOTAL RETURN"

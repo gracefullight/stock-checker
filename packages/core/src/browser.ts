@@ -57,12 +57,11 @@ export function runBacktest(
   if (!ctx) return null;
 
   const signals = runSignalsWithContext(ctx, ticker, config);
-  const priceData = new Map([[ticker, candles.map((d) => ({ date: d.date, close: d.close }))]]);
-  const winRate = measure5DayWinRate(signals, priceData);
-  const equityCurve = buildEquityCurve(
-    signals,
-    candles.map((d) => ({ date: d.date, close: d.close }))
-  );
+  const priceData = new Map([[ticker, candles]]);
+  const winRate = measure5DayWinRate(signals, priceData, undefined, {
+    start: ctx.evaluationStart,
+  });
+  const equityCurve = buildEquityCurve(signals, candles);
 
   return { winRate, equityCurve, signals };
 }

@@ -23,7 +23,7 @@ export class Optimizer {
     logger.info(`Starting optimization for ${this.strategyName} on ${symbol}...`);
 
     const data = await DataLoader.loadHistoricalData(symbol);
-    if (data.length < 200) {
+    if (data.length < 210) {
       throw new Error(`Insufficient data for ${symbol}: ${data.length} bars`);
     }
 
