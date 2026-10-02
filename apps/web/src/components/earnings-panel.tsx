@@ -39,7 +39,9 @@ export function EarningsPanel({ earnings }: EarningsPanelProps) {
           </div>
           <div className="flex items-baseline justify-between gap-2">
             <span className="text-[10px] tracking-widest text-muted-foreground">ANALYSTS</span>
-            <span className="tabular-nums text-muted-foreground">{est.numberOfAnalysts}</span>
+            <span className="tabular-nums text-muted-foreground">
+              {est.numberOfAnalysts ?? '—'}
+            </span>
           </div>
         </div>
       ) : (
@@ -51,9 +53,9 @@ export function EarningsPanel({ earnings }: EarningsPanelProps) {
         <div className="flex items-baseline justify-between gap-2 font-mono text-xs border-t border-border/50 pt-2">
           <span className="text-[10px] tracking-widest text-muted-foreground">REVISIONS (30D)</span>
           <span className="tabular-nums">
-            <span className="text-success">▲{rev.up30 ?? 0}</span>
+            <span className="text-success">▲{rev.up30 ?? '—'}</span>
             <span className="text-muted-foreground"> / </span>
-            <span className="text-destructive">▼{rev.down30 ?? 0}</span>
+            <span className="text-destructive">▼{rev.down30 ?? '—'}</span>
             {rev.direction && (
               <span
                 className={
@@ -86,10 +88,14 @@ export function EarningsPanel({ earnings }: EarningsPanelProps) {
           </thead>
           <tbody>
             {history.map((h) => {
-              const beat = h.surprisePercent != null && h.surprisePercent >= 0;
+              const beat = h.surprisePercent != null && h.surprisePercent > 0;
+              const met = h.surprisePercent === 0;
               return (
                 <tr key={h.reportDate} className="font-mono text-xs">
-                  <td className="py-0.5 text-muted-foreground">{h.reportDate.slice(0, 10)}</td>
+                  <td className="py-0.5 text-muted-foreground">
+                    {h.reportDate.slice(0, 10)}
+                    {h.dateBasis === 'fiscal-quarter' ? ' (quarter)' : ''}
+                  </td>
                   <td className="py-0.5 text-right tabular-nums text-muted-foreground">
                     {fmtEps(h.epsEstimate)}
                   </td>
@@ -98,7 +104,7 @@ export function EarningsPanel({ earnings }: EarningsPanelProps) {
                   </td>
                   <td
                     className={`py-0.5 text-right tabular-nums ${
-                      h.surprisePercent == null
+                      h.surprisePercent == null || met
                         ? 'text-muted-foreground'
                         : beat
                           ? 'text-success'
@@ -106,7 +112,7 @@ export function EarningsPanel({ earnings }: EarningsPanelProps) {
                     }`}
                   >
                     {h.surprisePercent != null
-                      ? `${h.surprisePercent.toFixed(1)}% ${beat ? 'BEAT' : 'MISS'}`
+                      ? `${h.surprisePercent.toFixed(1)}% ${met ? 'MET' : beat ? 'BEAT' : 'MISS'}`
                       : '—'}
                   </td>
                 </tr>

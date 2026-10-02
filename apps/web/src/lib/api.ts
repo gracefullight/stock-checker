@@ -29,6 +29,7 @@ export interface FundamentalsDTO {
 
 export interface EarningsHistoryRowDTO {
   reportDate: string;
+  dateBasis?: 'reported' | 'fiscal-quarter';
   epsActual: number | null;
   epsEstimate: number | null;
   epsDifference: number | null;
@@ -47,11 +48,11 @@ export interface EarningsDTO {
   ticker: string;
   nextEarningsDate: string | null;
   nextEarningsEstimate: {
-    avg: number;
-    low: number;
-    high: number;
-    yearAgoEps: number;
-    numberOfAnalysts: number;
+    avg: number | null;
+    low: number | null;
+    high: number | null;
+    yearAgoEps: number | null;
+    numberOfAnalysts: number | null;
   } | null;
   earningsHistory: EarningsHistoryRowDTO[];
   estimateRevisions: EstimateRevisionsDTO | null;

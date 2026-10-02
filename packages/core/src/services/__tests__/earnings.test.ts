@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { calculateEarningsSurpriseAverage, getEarningsData } from '@/services/earnings';
+import {
+  calculateEarningsSurpriseAverage,
+  formatEarningsData,
+  getEarningsData,
+} from '@/services/earnings';
 import yahooFinance from '@/services/yahoo-finance';
 
 vi.mock('@/services/yahoo-finance', () => ({
@@ -14,6 +18,200 @@ describe('earnings service', () => {
   });
 
   describe('getEarningsData', () => {
+    it('sorts history chronologically so the last row is the latest reported result', async () => {
+      vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
+        earningsHistory: {
+          history: [
+            { epsActualDate: '2026-06-30', epsActual: 2, epsEstimate: 1 },
+            { epsActualDate: '2026-03-31', epsActual: 1, epsEstimate: 2 },
+          ],
+        },
+      } as never);
+
+      const result = await getEarningsData('AAPL');
+
+      expect(result.earningsHistory.at(-1)?.epsActual).toBe(2);
+      expect(result.earningsHistory[0].reportDate.toISOString()).toBe('2026-03-31T00:00:00.000Z');
+    });
+
+    it('reads standard Yahoo fiscal-quarter history without inventing publication dates', async () => {
+      vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
+        earningsHistory: {
+          history: [{ quarter: new Date('2026-03-31'), epsActual: -1, epsEstimate: -2 }],
+        },
+      } as never);
+
+      const result = await getEarningsData('AAPL');
+
+      expect(result.earningsHistory).toHaveLength(1);
+      expect(result.earningsHistory[0]).toMatchObject({
+        dateBasis: 'fiscal-quarter',
+        epsActual: -1,
+        epsEstimate: -2,
+        epsDifference: 1,
+        surprisePercent: 50,
+      });
+      expect(formatEarningsData(result)).toContain('2026-03-31 (quarter):');
+    });
+
+    it.each([
+      { epsActual: Number.NaN, epsEstimate: 2, expectedActual: null, expectedEstimate: 2 },
+      {
+        epsActual: 1,
+        epsEstimate: Number.POSITIVE_INFINITY,
+        expectedActual: 1,
+        expectedEstimate: null,
+      },
+    ])('treats non-finite EPS as unknown: %j', async ({
+      epsActual,
+      epsEstimate,
+      expectedActual,
+      expectedEstimate,
+    }) => {
+      vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
+        earningsHistory: { history: [{ epsActualDate: '2026-03-31', epsActual, epsEstimate }] },
+      } as never);
+
+      const result = await getEarningsData('AAPL');
+
+      expect(result.earningsHistory[0]).toMatchObject({
+        epsActual: expectedActual,
+        epsEstimate: expectedEstimate,
+        epsDifference: null,
+        surprisePercent: null,
+      });
+      expect(formatEarningsData(result)).toContain('Average Surprise: N/A');
+    });
+
+    it('selects current-quarter revisions and nested consensus by period instead of array order', async () => {
+      vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
+        earningsTrend: {
+          trend: [
+            {
+              period: '+1q',
+              endDate: new Date('2026-09-30'),
+              epsTrend: { current: 3, '30daysAgo': 2 },
+            },
+            { period: '0y', endDate: new Date('2026-12-31'), earningsEstimate: { avg: 4 } },
+            {
+              period: '0q',
+              endDate: new Date('2026-06-30'),
+              earningsEstimate: {
+                avg: 1,
+                low: 0.5,
+                high: 1.5,
+                yearAgoEps: 0.8,
+                numberOfAnalysts: 10,
+              },
+              epsTrend: { current: 1, '30daysAgo': 2 },
+            },
+          ],
+        },
+      } as never);
+
+      const result = await getEarningsData('AAPL');
+
+      expect(result.estimateRevisions).toMatchObject({
+        current: 1,
+        thirtyDaysAgo: 2,
+        direction: 'down',
+      });
+      expect(result.nextEarningsEstimate).toEqual({
+        avg: 1,
+        low: 0.5,
+        high: 1.5,
+        yearAgoEps: 0.8,
+        numberOfAnalysts: 10,
+      });
+      expect(result.currentQuarterEstimate).toBe(1);
+      expect(result.currentYearEstimate).toBe(4);
+    });
+
+    it('does not borrow next-quarter revisions when current-quarter data is absent', async () => {
+      vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
+        earningsTrend: {
+          trend: [
+            {
+              period: '+1q',
+              endDate: new Date('2026-09-30'),
+              epsTrend: { current: 3, '30daysAgo': 2 },
+            },
+          ],
+        },
+      } as never);
+
+      const result = await getEarningsData('AAPL');
+
+      expect(result.estimateRevisions).toBeNull();
+      expect(result.currentQuarterEstimate).toBeNull();
+      expect(result.nextEarningsEstimate).toBeNull();
+    });
+
+    it.each([
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+    ])('does not classify a non-finite estimate as flat (%s)', async (current) => {
+      vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
+        earningsTrend: {
+          trend: [
+            {
+              period: '0q',
+              endDate: new Date('2026-06-30'),
+              epsTrend: { current, '30daysAgo': 1 },
+              epsRevisions: { upLast30days: -1, downLast30days: 1.5 },
+            },
+          ],
+        },
+      } as never);
+
+      const result = await getEarningsData('AAPL');
+
+      expect(result.estimateRevisions).toEqual({
+        up30: null,
+        down30: null,
+        current: null,
+        thirtyDaysAgo: 1,
+        direction: null,
+      });
+    });
+
+    it('keeps negative current-quarter estimates and missing consensus values', async () => {
+      vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
+        earningsTrend: {
+          trend: [
+            {
+              period: '0q',
+              endDate: new Date('2026-06-30'),
+              earningsEstimate: {
+                avg: -1,
+                low: Number.NaN,
+                high: null,
+                yearAgoEps: -2,
+                numberOfAnalysts: null,
+              },
+              epsTrend: { current: -1, '30daysAgo': -2 },
+            },
+          ],
+        },
+        calendarEvents: { earnings: { earningsDate: [new Date('invalid')] } },
+      } as never);
+
+      const result = await getEarningsData('AAPL');
+
+      expect(result.nextEarningsEstimate).toEqual({
+        avg: -1,
+        low: null,
+        high: null,
+        yearAgoEps: -2,
+        numberOfAnalysts: null,
+      });
+      expect(result.estimateRevisions?.direction).toBe('up');
+      expect(result.nextEarningsDate).toBeNull();
+      expect(formatEarningsData({ ...result, nextEarningsDate: new Date('2026-07-20') })).toContain(
+        'Range: N/A - N/A'
+      );
+    });
+
     it('should return earnings data for a stock', async () => {
       const mockSummary = {
         calendarEvents: {
@@ -68,13 +266,13 @@ describe('earnings service', () => {
       expect(result.ticker).toBe('AAPL');
       expect(result.nextEarningsDate).toEqual(new Date('2024-02-01'));
       expect(result.earningsHistory).toHaveLength(2);
-      expect(result.earningsHistory[0]).toMatchObject({
+      expect(result.earningsHistory[1]).toMatchObject({
         reportDate: new Date('2023-10-25'),
         epsActual: 1.26,
         epsEstimate: 1.22,
       });
-      expect(result.earningsHistory[0].epsDifference).toBeCloseTo(0.04);
-      expect(result.earningsHistory[0].surprisePercent).toBeCloseTo(3.28);
+      expect(result.earningsHistory[1].epsDifference).toBeCloseTo(0.04);
+      expect(result.earningsHistory[1].surprisePercent).toBeCloseTo(3.28);
       expect(result.earningsTrend).toHaveLength(1);
       expect(result.earningsTrend[0].endDate).toEqual(new Date('2024-03-31'));
       expect(result.currentQuarterEstimate).toBeNull();
