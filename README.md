@@ -1,8 +1,8 @@
 # Stock Checker
 
 A bun-workspaces monorepo that screens US equities with an institutional-flow
-signal engine, visualizes them in a web UI, and validates every strategy change
-with a backtest.
+signal engine, visualizes them in a web UI, and evaluates strategies against
+historical data.
 
 | Package | What it is |
 |---|---|
@@ -23,57 +23,53 @@ revisions over oscillator soup.
 - **Trend regime** — Gaussian Channel (green = uptrend, red = downtrend) gates all buys.
 - **Institutional flow score** — relative strength vs SPY and the sector ETF,
   VWAP accumulation, breakout volume, dollar-volume liquidity, earnings revisions.
-- **Strong-leader pullback entry (주도주 눌림목)** — BUY only when a name that
-  is STRONGLY outperforming both the market and its sector (`rs ≥ 0.7`) pulls
-  back below its 50-day SMA on a calm bar that closed in the bottom 20% of its
-  range (`ibs < 0.2`) with real participation. Backtested (8y incl. the 2020
-  crash and the 2022 bear, **546 tickers**, real pipeline, net of a 10bps
-  round-trip cost): **60.4% 5-day win rate / 1.28 reward-risk / N=225** vs the
-  51.3% / 1.05 ungated baseline (z≈2.6, p≈0.004), every entry year ≥ 50%.
+- **Strong-leader pullback entry (주도주 눌림목)** — the current rules require
+  strong relative strength against both SPY and the ticker's sector, a calm
+  pullback below the 50-day SMA, and a close near the bar's low. Missing or
+  mismatched benchmark dates provide no relative-strength evidence.
 - **SELL = exit discipline, not a downside prediction** — distribution-day
   SELLs are suppressed inside intact uptrends and only fire when the trend
   itself is broken.
 - Classic indicators (RSI, Stochastic %K, Bollinger, Donchian, Williams %R,
-  MACD, ATR, volume ratio, Fear & Greed) are still computed and displayed, but
-  they season the score rather than drive it.
+  MACD, ATR, volume ratio) supplement the flow score. Bitcoin Fear & Greed is
+  displayed separately and excluded from equity decisions.
 - Volatility-adjusted risk levels per signal: 1.5×ATR stop loss, 2× reward
   take profit, trailing stop that activates after a 0.5×ATR move.
 
-## Validated results
+## Performance validation status
 
-8-year window (entry years 2019–2026, incl. the 2020 COVID crash and the 2022
-rate-hike bear), **546-ticker** diversified universe (large + mid + small cap,
-all 11 sectors), fixed 5-day exit, evaluated through the real pipeline, **net
-of a 10bps round-trip transaction cost** (a "win" = profitable after costs).
-Full context and hard-won validation rules in
-[docs/TRADING_PRINCIPLES.md](docs/TRADING_PRINCIPLES.md).
+The previous **60.4% win rate / 1.28 reward-risk** figures are withdrawn as
+validation of the current implementation. The finance audit found next-session
+information in historical benchmark inputs, same-close entries after close-based
+signals, inconsistent indicators and corporate-action adjustments, and a
+holdout period reused to rank candidate configurations. The archived figures in
+[docs/TRADING_PRINCIPLES.md](docs/TRADING_PRINCIPLES.md) describe exploratory
+runs of the previous implementation.
 
-| Config | WR (5d) | R/R | N | Avg ret/trade |
-|---|---|---|---|---|
-| **Shipped gate** (`rs≥0.7` + `ibs<0.2` + `scr<400` + below-50d) | **60.4%** | **1.28** | 225 | 1.08% |
-| Legacy V7 gate (`rs≥0.5`, `ibs<0.3`, `scr<380`) | 56.3% | 1.32 | 476 | 0.85% |
-| + SPY kill-switch + 200d stage (NOT shipped — hurts at scale) | 55.7% | 1.29 | 230 | 0.79% |
-| V5 institutional baseline (no quality gate) | 51.3% | 1.05 | 84,541 | 0.20% |
+The corrected fixed-hold evaluator enters at the next session's open, exits after
+five trading sessions including the entry session, and charges 10 bps per round
+trip. The equity curve marks open positions at each daily close, including
+intervening losses. Signal statistics can include overlapping observations;
+the single-position equity curve accepts only non-overlapping trades. Its
+maximum drawdown uses daily closing marks and does not measure intraday losses.
 
-Shipped gate by entry year (WR / N): 2019 66%/41 · 2020 62%/21 · 2021 61%/33 ·
-2022 55%/40 · 2023 52%/29 · 2024 55%/22 · 2025 65%/20 · 2026 74%/19 — every
-year ≥ 50%, both bear regimes included. Train ≤2024: 58.6% / 1.19 (N=186) ·
-holdout ≥2025: 69.2% / 2.35 (N=39). Significant vs baseline (z≈2.6, p≈0.004).
+Historical OHLC fields use the same split/dividend-adjusted scale when the
+provider supplies adjustment data. Bitcoin Fear & Greed is displayed as Bitcoin
+sentiment and contributes no evidence to US equity signals. Estimate revisions
+compare the same forecast period over time, rather than different quarters.
+BUY/SELL/HOLD percentages are score weights, not proven trade-success probabilities.
 
-**Market-cap scope.** This is a **large-cap strategy**: ~90% of gate signals
-fire on $10B+ names (the `atr%<3.5` calmness and `rs≥0.7` leadership profile
-rarely matches smaller names). On mid caps the WR edge disappears (≈52% vs a
-50.5% mid baseline, N=25 — winners run bigger but no hit-rate edge); the
-ungated small-cap pullback baseline is outright negative (46% WR, −0.07%/trade).
-Trade it on liquid large caps only.
+The learning evaluator compares consistently adjusted daily closes over five
+subsequent observed trading sessions. Its ±2% BUY/SELL hit rate measures direction,
+and its fitted Brier score is in-sample; neither measures executed net profit.
 
-**Falsification record.** On the original 122-ticker growth-heavy universe the
-same family printed up to **71.7% WR / 1.75 R/R (N=46)** — expanding the
-universe 4.5× collapsed it. The 70%+ readings were small-N universe artifacts,
-not edge ("universe shapes conclusions"). The SPY-Gaussian market kill-switch
-helped at 122 tickers and consistently *hurt* at scale, so it ships as an
-optional gate param, off by default. Remaining caveats: as-of-today universe
-and cap tiers (survivorship bias), no live forward track record.
+A new broad-universe, cost-adjusted, untouched out-of-sample evaluation is required
+before publishing a performance claim. Current ticker/sector mappings still carry
+survivorship and classification bias, and historical earnings information is not
+available as a point-in-time series. Live snapshots also lack the historical
+engine's cluster state, so repeated BUY displays are not separate backtested
+entries. The code fixes have regression coverage;
+they do not establish a profitable strategy.
 
 ## Usage
 

@@ -241,8 +241,8 @@ export interface PipelineConfig {
    *   - IBS  = (close − low) / (high − low) < ibsMax  (closed near the low = bought weakness)
    *   - ATR% = atr / close * 100        < atrPctMax    (calmer name)
    *   - volRMin < volumeRatio < volRMax  (real but not climactic/blowoff volume)
-   * Backtested (5-day directional, train ≤2024 / holdout ≥2025) to lift win rate
-   * to ~65% with R/R ~1.5, both well above the institutional baseline (53% / 1.21).
+   * Thresholds express the setup rules; historical performance claims are
+   * withdrawn pending validation with causal data and next-session execution.
    */
   qualityGate?: {
     enabled: boolean;

@@ -176,46 +176,13 @@ export const DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG = {
 } satisfies import('@/types').PipelineConfig;
 
 /**
- * Entry-quality gate — the "leader pullback" (주도주 눌림목) setup from the two
- * institutional-flow essays, validated through the REAL pipeline (with
- * setup-consumed cluster semantics) on a diversified 546-ticker, 8-year span
- * (entry years 2019–2026, incl. the 2020 crash and 2022 bear), NET of a 10bps
- * round-trip transaction cost:
+ * Entry-quality gate for liquid leader pullbacks. Requires market and sector
+ * relative strength, a close below SMA50, low IBS, bounded ATR%, participation,
+ * and a buy-score cap. Thresholds are retained pending new validation.
  *
- *   rsMin 0.7            — STRONGLY outperforming the market AND its sector
- *                          (상대강도: "is it stronger than everything else?" —
- *                          essay #1 §5)
- *   requireBelowSma50    — pulled back below the 50-day line: buy leaders on
- *                          weakness within a Gaussian-confirmed trend, never chase
- *   ibs<0.2              — entry bar closed in the bottom 20% of its range:
- *                          a DEEP intraday flush, not a mild dip (the ibs
- *                          family improved monotonically on every universe
- *                          tested: 0.3 → 0.25 → 0.2)
- *   atr%<3.5             — calm name, not a volatility blowup
- *   volR>0.8 (no upper)  — real participation; pullback bars rarely blow off
- *   buyScore<400         — anti-parabolic cap (essay #1 §6: extension ≠ entry)
- *
- *   → 5-day WR 60.4% / R/R 1.28 / N=225 / avgRet 1.08% (train ≤2024:
- *     58.6%/1.19, holdout ≥2025: 69.2%/2.35; by year 2019 66% / 2020 62% /
- *     2021 61% / 2022 55% / 2023 52% / 2024 55% / 2025 65% / 2026 74% —
- *     every entry year ≥ 50%) vs institutional baseline 51.3% / 1.05 —
- *     statistically significant (z≈2.6, p≈0.004).
- *     The legacy V7 gate (rs .5, ibs .3, scr<380) sits at 56.3% / 1.32 / N=476.
- *
- * Cap-tier scope: this is a LARGE-CAP strategy — ~90% of gate signals are
- * $10B+ names. On mid caps the gate rarely fires and the WR edge disappears
- * (≈52% vs a 50.5% mid baseline, though winners run bigger); the ungated
- * small-cap baseline is outright negative (46% WR). Trade it on liquid
- * large caps.
- *
- * Falsification record (hard-won rule #2 — universe shapes conclusions): on
- * the original 122-ticker growth-heavy universe this family printed
- * 66–72% WR with R/R 1.45–1.75 (N=46–66). Expanding to 408+ tickers collapsed
- * those numbers — the 70%+ readings were small-N universe artifacts, NOT edge.
- * Likewise `requireMarketUptrend` (SPY Gaussian green) and `requireAboveSma200`
- * HELPED on 122 tickers but consistently HURT at scale, matching the published
- * stock-level evidence — both remain available as gate params but are NOT
- * part of the default.
+ * Historical performance claims from the previous backtest implementation are
+ * withdrawn: benchmark lookahead, same-close execution, indicator alignment and
+ * candidate selection contaminated those results. See TRADING_PRINCIPLES.md.
  */
 export const DEFAULT_QUALITY_GATE = {
   enabled: true,
@@ -229,10 +196,8 @@ export const DEFAULT_QUALITY_GATE = {
 };
 
 /**
- * Institutional (flow-primary) strategy WITH the entry-quality gate enabled.
- * This is the recommended high-selectivity config: fewer, higher-quality entries
- * — 60.4% WR / 1.28 R/R / N=225 over 8y on a 546-ticker universe, net of the
- * round-trip transaction cost (see DEFAULT_QUALITY_GATE for the full record).
+ * Institutional strategy with the entry-quality gate enabled.
+ * Its corrected execution model still needs independent out-of-sample validation.
  */
 export const DEFAULT_QUALITY_PIPELINE_CONFIG = {
   ...DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,

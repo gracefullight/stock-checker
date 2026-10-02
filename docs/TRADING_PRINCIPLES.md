@@ -4,6 +4,71 @@ Two essays define this project's signal philosophy. **Every algorithm change mus
 be justified against these principles and validated by backtest through the real
 pipeline** (post-hoc filters have repeatedly overestimated edges).
 
+## Current financial validation status
+
+The numerical results below are an archive of exploratory runs of the previous
+implementation. They are **not validation of the corrected engine**. The finance
+audit identified future benchmark leakage in the optimizer, same-close fills
+for signals computed from that close, live/backtest indicator differences,
+inconsistent adjusted OHLC fields, and selection that reused the nominal
+holdout period. The earlier significance and holdout claims are withdrawn.
+
+The current fixed-hold evaluator uses a next-session-open entry and the close of
+the fifth entry session for exit, charging the configured round-trip cost
+(default 10 bps). The equity curve holds at most one position and marks it at each
+daily close. This distinguishes signal observations, which may overlap, from
+executed trades. Maximum drawdown is measured on daily closing equity, not
+intraday marks. The optimizer enters and exits on the next open after a signal,
+and closes remaining positions at the final close. The separate trend-hold
+research evaluator executes stop gaps at the session open and assumes the stop
+hits first when an OHLC bar touches both stop and target.
+
+Use consistent split/dividend-adjusted historical OHLC, exact stock/benchmark
+session endpoints, and no positive relative-strength evidence for missing data.
+[Tiingo's data definition](https://www.tiingo.com/documentation/end-of-day)
+provides adjusted OHLC and volume fields;
+[Yahoo's adjusted-close definition](https://help.yahoo.com/kb/SLN28256.html)
+explains its split and dividend adjustments. Missing adjustment fields retain
+provider-scale limitations and require inspection around corporate actions.
+
+[Alternative.me's index](https://alternative.me/crypto/fear-and-greed-index/)
+measures Bitcoin sentiment. It is display-only context for this US equity app.
+Current-quarter EPS changes across quarters do not establish estimate revisions;
+use same-period forecast changes. Historical earnings beats and revisions are
+unavailable as a point-in-time series, so backtests omit those inputs. Live and
+historical scores therefore still differ on earnings evidence.
+
+Historical evaluation consumes BUY and quality-blocked setups in its cluster
+window. The live API and CLI currently return stateless snapshots without that
+prior setup state. Repeated live BUY snapshots therefore do not represent
+separate entries under the clustered backtest, and live/backtest execution
+equivalence is not established.
+
+The [Yahoo Finance client schema](https://github.com/gadicc/yahoo-finance2/blob/dev/src/modules/quoteSummary-iface.ts)
+supplies fiscal-quarter history dates and nested consensus estimates. Quarter
+labels are identified separately from actual release dates, and missing estimates
+and analyst revision counts remain unknown. Both the parameter optimizer and
+the fitted Brier score use their training sample; neither constitutes independent
+validation or a calibrated probability of a profitable trade.
+
+Learning outcomes use freshly loaded daily history for each ticker, rather than
+sparse prediction CSV rows with mixed historical price scales. The fifth
+subsequent observed session defines the directional outcome; incomplete or
+invalid endpoint data stays unmatched. The ±2% BUY/SELL diagnostic is not
+the net return of an executed long or short trade.
+
+Before any new performance claim, freeze the universe, date range, cost model,
+and configuration without consulting a new test period. Report the independent
+test sample, overlapping-signal versus executed-trade counts, price adjustment
+policy, turnover, drawdown, and train/test metrics. Current constituent lists and
+sector/cap classifications do not eliminate survivorship bias. Regression tests
+verify calculations and chronology, not predictive edge.
+
+The flow score uses price and volume proxies, without identified institutional
+orders or fund holdings. Its VWAP component is a 20-session average of daily
+typical prices weighted by daily volume. It does not measure an intraday
+execution benchmark or establish which investors accumulated shares.
+
 ## Essay #1 — Institutional flow (기관 수급)
 
 Complex oscillators are derivatives of price and volume; what moves price is money.
@@ -53,10 +118,10 @@ plus RSI/MACD only as seasoning. RSI is *not* important.
 | Leader pullback entry (주도주 눌림목) | `qualityGate` (Gate 1.7): `rsMin 0.7` + `requireBelowSma50` + `ibs<0.2` + `atr%<3.5` + `volR>0.8` + `scoreMax 400` |
 | Market kill-switch (essay #2 at the index level) | `qualityGate.requireMarketUptrend` (optional, OFF by default — helped on 122 tickers, hurt at 408; wired into `predict` via `marketUptrend`) |
 | Anti-parabolic (don't chase) | `qualityGate.scoreMax` — extreme composite scores have the worst forward R/R |
-| One setup, one decision | Setup-consumed cluster semantics (`PipelineResult.qualityBlocked`): a pullback that keeps closing weak for days is a breakdown, not an entry |
+| One setup, one decision | Historical engine consumes BUY/quality-blocked setups; live snapshots currently lack that prior setup state |
 | Oscillators as seasoning only | institutional strategy caps oscillator contribution; flow components dominate |
 
-## Validated results (don't regress these without a better backtest)
+## Archived exploratory results (previous implementation)
 
 8y (entry years 2019–2026, incl. the 2020 COVID crash and the 2022 rate-hike
 bear), **546-ticker** diversified universe (large/mid/small, all 11 sectors),
@@ -68,8 +133,8 @@ to vary):
   `scr<400` + below-50d): 60.4% WR / R/R 1.28 / N=225 / avgRet 1.08%** —
   train ≤2024: 58.6%/1.19 (N=186), holdout ≥2025: 69.2%/2.35 (N=39); by year:
   2019 66% / 2020 62% / 2021 61% / 2022 55% / 2023 52% / 2024 55% / 2025 65% /
-  2026 74% — every entry year ≥ 50% including both bears. Significant vs
-  baseline (z≈2.6, p≈0.004). The `ibs` lever improved monotonically
+  2026 74% — every entry year ≥ 50% including both bears. The previous run reported z≈2.6 and p≈0.004;
+  these do not establish significance after the execution and selection defects. The `ibs` lever improved monotonically
   (0.3 → 0.25 → 0.2) on every universe tested — a deep intraday flush, not a
   mild dip, is what gets paid.
 - V7 legacy gate (`rs.5`, `ibs.3`, `scr<380`): 56.3% / 1.32 / N=476.
@@ -113,7 +178,7 @@ now codified:
 
 ## SELL signals are EXIT discipline, not downside predictions
 
-Validated 2026-06 on the same universe (re-confirmed on the 8y window): SELL
+The archived 2026-06 exploratory runs on the same universe reported that SELL
 signals (distribution day = heavy volume below VWAP + Donchian breakdown +
 MACD dead cross) have **negative directional edge** — 45.2% 5-day accuracy vs
 a 46.5% all-bars base down-rate, with +1.3%/5d and +4.2%/20d average forward
@@ -132,11 +197,11 @@ Therefore:
    (regime gate): selling leaders on a panic day is exactly the retail mistake
    essay #1 warns about. In the 2026 correction (broken-trend regime) the gated
    SELLs hit 76.9% — exit discipline works when it matters.
-3. The validated position-exit discipline remains the V6/V8 trend-hold: ride
+3. The V6/V8 trend-hold candidate follows this position-exit discipline: ride
    the Gaussian green, exit on flip (or mid-cross) with a hard stop — R/R 2–3.5
    per trade cycle vs ~1.2 for fixed 5-day exits.
 
-## Hard-won validation rules
+## Validation rules
 
 1. **Post-hoc filters lie.** A filter applied to recorded signals overestimates the
    edge because blocking a buy changes the cluster window and lets different (often
@@ -148,8 +213,10 @@ Therefore:
    (strong bull regime). The backtest window is 8y so 2020 (crash) and 2022
    (bear) are full entry years; check per-year robustness and reject configs
    whose edge lives in one year or one regime.
-4. **Train/holdout split** (≤2024 / ≥2025) before believing any searched config,
-   and prefer stable *families* of configs over lone spikes.
+4. **Train/test separation** — select candidates using training data only.
+   Any period consulted for ranking is validation data, even if labelled holdout.
+   Reserve a later untouched period for a final test and prefer stable families
+   of configurations over lone spikes.
 5. **Costs are part of the edge.** Every backtested trade pays a 10bps
    round-trip cost (slippage on liquid large caps; zero commission), and a
    "win" means profitable net of that cost. A gate that only clears the bar
