@@ -6,6 +6,7 @@ import pino from 'pino';
 import { fitPlattScaling } from '@/optimization/calibrator';
 import { calculateMetrics, matchPredictions, type PredictionInput } from '@/optimization/evaluator';
 import { Optimizer } from '@/optimization/optimizer';
+import { loadPredictionPriceHistory } from '@/optimization/prediction-history';
 import { p, pc } from '@/ui/prompts';
 
 const logger = pino({
@@ -17,7 +18,6 @@ const logger = pino({
 const PROJECT_ROOT = process.cwd();
 const FEEDBACK_DIR = path.join(PROJECT_ROOT, 'data/feedback');
 const CONFIG_DIR = path.join(PROJECT_ROOT, 'data/config');
-const CSV_DIR = path.join(PROJECT_ROOT, 'public');
 
 async function runCommand(cmd: string, args: string[]) {
   logger.info(`> ${cmd} ${args.join(' ')}`);
@@ -80,34 +80,9 @@ export async function learn() {
       }
     }
 
-    // Load Price Data
-    const csvFiles = fs
-      .readdirSync(CSV_DIR)
-      .filter((f) => f.startsWith('stock_data_') && f.endsWith('.csv'));
-    const priceHistory = new Map<string, Map<string, number>>();
-
-    for (const file of csvFiles) {
-      const content = fs.readFileSync(path.join(CSV_DIR, file), 'utf-8');
-      const lines = content.split('\n');
-      const header = lines[0].split(',');
-      const dateIdx = header.indexOf('Date');
-      const tickerIdx = header.indexOf('Ticker');
-      const closeIdx = header.indexOf('Close');
-
-      if (dateIdx === -1 || closeIdx === -1) continue;
-
-      for (let i = 1; i < lines.length; i++) {
-        const parts = lines[i].split(',');
-        if (parts.length < header.length) continue;
-        const date = parts[dateIdx];
-        const close = parseFloat(parts[closeIdx]);
-        const rowTicker = parts[tickerIdx];
-
-        if (!rowTicker) continue;
-
-        if (!priceHistory.has(rowTicker)) priceHistory.set(rowTicker, new Map());
-        priceHistory.get(rowTicker)?.set(date, close);
-      }
+    const { priceHistory, diagnostics } = await loadPredictionPriceHistory(allPredictions);
+    for (const diagnostic of diagnostics) {
+      logger.warn(diagnostic, 'Outcome history unavailable; ticker excluded from evaluation');
     }
 
     const matched = matchPredictions(allPredictions, priceHistory);
@@ -116,37 +91,49 @@ export async function learn() {
     // 3. Evaluate
     const s3 = p.spinner();
     s3.start('Evaluating accuracy...');
-    const metrics = calculateMetrics(matched);
-    logger.info({ metrics }, 'Metrics Calculated');
-
     if (!fs.existsSync(CONFIG_DIR)) {
       fs.mkdirSync(CONFIG_DIR, { recursive: true });
     }
-    const metricsPath = path.join(CONFIG_DIR, 'accuracy_metrics.json');
-    fs.writeFileSync(metricsPath, JSON.stringify(metrics, null, 2));
-    s3.stop(`Hit rate: ${pc.bold(`${metrics.hitRate.toFixed(1)}%`)}`);
+    if (matched.length > 0) {
+      const metrics = calculateMetrics(matched);
+      logger.info({ metrics }, 'Directional outcome metrics; not transaction profitability');
+      const metricsPath = path.join(CONFIG_DIR, 'accuracy_metrics.json');
+      fs.writeFileSync(metricsPath, JSON.stringify(metrics, null, 2));
+      s3.stop(`Directional hit rate: ${pc.bold(`${metrics.hitRate.toFixed(1)}%`)}`);
+    } else {
+      logger.warn('No matched outcomes; directional accuracy unavailable');
+      s3.stop('No matched outcomes; directional accuracy unavailable');
+    }
 
-    // 4. Calibrate
+    // 4. Fit a score mapping; its Brier score uses the fitting observations.
     const s4 = p.spinner();
-    s4.start('Calibrating probabilities...');
+    s4.start('Fitting score mapping (in-sample)...');
     const calibrationData = matched
       .map((m) => ({
         score: m.Score,
         isCorrect: m.isCorrect,
       }))
-      .filter((d): d is { score: number; isCorrect: boolean } => typeof d.score === 'number');
+      .filter(
+        (d): d is { score: number; isCorrect: boolean } =>
+          typeof d.score === 'number' && Number.isFinite(d.score)
+      );
 
-    const calibrationResult = fitPlattScaling(
-      calibrationData.map((d) => d.score),
-      calibrationData.map((d) => d.isCorrect)
-    );
+    if (calibrationData.length > 0) {
+      const calibrationResult = fitPlattScaling(
+        calibrationData.map((d) => d.score),
+        calibrationData.map((d) => d.isCorrect)
+      );
 
-    logger.info({ calibrationResult }, 'Calibration Result');
-    fs.writeFileSync(
-      path.join(CONFIG_DIR, 'calibration_params.json'),
-      JSON.stringify(calibrationResult, null, 2)
-    );
-    s4.stop('Calibration complete');
+      logger.info({ calibrationResult }, 'Score mapping fit; Brier score is in-sample');
+      fs.writeFileSync(
+        path.join(CONFIG_DIR, 'calibration_params.json'),
+        JSON.stringify(calibrationResult, null, 2)
+      );
+      s4.stop('Score mapping fitted (in-sample; no held-out validation)');
+    } else {
+      logger.warn('No finite matched scores; score mapping fit and save skipped');
+      s4.stop('Score mapping skipped: no finite matched scores');
+    }
 
     // 5. Optimize
     const s5 = p.spinner();

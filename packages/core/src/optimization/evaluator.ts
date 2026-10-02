@@ -26,10 +26,12 @@ export interface MatchedPrediction extends PredictionInput {
 }
 
 /**
- * Matches predictions with historical outcomes to determine correctness.
+ * Matches directional predictions against closes on a consistent price-history basis.
+ * BUY/SELL correctness is a +/-2% direction diagnostic, not transaction profit;
+ * SELL describes an exit signal, not a short position.
  * @param predictions List of prediction objects (from CSV)
- * @param priceHistory Map of Ticker -> Date -> ClosePrice
- * @param daysForward Days to look ahead for outcome
+ * @param priceHistory Map of Ticker -> ISO date -> consistently adjusted close price
+ * @param daysForward Number of subsequent observed trading sessions to the outcome
  */
 export function matchPredictions(
   predictions: PredictionInput[],
@@ -37,6 +39,8 @@ export function matchPredictions(
   daysForward = 5
 ): MatchedPrediction[] {
   const matched: MatchedPrediction[] = [];
+  if (!Number.isInteger(daysForward) || daysForward <= 0) return matched;
+  const sessionsByTicker = new Map<string, [string, number][]>();
 
   for (const p of predictions) {
     const dateStr = p.Date; // YYYY-MM-DD
@@ -48,38 +52,38 @@ export function matchPredictions(
     const history = priceHistory.get(ticker);
     if (!history) continue;
 
-    const currentPrice = parseFloat(p.Close);
-
-    const dt = DateTime.fromISO(dateStr);
-    let futurePrice: number | null = null;
-    let foundDate = '';
-
-    // Find price around target date
-    for (let i = daysForward; i <= daysForward + 5; i++) {
-      const fDt = dt.plus({ days: i });
-      const fDateStr = fDt.toISODate();
-      if (fDateStr && history.has(fDateStr)) {
-        futurePrice = history.get(fDateStr) ?? null;
-        foundDate = fDateStr;
-        break;
-      }
+    let sessions = sessionsByTicker.get(ticker);
+    if (!sessions) {
+      sessions = [...history.entries()]
+        .filter(([date]) => {
+          const parsedDate = DateTime.fromISO(date);
+          return parsedDate.isValid && parsedDate.toISODate() === date;
+        })
+        .sort(([left], [right]) => left.localeCompare(right));
+      sessionsByTicker.set(ticker, sessions);
     }
 
-    if (futurePrice !== null) {
-      const change = (futurePrice - currentPrice) / currentPrice;
-      let isCorrect = false;
-      // Simple threshold: > 2% gain for BUY
-      if (opinion === 'BUY' && change > 0.02) isCorrect = true;
-      else if (opinion === 'SELL' && change < -0.02) isCorrect = true;
+    const entryIndex = sessions.findIndex(([date]) => date === dateStr);
+    if (entryIndex === -1) continue;
+    const currentPrice = sessions[entryIndex][1];
+    const outcome = sessions[entryIndex + daysForward];
+    if (!outcome || !Number.isFinite(currentPrice) || currentPrice <= 0) continue;
+    const [foundDate, futurePrice] = outcome;
+    // An invalid endpoint leaves the prediction unmatched; do not shift its horizon.
+    if (!Number.isFinite(futurePrice) || futurePrice <= 0) continue;
 
-      matched.push({
-        ...p,
-        futurePrice,
-        outcomeDate: foundDate,
-        change,
-        isCorrect,
-      });
-    }
+    const change = (futurePrice - currentPrice) / currentPrice;
+    if (!Number.isFinite(change)) continue;
+    const isCorrect =
+      (opinion === 'BUY' && change > 0.02) || (opinion === 'SELL' && change < -0.02);
+
+    matched.push({
+      ...p,
+      futurePrice,
+      outcomeDate: foundDate,
+      change,
+      isCorrect,
+    });
   }
   return matched;
 }
@@ -105,7 +109,9 @@ export function calculateMetrics(matchedPredictions: MatchedPrediction[]): Accur
   const falsePositives = buyPredictions.filter((p) => !p.isCorrect).length;
 
   const sellPredictions = matchedPredictions.filter((p) => p.Opinion === 'SELL');
-  const falseNegatives = sellPredictions.filter((p) => !p.isCorrect).length;
+  // A failed SELL can be neutral or only slightly down. It is a missed BUY
+  // positive only when the realized move exceeds the same BUY threshold.
+  const falseNegatives = sellPredictions.filter((p) => p.change > 0.02).length;
 
   const precision =
     truePositives + falsePositives > 0 ? truePositives / (truePositives + falsePositives) : 0;

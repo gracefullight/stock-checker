@@ -4,6 +4,7 @@ export interface CalibrationParams {
 }
 
 export interface CalibrationResult extends CalibrationParams {
+  /** Brier score on the same observations used to select the parameters (in-sample). */
   brierScore: number;
 }
 
@@ -12,8 +13,10 @@ function sigmoid(x: number, slope: number, intercept: number): number {
 }
 
 /**
- * Fits a Platt Scaling model (Logistic Regression) using Grid Search
- * to align with the Python implementation's approach.
+ * Selects sigmoid parameters from a fixed grid by the lowest in-sample Brier score.
+ * The returned score reuses all fitting observations; it is not held-out validation.
+ *
+ * @param _cvFolds Reserved for backward compatibility and ignored; no cross-validation runs.
  */
 export function fitPlattScaling(
   scores: number[],
@@ -30,10 +33,7 @@ export function fitPlattScaling(
   let bestBrier = Infinity;
   let bestParams: CalibrationParams = { slope: 0.01, intercept: -1.0 };
 
-  // Grid Search
-  // Note: The Python code performed cross-validation.
-  // For simplicity and speed in this port, we will perform a direct fit on the whole dataset
-  // or simple split if critical. Use whole dataset for now as data size is likely small.
+  // Fit and evaluate every grid candidate on the same complete input dataset.
 
   for (const slope of slopes) {
     for (const intercept of intercepts) {
