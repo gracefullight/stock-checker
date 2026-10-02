@@ -270,8 +270,6 @@ export async function predict(options: CliOptions): Promise<void> {
     earnings,
     format,
   } = options;
-  const fearGreed = await getFearGreedIndex();
-
   if (portfolioAction === 'list') {
     const portfolio = await getPortfolio();
     logger.info(JSON.stringify(portfolio, null, 2));
@@ -287,6 +285,8 @@ export async function predict(options: CliOptions): Promise<void> {
     await removeAsset(portfolioTicker);
     return;
   }
+
+  const fearGreed = await getFearGreedIndex();
 
   if (portfolioAction === 'report') {
     const tickersToReport = portfolioTicker ? [portfolioTicker] : tickers;
