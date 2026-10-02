@@ -1,12 +1,9 @@
 import {
   DEFAULT_QUALITY_PIPELINE_CONFIG,
   MARKET_BENCHMARK,
-  REWARD_MULTIPLIER,
-  RISK_MULTIPLIER,
   SECTOR_ETF_MAP,
-  TRAILING_ACTIVATION_MULTIPLIER,
-  TRAILING_MULTIPLIER,
 } from '@stock-checker/core/src/constants';
+import { TICKER_SECTOR_ETF } from '@stock-checker/core/src/constants/tickers';
 import {
   fetchBenchmarkPrices,
   getHistoricalPrices,
@@ -20,16 +17,14 @@ import {
 import { detectPatterns } from '@stock-checker/core/src/services/patterns';
 import { evaluateSignal } from '@stock-checker/core/src/services/pipeline';
 import { calculateProbabilities } from '@stock-checker/core/src/services/probability';
+import { calculateLongRiskLevels } from '@stock-checker/core/src/services/risk-levels';
 import type { CandleData, PipelineConfig, TickerResult } from '@stock-checker/core/src/types/index';
 import { tradingDaysUntil } from '@stock-checker/core/src/utils/trading-days';
 
 /**
- * Live signal config = the backtest-validated quality pipeline, used VERBATIM.
- * (institutional flow strategy + Gaussian trend gate + leader-pullback quality
- * gate — 5-day WR 65.1% / R/R 1.36 vs 52.5% / 1.09 baseline; see
- * docs/TRADING_PRINCIPLES.md). Optimizer overrides are intentionally NOT mixed
- * in: they were fit for the momentum strategy and would deviate from the
- * validated behaviour.
+ * Use the documented institutional-flow and leader-pullback rules.
+ * Historical performance needs revalidation after the execution and data fixes
+ * described in docs/TRADING_PRINCIPLES.md. Optimizer overrides are not mixed in.
  */
 const pipelineConfig: PipelineConfig = { ...DEFAULT_QUALITY_PIPELINE_CONFIG };
 
@@ -50,6 +45,8 @@ export async function analyzeTicker(
   const volumes = dailyPrices.map((d) => d.volume);
 
   const indicators = calculateAllIndicators({ closes, highs, lows, volumes });
+  const riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
+  if (!riskLevels) return null;
 
   const { score: patternScore, patterns } = detectPatterns(
     { highs, lows, closes },
@@ -67,10 +64,11 @@ export async function analyzeTicker(
   const recentMacdHistogram = calcRecentMacdHistogram(closes);
 
   // Institutional flow inputs — market + sector relative strength, liquidity,
-  // and earnings revision direction (mirrors the backtest feed; without these
+  // and current earnings revision direction (historical backtests omit unavailable
+  // point-in-time earnings data; without the benchmark inputs
   // rsSpy/rsSector stay 0 and the leader-pullback gate would block everything).
   const spyCandles = await fetchBenchmarkPrices(MARKET_BENCHMARK);
-  let sectorETF = MARKET_BENCHMARK;
+  let sectorETF: string | null = TICKER_SECTOR_ETF[ticker] ?? null;
   let sector: string | null = null;
   try {
     const fund = await getFundamentals(ticker);
@@ -79,12 +77,13 @@ export async function analyzeTicker(
       sectorETF = SECTOR_ETF_MAP[fund.sector];
     }
   } catch {
-    /* fallback to SPY */
+    /* retain the known ticker-sector mapping, or leave sector evidence unavailable */
   }
-  const sectorCandles = await fetchBenchmarkPrices(sectorETF);
+  const sectorCandles = sectorETF ? await fetchBenchmarkPrices(sectorETF) : [];
 
   const recent20 = dailyPrices.slice(-20);
-  const avgDailyDollarVol = recent20.reduce((s, d) => s + d.close * d.volume, 0) / recent20.length;
+  const avgDailyDollarVol =
+    recent20.reduce((s, d) => s + (d.dollarVolume ?? d.close * d.volume), 0) / recent20.length;
 
   let earningsBeat: boolean | null = null;
   let earningsEstimateUp: boolean | null = null;
@@ -92,17 +91,14 @@ export async function analyzeTicker(
   try {
     const earningsInfo = await getEarningsData(ticker);
     nextEarningsDate = earningsInfo?.nextEarningsDate ?? null;
+    const revisionDirection = earningsInfo?.estimateRevisions?.direction;
+    earningsEstimateUp =
+      revisionDirection === 'up' ? true : revisionDirection === 'down' ? false : null;
     const hist = earningsInfo?.earningsHistory;
     if (hist && hist.length > 0) {
       const last = hist[hist.length - 1];
       if (last.epsActual != null && last.epsEstimate != null) {
         earningsBeat = last.epsActual > last.epsEstimate;
-      }
-      if (hist.length >= 2) {
-        const prev = hist[hist.length - 2];
-        if (last.epsEstimate != null && prev.epsEstimate != null) {
-          earningsEstimateUp = last.epsEstimate > prev.epsEstimate;
-        }
       }
     }
   } catch {
@@ -114,12 +110,14 @@ export async function analyzeTicker(
     indicators,
     close: latest.close,
     open: latest.open,
-    fearGreed,
+    // Alternative.me measures Bitcoin sentiment, not US equity sentiment.
+    fearGreed: null,
     patternScore,
     recentCandles,
     recentMacdHistogram,
     config: pipelineConfig,
     allCloses: closes,
+    allDates: dailyPrices.map((d) => d.date),
     allHighs: highs,
     allLows: lows,
     allVolumes: volumes,
@@ -132,16 +130,6 @@ export async function analyzeTicker(
 
   const { finalDecision: decision, score, buyScore, sellScore } = pipelineResult;
   const probs = calculateProbabilities(buyScore, sellScore, pipelineConfig.calibration);
-
-  const risk = indicators.atr * RISK_MULTIPLIER;
-  const reward = risk * REWARD_MULTIPLIER;
-  const direction = decision === 'SELL' ? -1 : 1;
-  const stopLoss = latest.close - risk * direction;
-  const takeProfit = latest.close + reward * direction;
-  const trailingCandidate = latest.close - TRAILING_MULTIPLIER * indicators.atr * direction;
-  const trailingStop =
-    direction === 1 ? Math.min(stopLoss, trailingCandidate) : Math.max(stopLoss, trailingCandidate);
-  const trailingStart = latest.close + TRAILING_ACTIVATION_MULTIPLIER * indicators.atr * direction;
 
   return {
     ticker,
@@ -160,10 +148,7 @@ export async function analyzeTicker(
     score,
     opinion: decision,
     atr: indicators.atr,
-    stopLoss,
-    takeProfit,
-    trailingStop,
-    trailingStart,
+    ...riskLevels,
     macd: indicators.macd,
     macdSignal: indicators.macdSignal,
     macdHistogram: indicators.macdHistogram,

@@ -5,6 +5,8 @@ interface InstitutionalParams {
   highs: number[];
   lows: number[];
   closes: number[];
+  /** Session dates aligned one-to-one with closes, when available. */
+  tickerDates?: Date[];
   volumes: number[];
   donchUpper: number;
   volumeRatio: number;
@@ -16,7 +18,8 @@ interface InstitutionalParams {
   config: InstitutionalConfig;
 }
 
-function rsGradient(excess: number): number {
+function rsGradient(excess: number | null): number {
+  if (excess === null || !Number.isFinite(excess)) return 0;
   if (excess > 0.1) return 1.0;
   if (excess > 0.05) return 0.75;
   if (excess > 0) return 0.5;
@@ -28,26 +31,49 @@ function calcRS(
   tickerCloses: number[],
   benchCandles: BenchmarkCandle[],
   shortPeriod: number,
-  longPeriod: number
-): number {
+  longPeriod: number,
+  tickerDates?: Date[]
+): number | null {
   const n = tickerCloses.length;
-  if (n < longPeriod + 1 || benchCandles.length < longPeriod + 1) return 0;
+  const lookback = Math.max(shortPeriod, longPeriod);
+  if (
+    !Number.isInteger(shortPeriod) ||
+    !Number.isInteger(longPeriod) ||
+    shortPeriod <= 0 ||
+    longPeriod <= 0 ||
+    n <= lookback ||
+    benchCandles.length <= lookback
+  )
+    return null;
 
-  const benchCloses = benchCandles.slice(-n).map((c) => c.close);
+  const periods = [0, shortPeriod, longPeriod];
+  const tickerPrices = periods.map((period) => tickerCloses[n - 1 - period]);
+  let benchmarkPrices: Array<number | undefined>;
+  if (tickerDates) {
+    if (tickerDates.length !== n) return null;
+    const dates = periods.map((period) => tickerDates[n - 1 - period]);
+    if (dates.some((date) => !Number.isFinite(date.getTime()))) return null;
+    const byDate = new Map(
+      benchCandles
+        .filter((candle) => Number.isFinite(candle.date.getTime()))
+        .map((candle) => [candle.date.toISOString().slice(0, 10), candle.close])
+    );
+    benchmarkPrices = dates.map((date) => byDate.get(date.toISOString().slice(0, 10)));
+  } else {
+    benchmarkPrices = periods.map((period) => benchCandles[benchCandles.length - 1 - period].close);
+  }
+  if (
+    [...tickerPrices, ...benchmarkPrices].some(
+      (price) => price === undefined || !Number.isFinite(price) || price <= 0
+    )
+  )
+    return null;
 
-  const ret = (arr: number[], period: number) =>
-    arr.length > period
-      ? (arr[arr.length - 1] - arr[arr.length - 1 - period]) / arr[arr.length - 1 - period]
-      : 0;
-
-  const tRet13 = ret(tickerCloses, shortPeriod);
-  const bRet13 = ret(benchCloses, shortPeriod);
-  const tRet26 = ret(tickerCloses, longPeriod);
-  const bRet26 = ret(benchCloses, longPeriod);
-
-  const rs13 = tRet13 - bRet13;
-  const rs26 = tRet26 - bRet26;
-  return rs13 * 0.4 + rs26 * 0.6;
+  const [tickerNow, tickerShort, tickerLong] = tickerPrices;
+  const [benchmarkNow, benchmarkShort, benchmarkLong] = benchmarkPrices as number[];
+  const shortExcess = tickerNow / tickerShort - benchmarkNow / benchmarkShort;
+  const longExcess = tickerNow / tickerLong - benchmarkNow / benchmarkLong;
+  return shortExcess * 0.4 + longExcess * 0.6;
 }
 
 export function calcInstitutionalScore(params: InstitutionalParams): InstitutionalScore {
@@ -56,6 +82,7 @@ export function calcInstitutionalScore(params: InstitutionalParams): Institution
     highs,
     lows,
     closes,
+    tickerDates,
     volumes,
     donchUpper,
     volumeRatio,
@@ -67,10 +94,22 @@ export function calcInstitutionalScore(params: InstitutionalParams): Institution
     config,
   } = params;
 
-  const rsSpy = calcRS(closes, spyCandles, config.rsLookback.short, config.rsLookback.long);
+  const rsSpy = calcRS(
+    closes,
+    spyCandles,
+    config.rsLookback.short,
+    config.rsLookback.long,
+    tickerDates
+  );
   const rsSpyGrad = rsGradient(rsSpy);
 
-  const rsSector = calcRS(closes, sectorCandles, config.rsLookback.short, config.rsLookback.long);
+  const rsSector = calcRS(
+    closes,
+    sectorCandles,
+    config.rsLookback.short,
+    config.rsLookback.long,
+    tickerDates
+  );
   const rsSectorGrad = rsGradient(rsSector);
 
   const n = Math.min(highs.length, lows.length, closes.length, volumes.length, 20);

@@ -1,4 +1,4 @@
-import { atr, bollingerbands, MACD, rsi, stochastic, williamsr } from 'technicalindicators';
+import { atr, bollingerbands, EMA, MACD, rsi, stochastic, williamsr } from 'technicalindicators';
 import type { IndicatorValues } from '@/types';
 
 interface MacdResult {
@@ -48,12 +48,8 @@ export function calculateAllIndicators(data: {
   const sma20 = recentClosesSMA.reduce((sum, price) => sum + price, 0) / smaPeriod;
 
   // Calculate EMA (20-day Exponential Moving Average)
-  const emaPeriod = 20;
-  const emaK = 2 / (emaPeriod + 1);
-  let ema20 = closes[emaPeriod - 1];
-  for (let i = emaPeriod; i < closes.length; i++) {
-    ema20 = closes[i] * emaK + ema20 * (1 - emaK);
-  }
+  // Seed with the first 20-close SMA, matching the backtest and standard EMA.
+  const ema20 = EMA.calculate({ period: 20, values: closes }).at(-1) ?? 0;
 
   // Calculate MACD (12, 26, 9)
   const macdValues = MACD.calculate({

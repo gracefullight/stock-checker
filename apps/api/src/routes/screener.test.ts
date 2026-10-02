@@ -49,6 +49,7 @@ import {
   getFearGreedIndex,
   getHistoricalPrices,
 } from '@stock-checker/core/src/services/data-fetcher';
+import { getFundamentals } from '@stock-checker/core/src/services/fundamentals';
 import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
 import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
 import { analyzeTicker } from '@/lib/analyze';
@@ -285,6 +286,48 @@ describe('screenerRoutes', () => {
 
       expect(res.statusCode).toBe(statusCode);
       expect(mockedGetHistoricalPrices).toHaveBeenCalledWith('AAPL', expectedDays);
+    });
+  });
+
+  describe('financial backtest data', () => {
+    beforeEach(() => {
+      mockedGetHistoricalPrices.mockResolvedValue([
+        {
+          date: new Date('2026-09-30T00:00:00Z'),
+          open: 49,
+          high: 51,
+          low: 48,
+          close: 50,
+          adjClose: 50,
+          volume: 2_000_000,
+          dollarVolume: 200_000_000,
+        },
+      ]);
+      mockedFetchBenchmarkPrices.mockResolvedValue([]);
+      vi.mocked(getFundamentals).mockResolvedValue(null as never);
+    });
+
+    it('preserves nominal liquidity and the known sector when fundamentals are unavailable', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/screener/AAPL/backtest-data',
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().candles[0].dollarVolume).toBe(200_000_000);
+      expect(res.json().sector.etf).toBe('XLK');
+      expect(mockedFetchBenchmarkPrices).toHaveBeenCalledWith('XLK', 1825);
+    });
+
+    it('leaves unknown sector evidence unavailable instead of duplicating SPY', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/screener/UNMAPPED/backtest-data',
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().sector).toBeNull();
+      expect(mockedFetchBenchmarkPrices).toHaveBeenCalledTimes(1);
     });
   });
 });

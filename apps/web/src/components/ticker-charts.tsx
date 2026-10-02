@@ -65,7 +65,7 @@ export function TickerCharts({
               />
               {confidence !== undefined && (
                 <div className="text-center font-mono text-[10px] text-muted-foreground mt-2">
-                  CONFIDENCE <span className="text-foreground">{confidence}</span>
+                  SCORE CONCENTRATION <span className="text-foreground">{confidence}</span>
                 </div>
               )}
             </CardContent>

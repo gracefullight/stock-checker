@@ -68,6 +68,7 @@ export function evaluateSignal(params: {
   recentBuyDates?: Date[];
   currentDate?: Date;
   allCloses?: number[];
+  allDates?: Date[];
   allHighs?: number[];
   allLows?: number[];
   allVolumes?: number[];
@@ -102,6 +103,7 @@ export function evaluateSignal(params: {
     recentBuyDates = [],
     currentDate,
     allCloses = [],
+    allDates,
     allHighs = [],
     allLows = [],
     allVolumes = [],
@@ -145,6 +147,7 @@ export function evaluateSignal(params: {
         highs: allHighs.length > 0 ? allHighs : recentCandles.map((c) => c.high),
         lows: allLows.length > 0 ? allLows : recentCandles.map((c) => c.low),
         closes: allCloses.length > 0 ? allCloses : [close],
+        tickerDates: allDates,
         volumes: allVolumes.length > 0 ? allVolumes : recentCandles.map((c) => c.volume),
         donchUpper: indicators.donchUpper,
         volumeRatio: indicators.volumeRatio,

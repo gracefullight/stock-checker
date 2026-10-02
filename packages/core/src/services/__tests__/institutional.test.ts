@@ -153,3 +153,74 @@ describe('calcInstitutionalScore', () => {
     expect(rLow.components.liquidity).toBe(0.0);
   });
 });
+
+describe('relative-strength evidence', () => {
+  const closes = makeTickerCloses(200, 100, 0.003);
+  const benchmark = makeBenchCandles(200, 100, 0.001);
+  const base = {
+    close: closes.at(-1) as number,
+    highs: closes.map((close) => close + 1),
+    lows: closes.map((close) => close - 1),
+    closes,
+    volumes: new Array(200).fill(1_000_000),
+    donchUpper: 500,
+    volumeRatio: 1,
+    spyCandles: benchmark,
+    sectorCandles: benchmark,
+    avgDailyDollarVol: 0,
+    earningsBeat: false,
+    earningsEstimateUp: false,
+    config: DEFAULT_INSTITUTIONAL_CONFIG,
+  };
+
+  it.each([
+    'spyCandles',
+    'sectorCandles',
+  ] as const)('does not award positive evidence for missing %s', (field) => {
+    const result = calcInstitutionalScore({ ...base, [field]: [] });
+    const missingComponent = field === 'spyCandles' ? 'rsSpy' : 'rsSector';
+    const presentComponent = field === 'spyCandles' ? 'rsSector' : 'rsSpy';
+
+    expect(result.components[missingComponent]).toBe(0);
+    expect(result.components[presentComponent]).toBe(1);
+  });
+
+  it('does not award positive evidence when the benchmark is too short', () => {
+    const result = calcInstitutionalScore({ ...base, spyCandles: benchmark.slice(-20) });
+    expect(result.components.rsSpy).toBe(0);
+  });
+
+  it('does not infer outperformance from a zero benchmark return denominator', () => {
+    const invalidBenchmark = benchmark.map((candle) => ({ ...candle }));
+    invalidBenchmark[benchmark.length - 1 - DEFAULT_INSTITUTIONAL_CONFIG.rsLookback.long].close = 0;
+    const result = calcInstitutionalScore({ ...base, spyCandles: invalidBenchmark });
+    expect(result.components.rsSpy).toBe(0);
+  });
+
+  it('compares return endpoints on the stock dates and ignores future benchmark bars', () => {
+    const future = makeBenchCandles(20, 1000, 0.2).map((candle, i) => ({
+      ...candle,
+      date: new Date(2025, 0, benchmark.length + i + 1),
+    }));
+    const result = calcInstitutionalScore({
+      ...base,
+      tickerDates: benchmark.map((candle) => candle.date),
+      spyCandles: [...benchmark, ...future],
+    });
+
+    expect(result.components.rsSpy).toBe(1);
+    expect(result.components.rsSpy).toBe(result.components.rsSector);
+  });
+
+  it('does not substitute an adjacent session for a missing benchmark endpoint', () => {
+    const shortEndpoint = benchmark.length - 1 - DEFAULT_INSTITUTIONAL_CONFIG.rsLookback.short;
+    const result = calcInstitutionalScore({
+      ...base,
+      tickerDates: benchmark.map((candle) => candle.date),
+      spyCandles: benchmark.filter((_, i) => i !== shortEndpoint),
+    });
+
+    expect(result.components.rsSpy).toBe(0);
+    expect(result.components.rsSector).toBe(1);
+  });
+});

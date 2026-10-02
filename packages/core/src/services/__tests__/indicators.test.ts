@@ -1,3 +1,4 @@
+import { EMA } from 'technicalindicators';
 import { describe, expect, it } from 'vitest';
 import { calculateAllIndicators } from '@/services/indicators';
 
@@ -64,5 +65,17 @@ describe('indicators', () => {
     const result = calculateAllIndicators({ closes, highs, lows });
 
     expect(result.volumeRatio).toBe(1.0);
+  });
+
+  it.each([20, 21, 60])('seeds EMA20 with the SMA and matches the library at %i bars', (length) => {
+    const closes = Array.from({ length }, (_, i) => 100 + i * 2 + Math.sin(i) * 3);
+    const result = calculateAllIndicators({
+      closes,
+      highs: closes.map((close) => close + 2),
+      lows: closes.map((close) => close - 2),
+    });
+    const expected = EMA.calculate({ period: 20, values: closes }).at(-1);
+
+    expect(result.ema20).toBeCloseTo(expected as number, 10);
   });
 });

@@ -230,12 +230,15 @@ export default async function TickerDetailPage({ params }: PageProps) {
           </Section>
 
           {/* Risk */}
-          <Section title="RISK MANAGEMENT">
-            <table className="w-full" aria-label="Risk management levels">
+          <Section title="LONG POSITION REFERENCE">
+            <p className="mb-2 text-xs font-mono text-muted-foreground">
+              SELL means exit an existing long position. These levels are long-side references.
+            </p>
+            <table className="w-full" aria-label="Long position risk reference levels">
               <tbody>
                 <IndicatorRow label="Stop Loss" value={data.stopLoss} />
                 <IndicatorRow label="Take Profit" value={data.takeProfit} />
-                <IndicatorRow label="Trailing Stop" value={data.trailingStop} />
+                <IndicatorRow label="Initial Trailing Stop" value={data.trailingStop} />
                 <IndicatorRow label="Trailing Start" value={data.trailingStart} />
               </tbody>
             </table>

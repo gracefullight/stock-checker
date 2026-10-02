@@ -2,15 +2,8 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { orderBy } from 'es-toolkit/array';
 import pino from 'pino';
-import {
-  DEFAULT_PIPELINE_CONFIG,
-  MARKET_BENCHMARK,
-  REWARD_MULTIPLIER,
-  RISK_MULTIPLIER,
-  SECTOR_ETF_MAP,
-  TRAILING_ACTIVATION_MULTIPLIER,
-  TRAILING_MULTIPLIER,
-} from '@/constants';
+import { DEFAULT_PIPELINE_CONFIG, MARKET_BENCHMARK, SECTOR_ETF_MAP } from '@/constants';
+import { TICKER_SECTOR_ETF } from '@/constants/tickers';
 import {
   addAsset,
   generatePerformanceReport,
@@ -32,6 +25,7 @@ import { formatOptionsData, getOptionsChain } from '@/services/options';
 import { detectPatterns } from '@/services/patterns';
 import { evaluateSignal } from '@/services/pipeline';
 import { calculateProbabilities } from '@/services/probability';
+import { calculateLongRiskLevels } from '@/services/risk-levels';
 import type {
   CandleData,
   CliOptions,
@@ -70,6 +64,11 @@ async function processTicker(
   const volumes = dailyPrices.map((d) => d.volume);
 
   const indicators = calculateAllIndicators({ closes, highs, lows, volumes });
+  const riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
+  if (!riskLevels) {
+    logger.warn({ ticker }, 'Insufficient price/ATR data for valid long-position risk levels');
+    return null;
+  }
   const optimizedConfig = await loadOptimizedConfig();
   const { score: patternScore, patterns } = detectPatterns(
     { highs, lows, closes },
@@ -102,25 +101,33 @@ async function processTicker(
   const recentMacdHistogram = calcRecentMacdHistogram(closes);
 
   // Benchmark prices for institutional scoring
-  const spyCandles = await fetchBenchmarkPrices(MARKET_BENCHMARK);
+  const spyCandles = (await fetchBenchmarkPrices(MARKET_BENCHMARK)).filter(
+    (candle) => candle.date.toISOString().slice(0, 10) <= dateStr
+  );
   // Market-level regime for the quality gate's kill-switch (essay #2 at the
   // index level). null when SPY data is unavailable — the gate never blocks
   // on an unknown regime.
   const marketUptrend =
     spyCandles.length >= 2 ? gaussianChannel(spyCandles.map((c) => c.close)).isGreen : null;
-  let sectorETF = MARKET_BENCHMARK;
+  let sectorETF: string | undefined = TICKER_SECTOR_ETF[ticker];
   try {
     const fund = await getFundamentals(ticker);
     if (fund?.sector && SECTOR_ETF_MAP[fund.sector]) {
       sectorETF = SECTOR_ETF_MAP[fund.sector];
     }
   } catch {
-    /* fallback to SPY */
+    /* keep the static sector mapping, when known */
   }
-  const sectorCandles = await fetchBenchmarkPrices(sectorETF);
+  const sectorCandles = sectorETF
+    ? (await fetchBenchmarkPrices(sectorETF)).filter(
+        (candle) => candle.date.toISOString().slice(0, 10) <= dateStr
+      )
+    : [];
 
   const recent20 = dailyPrices.slice(-20);
-  const avgDailyDollarVol = recent20.reduce((s, d) => s + d.close * d.volume, 0) / recent20.length;
+  const avgDailyDollarVol =
+    recent20.reduce((sum, day) => sum + (day.dollarVolume ?? day.close * day.volume), 0) /
+    recent20.length;
 
   let earningsBeat: boolean | null = null;
   let earningsEstimateUp: boolean | null = null;
@@ -132,13 +139,10 @@ async function processTicker(
       if (last.epsActual != null && last.epsEstimate != null) {
         earningsBeat = last.epsActual > last.epsEstimate;
       }
-      if (hist.length >= 2) {
-        const prev = hist[hist.length - 2];
-        if (last.epsEstimate != null && prev.epsEstimate != null) {
-          earningsEstimateUp = last.epsEstimate > prev.epsEstimate;
-        }
-      }
     }
+    const revisionDirection = earningsInfo?.estimateRevisions?.direction;
+    earningsEstimateUp =
+      revisionDirection === 'up' ? true : revisionDirection === 'down' ? false : null;
   } catch {
     /* fallback */
   }
@@ -148,12 +152,14 @@ async function processTicker(
     indicators,
     close: latest.close,
     open: latest.open,
-    fearGreed,
+    // Alternative.me measures Bitcoin sentiment, not US equity sentiment.
+    fearGreed: null,
     patternScore,
     recentCandles,
     recentMacdHistogram,
     config: pipelineConfig,
     allCloses: closes,
+    allDates: dailyPrices.map((day) => day.date),
     allHighs: highs,
     allLows: lows,
     allVolumes: volumes,
@@ -167,16 +173,6 @@ async function processTicker(
 
   const { finalDecision: decision, score, buyScore, sellScore } = pipelineResult;
   const probs = calculateProbabilities(buyScore, sellScore, optimizedConfig.calibration);
-
-  const risk = indicators.atr * RISK_MULTIPLIER;
-  const reward = risk * REWARD_MULTIPLIER;
-  const direction = decision === 'SELL' ? -1 : 1;
-  const stopLoss = latest.close - risk * direction;
-  const takeProfit = latest.close + reward * direction;
-  const trailingCandidate = latest.close - TRAILING_MULTIPLIER * indicators.atr * direction;
-  const trailingStop =
-    direction === 1 ? Math.min(stopLoss, trailingCandidate) : Math.max(stopLoss, trailingCandidate);
-  const trailingStart = latest.close + TRAILING_ACTIVATION_MULTIPLIER * indicators.atr * direction;
 
   const result: TickerResult = {
     ticker,
@@ -195,10 +191,7 @@ async function processTicker(
     score,
     opinion: decision,
     atr: indicators.atr,
-    stopLoss,
-    takeProfit,
-    trailingStop,
-    trailingStart,
+    ...riskLevels,
     macd: indicators.macd,
     macdSignal: indicators.macdSignal,
     macdHistogram: indicators.macdHistogram,

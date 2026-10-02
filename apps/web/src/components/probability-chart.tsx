@@ -51,7 +51,7 @@ export function ProbabilityChart({ buyProbability, sellProbability, holdProbabil
       <div
         className="relative w-full h-[160px]"
         role="img"
-        aria-label={`Signal probability: BUY ${data[0].value}%, SELL ${data[1].value}%, HOLD ${data[2].value}%. Dominant ${dominant.name} at ${dominant.value}%.`}
+        aria-label={`Signal weights: BUY ${data[0].value}%, SELL ${data[1].value}%, HOLD ${data[2].value}%. Dominant ${dominant.name} at ${dominant.value}%.`}
       >
         <ChartContainer
           config={CHART_CONFIG}
@@ -112,6 +112,9 @@ export function ProbabilityChart({ buyProbability, sellProbability, holdProbabil
           </div>
         ))}
       </div>
+      <p className="text-center font-mono text-[10px] text-muted-foreground">
+        Score weights, not probabilities of profitable trades.
+      </p>
     </div>
   );
 }

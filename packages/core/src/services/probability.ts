@@ -1,13 +1,14 @@
 /**
- * Probability Calibration Service
- * Converts raw BUY/SELL scores to calibrated 0-100% probabilities
- * Uses sigmoid (Platt scaling) for score-to-probability mapping
+ * Normalized signal-score mapping. Legacy probability field names are retained
+ * for API compatibility; these weights are not probabilities of trade success.
+ * Sigmoid parameters may be fitted, but defaults are heuristic and normalization
+ * does not establish calibration against out-of-sample financial outcomes.
  */
 
 export interface ProbabilityResult {
-  buyProbability: number; // 0-100% confidence for BUY
-  sellProbability: number; // 0-100% confidence for SELL
-  holdProbability: number; // 0-100% confidence for HOLD
+  buyProbability: number; // 0-100 normalized BUY score weight
+  sellProbability: number; // 0-100 normalized exit-score weight; never short confidence
+  holdProbability: number; // 0-100 normalized HOLD score weight
   confidence: 'low' | 'medium' | 'high' | 'very-high';
 }
 
@@ -21,11 +22,11 @@ function sigmoid(score: number, slope: number = 0.01, intercept: number = -1.0):
 }
 
 /**
- * Convert buy and sell scores to probabilities
+ * Convert buy and sell scores to normalized score weights
  * @param buyScore - Raw BUY indicator score
  * @param sellScore - Raw SELL indicator score
  * @param calibration - Optional calibration parameters {slope, intercept}
- * @returns Probability result with confidence level
+ * @returns Legacy result shape with a score-concentration label, not validated confidence
  */
 export function calculateProbabilities(
   buyScore: number,
@@ -85,8 +86,8 @@ export function fitCalibration(
     return { slope: 0.01, intercept: -1.0 };
   }
 
-  // Simple logistic regression to fit sigmoid parameters
-  // Using iterative approach to find best fit
+  // Search a fixed grid for the lowest in-sample Brier score. A separate held-out
+  // evaluation is required before these parameters support calibration claims.
   let bestSlope = 0.01;
   let bestIntercept = -1.0;
   let bestBrier = Infinity;

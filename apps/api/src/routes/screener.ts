@@ -1,4 +1,5 @@
 import { SECTOR_ETF_MAP } from '@stock-checker/core/src/constants';
+import { TICKER_SECTOR_ETF } from '@stock-checker/core/src/constants/tickers';
 import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
 import { gaussianChannel } from '@stock-checker/core/src/services/gaussian-channel';
 import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
@@ -200,6 +201,7 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
           low: number;
           close: number;
           volume: number;
+          dollarVolume?: number;
         }> =>
           data.map((d) => ({
             date: d.date.toISOString().split('T')[0],
@@ -208,6 +210,7 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
             low: d.low ?? d.close,
             close: d.close,
             volume: d.volume ?? 0,
+            dollarVolume: d.dollarVolume,
           }));
 
         const [data, spy, fund] = await Promise.all([
@@ -220,7 +223,10 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
           return reply.status(404).send({ error: `No data found for ticker: ${ticker}` });
         }
 
-        const sectorEtf = fund?.sector ? (SECTOR_ETF_MAP[fund.sector] ?? null) : null;
+        const sectorEtf =
+          (fund?.sector ? SECTOR_ETF_MAP[fund.sector] : undefined) ??
+          TICKER_SECTOR_ETF[ticker] ??
+          null;
         const sectorCandles = sectorEtf ? await cachedBenchmarkPrices(sectorEtf, days) : [];
 
         return reply.send({

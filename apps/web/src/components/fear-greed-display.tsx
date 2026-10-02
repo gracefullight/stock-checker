@@ -29,11 +29,11 @@ export function FearGreedDisplay() {
   }, []);
 
   if (error) {
-    return <span className="text-xs font-mono text-muted-foreground">F&G: N/A</span>;
+    return <span className="text-xs font-mono text-muted-foreground">BTC F&G: N/A</span>;
   }
 
   if (!data) {
-    return <span className="text-xs font-mono text-muted-foreground">F&G: ...</span>;
+    return <span className="text-xs font-mono text-muted-foreground">BTC F&G: ...</span>;
   }
 
   const colorClass = getValueColorClass(data.value);
@@ -47,9 +47,9 @@ export function FearGreedDisplay() {
               {...props}
               role="img"
               className="text-xs font-mono cursor-default"
-              aria-label={`Fear & Greed Index: ${data.value} (${data.label})`}
+              aria-label={`Bitcoin Fear & Greed Index: ${data.value} (${data.label}), source Alternative.me`}
             >
-              <span className="text-muted-foreground">F&G: </span>
+              <span className="text-muted-foreground">BTC F&G: </span>
               <Badge
                 variant={getBadgeVariant(data.value)}
                 className={`font-mono font-bold ${colorClass}`}
@@ -60,9 +60,17 @@ export function FearGreedDisplay() {
           )}
         />
         <TooltipContent>
-          <span className="font-mono text-xs">{data.label}</span>
+          <span className="font-mono text-xs">{data.label} · Bitcoin sentiment</span>
         </TooltipContent>
       </Tooltip>
+      <a
+        className="text-[10px] font-mono text-muted-foreground underline"
+        href="https://alternative.me/crypto/fear-and-greed-index/"
+        target="_blank"
+        rel="noreferrer"
+      >
+        Alternative.me
+      </a>
     </TooltipProvider>
   );
 }

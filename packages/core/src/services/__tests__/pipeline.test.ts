@@ -3,6 +3,7 @@ import {
   DEFAULT_INSTITUTIONAL_CONFIG,
   DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
   DEFAULT_PIPELINE_CONFIG,
+  DEFAULT_QUALITY_PIPELINE_CONFIG,
   MEAN_REVERSION_GRADIENT_RANGES,
 } from '@/constants';
 import { evaluateSignal } from '@/services/pipeline';
@@ -242,6 +243,57 @@ describe('evaluateSignal', () => {
     });
     // Should not be blocked by trend
     expect(result.gateResults.trend.passed).toBe(true);
+  });
+});
+
+describe('quality gate with unavailable relative-strength evidence', () => {
+  const closes = Array.from({ length: 200 }, (_, i) => 100 + i * 0.5);
+  const close = closes.at(-1) as number;
+  const benchmark = closes.map((_, i) => ({
+    date: new Date(Date.UTC(2025, 0, i + 1)),
+    close: 100,
+    high: 101,
+    low: 99,
+    volume: 1_000_000,
+  }));
+  const params = {
+    ticker: 'LEADER',
+    indicators: makeIndicators({
+      rsi: 55,
+      stochasticK: 55,
+      williamsR: -45,
+      atr: 2,
+      sma50: close + 1,
+      volumeRatio: 1.1,
+      donchUpper: 250,
+    }),
+    close,
+    open: close + 1,
+    fearGreed: null,
+    patternScore: 0,
+    recentCandles: [{ open: close + 1, close, high: close + 9, low: close - 1, volume: 1_000_000 }],
+    recentMacdHistogram: [-0.2, -0.1, 0.1],
+    config: DEFAULT_QUALITY_PIPELINE_CONFIG,
+    allCloses: closes,
+    allDates: benchmark.map((candle) => candle.date),
+    allHighs: closes.map((value) => value + 1),
+    allLows: closes.map((value) => value - 1),
+    allVolumes: new Array(200).fill(1_000_000),
+    spyCandles: benchmark,
+    sectorCandles: benchmark,
+  };
+
+  it.each([
+    'spyCandles',
+    'sectorCandles',
+  ] as const)('keeps the shipped quality gate closed when %s is missing', (field) => {
+    expect(evaluateSignal(params).finalDecision).toBe('BUY');
+    const result = evaluateSignal({ ...params, [field]: [] });
+    const missingComponent = field === 'spyCandles' ? 'rsSpy' : 'rsSector';
+
+    expect(result.finalDecision).toBe('HOLD');
+    expect(result.qualityBlocked).toBe(true);
+    expect(result.gateResults.institutional.components[missingComponent]).toBe(0);
   });
 });
 
