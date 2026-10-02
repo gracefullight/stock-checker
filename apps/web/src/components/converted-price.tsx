@@ -31,11 +31,9 @@ export function ConvertedPrice({ usd }: { usd: number }) {
   if (!fx) return null;
 
   return (
-    <span
-      className="text-sm font-mono tabular-nums text-muted-foreground"
-      aria-label={`Approximately ${formatInCurrency(usd, fx.rate, currency)}`}
-    >
-      ≈ {formatInCurrency(usd, fx.rate, currency)}
+    <span className="text-sm font-mono tabular-nums text-muted-foreground">
+      <span aria-hidden="true">≈ {formatInCurrency(usd, fx.rate, currency)}</span>
+      <span className="sr-only">Approximately {formatInCurrency(usd, fx.rate, currency)}</span>
     </span>
   );
 }

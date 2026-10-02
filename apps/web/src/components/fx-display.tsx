@@ -75,19 +75,21 @@ export function FxDisplay() {
       ) : !fx ? (
         <span className="text-muted-foreground">...</span>
       ) : (
-        <span
-          className={changeColorClass(fx.dayChangePct)}
-          aria-label={`1 US dollar is ${formatRate(fx.rate)} ${currency}${
-            fx.dayChangePct != null ? `, ${fx.dayChangePct.toFixed(2)} percent today` : ''
-          }`}
-        >
-          {formatRate(fx.rate)}
-          {fx.dayChangePct != null && (
-            <span className="ml-1">
-              {arrow}
-              {Math.abs(fx.dayChangePct).toFixed(2)}%
-            </span>
-          )}
+        <span className={changeColorClass(fx.dayChangePct)}>
+          <span aria-hidden="true">
+            {formatRate(fx.rate)}
+            {fx.dayChangePct != null && (
+              <span className="ml-1">
+                {arrow}
+                {Math.abs(fx.dayChangePct).toFixed(2)}%
+              </span>
+            )}
+          </span>
+          <span className="sr-only">
+            {`1 US dollar is ${formatRate(fx.rate)} ${currency}${
+              fx.dayChangePct != null ? `, ${fx.dayChangePct.toFixed(2)} percent today` : ''
+            }`}
+          </span>
         </span>
       )}
     </span>
