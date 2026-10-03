@@ -26,18 +26,36 @@ def ticker() -> yf.Ticker:
     return yf.Ticker("OFFLINE")
 
 
-def test_fetch_stock_data_preserves_ticker_for_option_analysis(ticker: yf.Ticker) -> None:
+def test_fetch_stock_data_preserves_ticker_for_option_analysis(
+    ticker: yf.Ticker,
+) -> None:
     history = pd.DataFrame(
         {"Open": [100.0], "Close": [102.0], "Volume": [20.0]},
         index=pd.to_datetime(["2025-04-01"]),
     )
     with (
         patch.object(yf, "Ticker", return_value=ticker),
-        patch.object(type(ticker), "info", new_callable=PropertyMock,
-                     return_value={"regularMarketPrice": 102.0}),
-        patch.object(type(ticker), "earnings_dates", new_callable=PropertyMock, return_value=None),
-        patch.object(type(ticker), "recommendations", new_callable=PropertyMock, return_value=None),
-        patch.object(type(ticker), "analyst_price_targets", new_callable=PropertyMock, return_value=None),
+        patch.object(
+            type(ticker),
+            "info",
+            new_callable=PropertyMock,
+            return_value={"regularMarketPrice": 102.0},
+        ),
+        patch.object(
+            type(ticker), "earnings_dates", new_callable=PropertyMock, return_value=None
+        ),
+        patch.object(
+            type(ticker),
+            "recommendations",
+            new_callable=PropertyMock,
+            return_value=None,
+        ),
+        patch.object(
+            type(ticker),
+            "analyst_price_targets",
+            new_callable=PropertyMock,
+            return_value=None,
+        ),
         patch.object(ticker, "history", return_value=history) as history_request,
     ):
         data = stock.fetch_stock_data("OFFLINE")
@@ -48,15 +66,21 @@ def test_fetch_stock_data_preserves_ticker_for_option_analysis(ticker: yf.Ticker
     history_request.assert_called_once_with(period="1y")
 
 
-def test_put_call_ratio_uses_nearest_expiration_and_contrarian_score(ticker: yf.Ticker) -> None:
+def test_put_call_ratio_uses_nearest_expiration_and_contrarian_score(
+    ticker: yf.Ticker,
+) -> None:
     data = stock.StockData("OFFLINE", {}, None, None, None, ticker_obj=ticker)
     chain = SimpleNamespace(
         puts=pd.DataFrame({"volume": [30, 10]}),
         calls=pd.DataFrame({"volume": [10, 10]}),
     )
     with (
-        patch.object(type(ticker), "options", new_callable=PropertyMock,
-                     return_value=("2026-10-16", "2026-11-20")),
+        patch.object(
+            type(ticker),
+            "options",
+            new_callable=PropertyMock,
+            return_value=("2026-10-16", "2026-11-20"),
+        ),
         patch.object(ticker, "option_chain", return_value=chain) as chain_request,
     ):
         result = asyncio.run(stock.get_put_call_ratio(data))
@@ -71,7 +95,9 @@ def test_put_call_ratio_without_expirations_skips_chain_request(
 ) -> None:
     data = stock.StockData("OFFLINE", {}, None, None, None, ticker_obj=ticker)
     with (
-        patch.object(type(ticker), "options", new_callable=PropertyMock, return_value=expirations),
+        patch.object(
+            type(ticker), "options", new_callable=PropertyMock, return_value=expirations
+        ),
         patch.object(ticker, "option_chain") as chain_request,
     ):
         assert asyncio.run(stock.get_put_call_ratio(data)) is None
@@ -86,8 +112,12 @@ def test_put_call_ratio_with_missing_optional_data_returns_none(
     if missing == "chain":
         data.ticker_obj = ticker
     with (
-        patch.object(type(ticker), "options", new_callable=PropertyMock,
-                     return_value=("2026-10-16",)),
+        patch.object(
+            type(ticker),
+            "options",
+            new_callable=PropertyMock,
+            return_value=("2026-10-16",),
+        ),
         patch.object(ticker, "option_chain", return_value=None) as chain_request,
     ):
         assert asyncio.run(stock.get_put_call_ratio(data)) is None

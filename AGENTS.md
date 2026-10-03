@@ -17,6 +17,8 @@
 - `mise run predict -- --ticker=TSLA,PLTR --sort=asc`: Run predictions and append monthly CSV rows.
 - `mise run lint`, `mise run typecheck`, `mise run test`: Run quality checks.
 - `mise run finance:typecheck`: Check the Python financial scripts with Pyrefly.
+- `mise run finance:lint`, `mise run finance:format:check`: Check Python lint and formatting with Ruff.
+- `mise run finance:fix`: Apply safe Ruff fixes, then format sequentially.
 - `mise run finance:test`: Run the offline Python finance regressions.
 - Slack alerts: `SLACK_WEBHOOK_URL=... mise run predict -- --ticker=AAPL` or `--slack-webhook=...`.
 

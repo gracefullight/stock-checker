@@ -96,6 +96,9 @@ skills use Python. Their dependencies are locked separately in
 mise run finance:install
 mise run finance:deps:outdated
 mise run finance:deps:update
+mise run finance:lint         # Ruff lint
+mise run finance:format:check # Ruff formatting check
+mise run finance:fix          # safe lint fixes, then formatting
 mise run finance:typecheck    # Pyrefly, targeting Python 3.14
 mise run finance:test         # offline regression tests
 mise run finance:run -- .codex/skills/stock-analysis/scripts/analyze_stock.py --help
@@ -104,9 +107,9 @@ mise run finance:run -- .codex/skills/backtesting-trading-strategies/scripts/bac
 
 `finance:run` invokes Python inside the locked project environment, including
 for scripts with inline uv metadata.
-`mise run typecheck` also runs Pyrefly, and `mise run test` includes the Python
-regressions. Both run in GitHub Actions when the finance dependencies or scripts
-change.
+`mise run lint` includes Ruff lint and formatting checks, `mise run typecheck`
+runs Pyrefly, and `mise run test` includes the Python regressions. These checks
+also run in GitHub Actions when the finance dependencies or scripts change.
 
 The pre-commit hook checks staged file contents with Biome and leaves file contents
 and staging unchanged. Fix reported issues and stage the changes before retrying

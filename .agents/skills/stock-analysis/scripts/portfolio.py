@@ -22,20 +22,35 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 import yfinance as yf
 
-
 # Top 20 supported cryptocurrencies
 SUPPORTED_CRYPTOS = {
-    "BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD",
-    "ADA-USD", "DOGE-USD", "AVAX-USD", "DOT-USD", "MATIC-USD",
-    "LINK-USD", "ATOM-USD", "UNI-USD", "LTC-USD", "BCH-USD",
-    "XLM-USD", "ALGO-USD", "VET-USD", "FIL-USD", "NEAR-USD",
+    "BTC-USD",
+    "ETH-USD",
+    "BNB-USD",
+    "SOL-USD",
+    "XRP-USD",
+    "ADA-USD",
+    "DOGE-USD",
+    "AVAX-USD",
+    "DOT-USD",
+    "MATIC-USD",
+    "LINK-USD",
+    "ATOM-USD",
+    "UNI-USD",
+    "LTC-USD",
+    "BCH-USD",
+    "XLM-USD",
+    "ALGO-USD",
+    "VET-USD",
+    "FIL-USD",
+    "NEAR-USD",
 }
 
 
@@ -95,10 +110,10 @@ class PortfolioStore:
             return self._data
 
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8") as f:
                 self._data = json.load(f)
                 return self._data
-        except (json.JSONDecodeError, IOError):
+        except OSError, json.JSONDecodeError:
             self._data = {"version": 1, "portfolios": {}}
             return self._data
 
@@ -251,7 +266,9 @@ class PortfolioStore:
         # Check if asset already exists
         for asset in portfolio["assets"]:
             if asset["ticker"] == ticker:
-                raise ValueError(f"Asset '{ticker}' already in portfolio. Use 'update' to modify.")
+                raise ValueError(
+                    f"Asset '{ticker}' already in portfolio. Use 'update' to modify."
+                )
 
         # Validate ticker
         asset_type = detect_asset_type(ticker)
@@ -348,19 +365,21 @@ class PortfolioStore:
 def format_currency(value: float) -> str:
     """Format a value as currency."""
     if abs(value) >= 1_000_000:
-        return f"${value/1_000_000:.2f}M"
+        return f"${value / 1_000_000:.2f}M"
     elif abs(value) >= 1_000:
-        return f"${value/1_000:.2f}K"
+        return f"${value / 1_000:.2f}K"
     else:
         return f"${value:.2f}"
 
 
 def show_portfolio(portfolio: Portfolio, verbose: bool = False) -> None:
     """Display portfolio details with current prices."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"PORTFOLIO: {portfolio.name}")
-    print(f"Created: {portfolio.created_at[:10]} | Updated: {portfolio.updated_at[:10]}")
-    print(f"{'='*60}\n")
+    print(
+        f"Created: {portfolio.created_at[:10]} | Updated: {portfolio.updated_at[:10]}"
+    )
+    print(f"{'=' * 60}\n")
 
     if not portfolio.assets:
         print("  No assets in portfolio. Use 'add' to add assets.\n")
@@ -369,7 +388,9 @@ def show_portfolio(portfolio: Portfolio, verbose: bool = False) -> None:
     total_cost = 0.0
     total_value = 0.0
 
-    print(f"{'Ticker':<12} {'Type':<8} {'Qty':>10} {'Cost':>12} {'Current':>12} {'Value':>14} {'P&L':>12}")
+    print(
+        f"{'Ticker':<12} {'Type':<8} {'Qty':>10} {'Cost':>12} {'Current':>12} {'Value':>14} {'P&L':>12}"
+    )
     print("-" * 82)
 
     for asset in portfolio.assets:
@@ -389,20 +410,26 @@ def show_portfolio(portfolio: Portfolio, verbose: bool = False) -> None:
 
         pnl_str = f"{'+' if pnl >= 0 else ''}{format_currency(pnl)} ({pnl_pct:+.1f}%)"
 
-        print(f"{asset.ticker:<12} {asset.type:<8} {asset.quantity:>10.4f} "
-              f"{format_currency(asset.cost_basis):>12} {format_currency(current_price):>12} "
-              f"{format_currency(current_value):>14} {pnl_str:>12}")
+        print(
+            f"{asset.ticker:<12} {asset.type:<8} {asset.quantity:>10.4f} "
+            f"{format_currency(asset.cost_basis):>12} {format_currency(current_price):>12} "
+            f"{format_currency(current_value):>14} {pnl_str:>12}"
+        )
 
     print("-" * 82)
     total_pnl = total_value - total_cost
     total_pnl_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0
-    print(f"{'TOTAL':<12} {'':<8} {'':<10} {format_currency(total_cost):>12} {'':<12} "
-          f"{format_currency(total_value):>14} {'+' if total_pnl >= 0 else ''}{format_currency(total_pnl)} ({total_pnl_pct:+.1f}%)")
+    print(
+        f"{'TOTAL':<12} {'':<8} {'':<10} {format_currency(total_cost):>12} {'':<12} "
+        f"{format_currency(total_value):>14} {'+' if total_pnl >= 0 else ''}{format_currency(total_pnl)} ({total_pnl_pct:+.1f}%)"
+    )
     print()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Portfolio management for stock-analysis")
+    parser = argparse.ArgumentParser(
+        description="Portfolio management for stock-analysis"
+    )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # create
@@ -414,7 +441,9 @@ def main():
 
     # show
     show_parser = subparsers.add_parser("show", help="Show portfolio details")
-    show_parser.add_argument("--portfolio", "-p", help="Portfolio name (default: first portfolio)")
+    show_parser.add_argument(
+        "--portfolio", "-p", help="Portfolio name (default: first portfolio)"
+    )
 
     # delete
     delete_parser = subparsers.add_parser("delete", help="Delete a portfolio")
@@ -428,21 +457,35 @@ def main():
     # add
     add_parser = subparsers.add_parser("add", help="Add an asset to portfolio")
     add_parser.add_argument("ticker", help="Stock/crypto ticker (e.g., AAPL, BTC-USD)")
-    add_parser.add_argument("--quantity", "-q", type=float, required=True, help="Quantity")
-    add_parser.add_argument("--cost", "-c", type=float, required=True, help="Cost basis per unit")
-    add_parser.add_argument("--portfolio", "-p", help="Portfolio name (default: first portfolio)")
+    add_parser.add_argument(
+        "--quantity", "-q", type=float, required=True, help="Quantity"
+    )
+    add_parser.add_argument(
+        "--cost", "-c", type=float, required=True, help="Cost basis per unit"
+    )
+    add_parser.add_argument(
+        "--portfolio", "-p", help="Portfolio name (default: first portfolio)"
+    )
 
     # update
     update_parser = subparsers.add_parser("update", help="Update an asset in portfolio")
     update_parser.add_argument("ticker", help="Stock/crypto ticker")
     update_parser.add_argument("--quantity", "-q", type=float, help="New quantity")
-    update_parser.add_argument("--cost", "-c", type=float, help="New cost basis per unit")
-    update_parser.add_argument("--portfolio", "-p", help="Portfolio name (default: first portfolio)")
+    update_parser.add_argument(
+        "--cost", "-c", type=float, help="New cost basis per unit"
+    )
+    update_parser.add_argument(
+        "--portfolio", "-p", help="Portfolio name (default: first portfolio)"
+    )
 
     # remove
-    remove_parser = subparsers.add_parser("remove", help="Remove an asset from portfolio")
+    remove_parser = subparsers.add_parser(
+        "remove", help="Remove an asset from portfolio"
+    )
     remove_parser.add_argument("ticker", help="Stock/crypto ticker")
-    remove_parser.add_argument("--portfolio", "-p", help="Portfolio name (default: first portfolio)")
+    remove_parser.add_argument(
+        "--portfolio", "-p", help="Portfolio name (default: first portfolio)"
+    )
 
     args = parser.parse_args()
 
@@ -502,9 +545,13 @@ def main():
                 print("No portfolios found. Use 'create' to create one first.")
                 sys.exit(1)
 
-            asset = store.add_asset(portfolio_name, args.ticker, args.quantity, args.cost)
-            print(f"Added {asset.ticker} ({asset.type}) to {portfolio_name}: "
-                  f"{asset.quantity} units @ {format_currency(asset.cost_basis)}")
+            asset = store.add_asset(
+                portfolio_name, args.ticker, args.quantity, args.cost
+            )
+            print(
+                f"Added {asset.ticker} ({asset.type}) to {portfolio_name}: "
+                f"{asset.quantity} units @ {format_currency(asset.cost_basis)}"
+            )
 
         elif args.command == "update":
             portfolio_name = args.portfolio or store.get_default_portfolio_name()
@@ -516,12 +563,18 @@ def main():
                 print("Must specify --quantity and/or --cost to update.")
                 sys.exit(1)
 
-            asset = store.update_asset(portfolio_name, args.ticker, args.quantity, args.cost)
+            asset = store.update_asset(
+                portfolio_name, args.ticker, args.quantity, args.cost
+            )
             if asset:
-                print(f"Updated {asset.ticker} in {portfolio_name}: "
-                      f"{asset.quantity} units @ {format_currency(asset.cost_basis)}")
+                print(
+                    f"Updated {asset.ticker} in {portfolio_name}: "
+                    f"{asset.quantity} units @ {format_currency(asset.cost_basis)}"
+                )
             else:
-                print(f"Asset '{args.ticker}' not found in portfolio '{portfolio_name}'.")
+                print(
+                    f"Asset '{args.ticker}' not found in portfolio '{portfolio_name}'."
+                )
                 sys.exit(1)
 
         elif args.command == "remove":
@@ -533,7 +586,9 @@ def main():
             if store.remove_asset(portfolio_name, args.ticker):
                 print(f"Removed {args.ticker.upper()} from {portfolio_name}")
             else:
-                print(f"Asset '{args.ticker}' not found in portfolio '{portfolio_name}'.")
+                print(
+                    f"Asset '{args.ticker}' not found in portfolio '{portfolio_name}'."
+                )
                 sys.exit(1)
 
     except ValueError as e:

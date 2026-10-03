@@ -50,6 +50,30 @@ run = 'uv run --project tools/finance --locked --python 3.14 python "$@"'
 description = "Type-check the Python financial analysis scripts with Pyrefly"
 run = "uv run --project tools/finance --locked --python 3.14 pyrefly check --config tools/finance/pyproject.toml --min-severity warn"
 
+[tasks."finance:lint"]
+description = "Lint the Python finance scripts and tests with Ruff"
+run = "uv run --project tools/finance --locked --python 3.14 ruff check --config tools/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts tools/finance/tests"
+
+[tasks."finance:lint:fix"]
+description = "Apply safe Ruff fixes to the Python finance scripts and tests"
+run = "uv run --project tools/finance --locked --python 3.14 ruff check --fix --config tools/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts tools/finance/tests"
+
+[tasks."finance:format:check"]
+description = "Check Python finance formatting with Ruff"
+run = "uv run --project tools/finance --locked --python 3.14 ruff format --check --output-format concise --config tools/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts tools/finance/tests"
+
+[tasks."finance:format"]
+description = "Format the Python finance scripts and tests with Ruff"
+run = "uv run --project tools/finance --locked --python 3.14 ruff format --config tools/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts tools/finance/tests"
+
+[tasks."finance:fix"]
+description = "Fix Python lint and formatting sequentially"
+run = """
+set -eu
+mise run finance:lint:fix
+mise run finance:format
+"""
+
 [tasks."finance:test"]
 description = "Run Python finance regression tests"
 env.PYTHONDONTWRITEBYTECODE = "1"
@@ -92,14 +116,17 @@ depends = ["build:api", "build:web"]
 # ── Quality ───────────────────────────────────────────────────
 [tasks.lint]
 description = "Lint entire monorepo"
+depends = ["finance:lint", "finance:format:check"]
 run = "bunx biome check apps packages package.json tsconfig.json biome.json"
 
 [tasks."lint:fix"]
 description = "Lint + auto-fix"
-run = "bunx biome check --write --unsafe ."
+depends = ["finance:fix"]
+run = "bunx biome check --write --unsafe apps packages package.json tsconfig.json biome.json"
 
 [tasks.format]
 description = "Format all files"
+depends = ["finance:format"]
 run = "bunx biome format --write apps packages package.json tsconfig.json biome.json"
 
 [tasks."typecheck:core"]

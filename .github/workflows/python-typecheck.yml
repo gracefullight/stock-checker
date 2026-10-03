@@ -34,6 +34,10 @@ jobs:
           cache-dependency-glob: "tools/finance/uv.lock"
       - name: Install locked finance dependencies
         run: uv sync --project tools/finance --locked --python 3.14
+      - name: Lint Python with Ruff
+        run: uv run --project tools/finance --locked --python 3.14 ruff check --config tools/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts tools/finance/tests
+      - name: Check Python formatting
+        run: uv run --project tools/finance --locked --python 3.14 ruff format --check --output-format concise --config tools/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts tools/finance/tests
       - name: Check Python types with Pyrefly
         run: uv run --project tools/finance --locked --python 3.14 pyrefly check --config tools/finance/pyproject.toml --min-severity warn
       - name: Run finance regression tests
