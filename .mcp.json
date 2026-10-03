@@ -20,7 +20,8 @@
       ],
       "env": {
         "FMP_API_KEY": "${FMP_API_KEY:-}",
-        "TIINGO_API_KEY": "${TIINGO_API_KEY:-}"
+        "TIINGO_API_KEY": "${TIINGO_API_KEY:-}",
+        "STOCK_CHECKER_DASHBOARD_URL": "${STOCK_CHECKER_DASHBOARD_URL:-http://localhost:5100}"
       }
     },
     "aside": {

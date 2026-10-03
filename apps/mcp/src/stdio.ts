@@ -1,9 +1,13 @@
 import { Console } from 'node:console';
 import { format } from 'node:util';
-import type { ReportGenerator } from '@mcp/server.ts';
+import type { DashboardGenerator, DashboardLauncher, ReportGenerator } from '@mcp/server.ts';
 import type { StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 
-export async function startStdioServer(generator?: ReportGenerator): Promise<StdioServerHandle> {
+export async function startStdioServer(
+  generator?: ReportGenerator,
+  dashboardLauncher?: DashboardLauncher,
+  dashboardGenerator?: DashboardGenerator
+): Promise<StdioServerHandle> {
   process.env.MCP_LOG_STDERR = '1';
   Object.assign(
     globalThis.console,
@@ -16,10 +20,13 @@ export async function startStdioServer(generator?: ReportGenerator): Promise<Std
     import('@mcp/server.ts'),
   ]);
 
-  return serveStdio(() => createStockAnalystServer(generator), {
-    legacy: 'serve',
-    onerror: () => {
-      process.stderr.write('stock-checker MCP transport error.\n');
-    },
-  });
+  return serveStdio(
+    () => createStockAnalystServer(generator, dashboardLauncher, dashboardGenerator),
+    {
+      legacy: 'serve',
+      onerror: () => {
+        process.stderr.write('stock-checker MCP transport error.\n');
+      },
+    }
+  );
 }

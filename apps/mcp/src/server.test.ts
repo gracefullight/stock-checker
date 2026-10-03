@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import {
   createStockAnalystServer,
+  type DashboardLauncher,
   type ReportGenerator,
   SERVER_INSTRUCTIONS,
 } from '@mcp/server.ts';
@@ -10,9 +11,10 @@ import { InMemoryTransport } from '@modelcontextprotocol/server';
 
 async function withClient(
   generator: ReportGenerator,
-  check: (client: Client) => Promise<void>
+  check: (client: Client) => Promise<void>,
+  dashboardLauncher?: DashboardLauncher
 ): Promise<void> {
-  const server = createStockAnalystServer(generator);
+  const server = createStockAnalystServer(generator, dashboardLauncher);
   const client = new Client({ name: 'stock-checker-test', version: '1.0.0' });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   try {
@@ -99,7 +101,7 @@ describe('analyze_stock MCP tool', () => {
       },
       async (client) => {
         const { tools } = await client.listTools();
-        expect(tools).toHaveLength(1);
+        expect(tools).toHaveLength(3);
         expect(tools[0]).toMatchObject({
           name: 'analyze_stock',
           annotations: { readOnlyHint: true, destructiveHint: false },
@@ -117,6 +119,21 @@ describe('analyze_stock MCP tool', () => {
         expect(SERVER_INSTRUCTIONS.slice(0, 512)).toContain('may be unavailable');
         expect(tools[0]?.description).toContain('trailing PER/PSR');
         expect(tools[0]?.description).toContain('peer median PER/PSR with sample counts');
+        expect(tools[1]).toMatchObject({
+          name: 'open_stock_dashboard',
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: false,
+            openWorldHint: true,
+          },
+          inputSchema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['ticker'],
+            properties: { ticker: { type: 'string', maxLength: 32 } },
+          },
+        });
       }
     );
   });
@@ -173,4 +190,126 @@ describe('analyze_stock MCP tool', () => {
       });
     }
   );
+});
+
+describe('open_stock_dashboard MCP tool', () => {
+  test('opens only on explicit dashboard calls and returns its normalized link', async () => {
+    const generator = mock(async () => ({
+      report: fixtureReport('AAPL'),
+      markdown: '# AAPL fixture report',
+    }));
+    const dashboardLauncher = mock(async (ticker: string) => ({
+      ticker,
+      url: `http://localhost:5100/${ticker}`,
+      opened: true,
+      readiness: 'listening' as const,
+      status: 'opened' as const,
+      message: 'Browser launch requested.',
+    }));
+    await withClient(
+      generator,
+      async (client) => {
+        await client.callTool({ name: 'analyze_stock', arguments: { ticker: 'AAPL' } });
+        expect(dashboardLauncher).not.toHaveBeenCalled();
+        const result = await client.callTool({
+          name: 'open_stock_dashboard',
+          arguments: { ticker: ' brk-b ' },
+        });
+        expect(dashboardLauncher).toHaveBeenCalledWith('BRK-B');
+        expect(generator).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({
+          isError: false,
+          content: [{ type: 'text', text: expect.stringContaining('http://localhost:5100/BRK-B') }],
+          structuredContent: {
+            ticker: 'BRK-B',
+            url: 'http://localhost:5100/BRK-B',
+            opened: true,
+            readiness: 'listening',
+            status: 'opened',
+          },
+        });
+      },
+      dashboardLauncher
+    );
+  });
+
+  test('preserves a stopped-server link and startup instructions', async () => {
+    await withClient(
+      async () => {
+        throw new Error('Dashboard calls must not generate a report');
+      },
+      async (client) => {
+        const result = await client.callTool({
+          name: 'open_stock_dashboard',
+          arguments: { ticker: 'OII' },
+        });
+        expect(result).toMatchObject({
+          isError: true,
+          structuredContent: {
+            ticker: 'OII',
+            url: 'http://localhost:5100/OII',
+            opened: false,
+            readiness: 'unavailable',
+            status: 'not_running',
+          },
+        });
+        expect(JSON.stringify(result)).toContain('mise run dev');
+      },
+      async (ticker) => ({
+        ticker,
+        url: 'http://localhost:5100/OII',
+        opened: false,
+        readiness: 'unavailable',
+        status: 'not_running',
+        message: 'Run `mise run dev`, then try again.',
+      })
+    );
+  });
+
+  test('sanitizes unexpected dashboard launcher errors', async () => {
+    await withClient(
+      async () => {
+        throw new Error('Dashboard calls must not generate a report');
+      },
+      async (client) => {
+        const result = await client.callTool({
+          name: 'open_stock_dashboard',
+          arguments: { ticker: 'OII' },
+        });
+        expect(result).toMatchObject({ isError: true });
+        expect(JSON.stringify(result)).not.toContain('fixture-secret');
+      },
+      async () => {
+        throw new Error('https://dashboard.example?key=fixture-secret');
+      }
+    );
+  });
+
+  test.each([
+    { ticker: '' },
+    { ticker: '../AAPL' },
+    { ticker: 'AAPL;open' },
+    { ticker: 'AAPL\u0000' },
+    { ticker: 'A'.repeat(33) },
+    { ticker: 'AAPL', url: 'https://example.com' },
+    { ticker: 'AAPL', lookbackDays: 730 },
+  ])('rejects invalid dashboard inputs before browser launch: %j', async (arguments_) => {
+    const dashboardLauncher = mock(async () => {
+      throw new Error('Invalid arguments must not reach the dashboard launcher');
+    });
+    await withClient(
+      async () => {
+        throw new Error('Dashboard calls must not generate a report');
+      },
+      async (client) => {
+        const result = await client.callTool({
+          name: 'open_stock_dashboard',
+          arguments: arguments_,
+        });
+        expect(result).toMatchObject({ isError: true });
+        expect(dashboardLauncher).not.toHaveBeenCalled();
+      },
+      dashboardLauncher
+    );
+  });
 });

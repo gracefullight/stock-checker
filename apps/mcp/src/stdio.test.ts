@@ -30,6 +30,7 @@ describe('MCP stdio', () => {
       await client.connect(transport);
       const { tools } = await client.listTools();
       expect(tools[0]?.name).toBe('analyze_stock');
+      expect(tools[1]?.name).toBe('open_stock_dashboard');
       const result = await client.callTool({
         name: 'analyze_stock',
         arguments: { ticker: 'AAPL' },
@@ -39,6 +40,17 @@ describe('MCP stdio', () => {
         structuredContent: { report: { ticker: 'AAPL', status: 'available', valuation: null } },
       });
       expect(JSON.stringify(result)).not.toContain('fixture-secret');
+      expect(
+        await client.callTool({ name: 'open_stock_dashboard', arguments: { ticker: '^gspc' } })
+      ).toMatchObject({
+        isError: false,
+        structuredContent: {
+          ticker: '^GSPC',
+          url: 'http://localhost:5100/%5EGSPC',
+          opened: true,
+          readiness: 'listening',
+        },
+      });
       expect(
         await client.callTool({ name: 'analyze_stock', arguments: { ticker: 'FAIL' } })
       ).toMatchObject({ isError: true });
@@ -116,7 +128,13 @@ describe('MCP stdio', () => {
           `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`
         );
         expect(await request(2, 'tools/list')).toMatchObject({
-          result: { tools: [{ name: 'analyze_stock' }] },
+          result: {
+            tools: [
+              { name: 'analyze_stock' },
+              { name: 'open_stock_dashboard' },
+              { name: 'show_stock_dashboard' },
+            ],
+          },
         });
         const result = await request(3, 'tools/call', {
           name: 'analyze_stock',
@@ -132,6 +150,45 @@ describe('MCP stdio', () => {
         expect(
           await request(4, 'tools/call', { name: 'analyze_stock', arguments: { ticker: 'FAIL' } })
         ).toMatchObject({ result: { isError: true } });
+        expect(
+          await request(5, 'tools/call', {
+            name: 'open_stock_dashboard',
+            arguments: { ticker: '^gspc' },
+          })
+        ).toMatchObject({
+          result: {
+            isError: false,
+            structuredContent: {
+              ticker: '^GSPC',
+              url: 'http://localhost:5100/%5EGSPC',
+              opened: true,
+              readiness: 'listening',
+            },
+          },
+        });
+        expect(
+          await request(6, 'tools/call', {
+            name: 'show_stock_dashboard',
+            arguments: { ticker: 'spcx' },
+          })
+        ).toMatchObject({
+          result: {
+            isError: false,
+            structuredContent: { report: { ticker: 'SPCX' }, chart: { status: 'available' } },
+          },
+        });
+        expect(
+          await request(7, 'resources/read', { uri: 'ui://stock-checker/dashboard' })
+        ).toMatchObject({
+          result: {
+            contents: [
+              {
+                mimeType: 'text/html;profile=mcp-app',
+                text: expect.stringContaining('ui/initialize'),
+              },
+            ],
+          },
+        });
         expect(invalidLines).toEqual([]);
         expect(stdout.length).toBeGreaterThanOrEqual(3);
       } finally {

@@ -124,6 +124,7 @@ repository allowlist.
 | `TIINGO_API_KEY` | Enables the [Tiingo](https://www.tiingo.com) daily-OHLCV fallback when Yahoo is rate-limited or down (free tier: 1,000 req/day). Without it, OHLCV degrades to empty on Yahoo failure. |
 | `SLACK_WEBHOOK_URL` | Slack notification for BUY/SELL opinions from `predict`. |
 | `FMP_API_KEY` | Optional [FMP](https://site.financialmodelingprep.com/developer/docs) fallback for recent individual analyst price-target updates. Yahoo consensus and available Yahoo target updates work without it. |
+| `STOCK_CHECKER_DASHBOARD_URL` | Base URL for the local MCP browser dashboard tool; defaults to `http://localhost:5100`. Accepts HTTP/HTTPS without credentials, query parameters, or fragments. |
 
 ### Local MCP (Codex and Claude Code)
 
@@ -177,6 +178,42 @@ variables with an empty default. An explicit key can also be supplied through
 the data source.
 
 Check the MCP app with `mise run typecheck:mcp` and `mise run test:mcp`.
+
+For an interactive dashboard inside chat, ask `SPCX 대시보드를 채팅 안에 보여줘`.
+The client calls `show_stock_dashboard` with the same ticker/lookback input as
+`analyze_stock`. The tool links `ui://stock-checker/dashboard`, a self-contained
+MCP Apps HTML resource (`text/html;profile=mcp-app`), and returns the report plus
+up to 300 completed daily candles from a separate 365-day chart request.
+The chart supports 1/3/6/12-month ranges, candles or a closing-price line,
+volume, and pointer/keyboard OHLC inspection. The dashboard also shows the
+signal, conditional execution references, historical rates with sample counts,
+TTM/forward valuation, peer comparisons, and analyst targets.
+
+The inline dashboard needs no Next.js/API server and loads no external scripts,
+fonts, or network assets. Rendering requires a client with MCP Apps support;
+clients without that support receive the full Markdown report and an optional
+web detail link. Exposing the app resource does not prove that a particular
+client renders it. Missing chart data preserves the available report.
+
+To open a ticker's existing web detail dashboard, start the API and web servers
+with `mise run dev`, then ask `SPCX 대시보드 열어줘`. The client can call:
+
+```json
+{"ticker":"SPCX"}
+```
+
+Use the `open_stock_dashboard` tool for this request. It returns the ticker URL
+and opens the default browser on the computer running the local MCP server.
+It checks for a web listener before opening; this check does not verify market
+data or API availability. If the web server is stopped, the tool returns the
+link and startup instructions. It does not start development servers.
+The web detail screen shows the existing charts, signals, fundamentals and
+events; the full analyst report is returned separately by `analyze_stock`.
+Analyzing a ticker alone does not open a browser.
+
+Codex forwards `STOCK_CHECKER_DASHBOARD_URL` from the environment; Claude uses
+the same variable with the default URL above. Private local MCP `env` settings
+can override it. Restart the MCP connection after changing its configuration.
 
 ### CLI (packages/core)
 
