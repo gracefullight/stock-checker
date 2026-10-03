@@ -283,18 +283,18 @@ describe('quality gate with unavailable relative-strength evidence', () => {
     sectorCandles: benchmark,
   };
 
-  it.each([
-    'spyCandles',
-    'sectorCandles',
-  ] as const)('keeps the shipped quality gate closed when %s is missing', (field) => {
-    expect(evaluateSignal(params).finalDecision).toBe('BUY');
-    const result = evaluateSignal({ ...params, [field]: [] });
-    const missingComponent = field === 'spyCandles' ? 'rsSpy' : 'rsSector';
+  it.each(['spyCandles', 'sectorCandles'] as const)(
+    'keeps the shipped quality gate closed when %s is missing',
+    (field) => {
+      expect(evaluateSignal(params).finalDecision).toBe('BUY');
+      const result = evaluateSignal({ ...params, [field]: [] });
+      const missingComponent = field === 'spyCandles' ? 'rsSpy' : 'rsSector';
 
-    expect(result.finalDecision).toBe('HOLD');
-    expect(result.qualityBlocked).toBe(true);
-    expect(result.gateResults.institutional.components[missingComponent]).toBe(0);
-  });
+      expect(result.finalDecision).toBe('HOLD');
+      expect(result.qualityBlocked).toBe(true);
+      expect(result.gateResults.institutional.components[missingComponent]).toBe(0);
+    }
+  );
 });
 
 // --- C4: Blend-not-hard-gate for 'institutional' strategy ---

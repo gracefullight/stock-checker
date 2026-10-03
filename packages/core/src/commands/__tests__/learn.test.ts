@@ -109,23 +109,23 @@ describe('learn outcome data and fitting', () => {
     expect(fitPlattScaling).not.toHaveBeenCalled();
   });
 
-  it.each([
-    null,
-    'Infinity',
-  ])('skips fitting and saving when the matched score is %s', async (score) => {
-    vi.mocked(fs.readFileSync).mockReturnValue(
-      JSON.stringify([{ date: '2025-01-06', ticker: 'AAPL', opinion: 'BUY', close: 200, score }])
-    );
+  it.each([null, 'Infinity'])(
+    'skips fitting and saving when the matched score is %s',
+    async (score) => {
+      vi.mocked(fs.readFileSync).mockReturnValue(
+        JSON.stringify([{ date: '2025-01-06', ticker: 'AAPL', opinion: 'BUY', close: 200, score }])
+      );
 
-    await learn();
+      await learn();
 
-    expect(fitPlattScaling).not.toHaveBeenCalled();
-    expect(fs.writeFileSync).not.toHaveBeenCalledWith(
-      expect.stringContaining('calibration_params.json'),
-      expect.anything()
-    );
-    expect(mocks.stop).toHaveBeenCalledWith('Score mapping skipped: no finite matched scores');
-  });
+      expect(fitPlattScaling).not.toHaveBeenCalled();
+      expect(fs.writeFileSync).not.toHaveBeenCalledWith(
+        expect.stringContaining('calibration_params.json'),
+        expect.anything()
+      );
+      expect(mocks.stop).toHaveBeenCalledWith('Score mapping skipped: no finite matched scores');
+    }
+  );
 
   it('skips a numeric nonfinite score parsed from an overflowing JSON number', async () => {
     vi.mocked(fs.readFileSync).mockReturnValue(

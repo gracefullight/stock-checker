@@ -173,17 +173,17 @@ describe('relative-strength evidence', () => {
     config: DEFAULT_INSTITUTIONAL_CONFIG,
   };
 
-  it.each([
-    'spyCandles',
-    'sectorCandles',
-  ] as const)('does not award positive evidence for missing %s', (field) => {
-    const result = calcInstitutionalScore({ ...base, [field]: [] });
-    const missingComponent = field === 'spyCandles' ? 'rsSpy' : 'rsSector';
-    const presentComponent = field === 'spyCandles' ? 'rsSector' : 'rsSpy';
+  it.each(['spyCandles', 'sectorCandles'] as const)(
+    'does not award positive evidence for missing %s',
+    (field) => {
+      const result = calcInstitutionalScore({ ...base, [field]: [] });
+      const missingComponent = field === 'spyCandles' ? 'rsSpy' : 'rsSector';
+      const presentComponent = field === 'spyCandles' ? 'rsSector' : 'rsSpy';
 
-    expect(result.components[missingComponent]).toBe(0);
-    expect(result.components[presentComponent]).toBe(1);
-  });
+      expect(result.components[missingComponent]).toBe(0);
+      expect(result.components[presentComponent]).toBe(1);
+    }
+  );
 
   it('does not award positive evidence when the benchmark is too short', () => {
     const result = calcInstitutionalScore({ ...base, spyCandles: benchmark.slice(-20) });

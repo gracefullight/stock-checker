@@ -255,24 +255,19 @@ describe('screenerRoutes', () => {
       vi.mocked(getSignalHistory).mockReturnValue([]);
     });
 
-    it.each([
-      'abc',
-      '0',
-      '-1',
-      '1.5',
-      'Infinity',
-      '1e309',
-      '1&days=2',
-    ])('rejects invalid days=%s without fetching prices', async (days) => {
-      const res = await app.inject({
-        method: 'GET',
-        url: `/api/screener/AAPL/${endpoint}?days=${days}`,
-      });
+    it.each(['abc', '0', '-1', '1.5', 'Infinity', '1e309', '1&days=2'])(
+      'rejects invalid days=%s without fetching prices',
+      async (days) => {
+        const res = await app.inject({
+          method: 'GET',
+          url: `/api/screener/AAPL/${endpoint}?days=${days}`,
+        });
 
-      expect(res.statusCode).toBe(400);
-      expect(mockedGetHistoricalPrices).not.toHaveBeenCalled();
-      expect(mockedFetchBenchmarkPrices).not.toHaveBeenCalled();
-    });
+        expect(res.statusCode).toBe(400);
+        expect(mockedGetHistoricalPrices).not.toHaveBeenCalled();
+        expect(mockedFetchBenchmarkPrices).not.toHaveBeenCalled();
+      }
+    );
 
     it.each([
       { query: '', expectedDays: defaultDays },

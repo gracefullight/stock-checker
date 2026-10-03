@@ -77,10 +77,16 @@ Tooling is managed by [mise](https://mise.jdx.dev); tasks wrap every common
 operation (run `mise tasks` to see them all).
 
 ```bash
-mise install        # pin runtimes (node 24, bun)
-bun install         # install workspace deps + repository git hooks
+mise install        # pin runtimes (node 26, bun)
+mise run install    # install workspace deps + repository git hooks
 mise run dev        # API (5101) + Web (5100) dev servers in parallel
 ```
+
+Check and update workspace dependencies with `mise run deps:outdated` and
+`mise run deps:update`. The updater visits each workspace sequentially so they
+share one lockfile. Type checks use the TypeScript 7 native `tsc`; the
+`typescript` import uses the official [TypeScript 6 compatibility package](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0) for
+tools such as Next.js that need the JavaScript compiler API.
 
 The pre-commit hook checks staged file contents with Biome and leaves file contents
 and staging unchanged. Fix reported issues and stage the changes before retrying

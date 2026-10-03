@@ -62,26 +62,24 @@ describe('earnings service', () => {
         expectedActual: 1,
         expectedEstimate: null,
       },
-    ])('treats non-finite EPS as unknown: %j', async ({
-      epsActual,
-      epsEstimate,
-      expectedActual,
-      expectedEstimate,
-    }) => {
-      vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
-        earningsHistory: { history: [{ epsActualDate: '2026-03-31', epsActual, epsEstimate }] },
-      } as never);
+    ])(
+      'treats non-finite EPS as unknown: %j',
+      async ({ epsActual, epsEstimate, expectedActual, expectedEstimate }) => {
+        vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
+          earningsHistory: { history: [{ epsActualDate: '2026-03-31', epsActual, epsEstimate }] },
+        } as never);
 
-      const result = await getEarningsData('AAPL');
+        const result = await getEarningsData('AAPL');
 
-      expect(result.earningsHistory[0]).toMatchObject({
-        epsActual: expectedActual,
-        epsEstimate: expectedEstimate,
-        epsDifference: null,
-        surprisePercent: null,
-      });
-      expect(formatEarningsData(result)).toContain('Average Surprise: N/A');
-    });
+        expect(result.earningsHistory[0]).toMatchObject({
+          epsActual: expectedActual,
+          epsEstimate: expectedEstimate,
+          epsDifference: null,
+          surprisePercent: null,
+        });
+        expect(formatEarningsData(result)).toContain('Average Surprise: N/A');
+      }
+    );
 
     it('selects current-quarter revisions and nested consensus by period instead of array order', async () => {
       vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
@@ -147,33 +145,33 @@ describe('earnings service', () => {
       expect(result.nextEarningsEstimate).toBeNull();
     });
 
-    it.each([
-      Number.NaN,
-      Number.POSITIVE_INFINITY,
-    ])('does not classify a non-finite estimate as flat (%s)', async (current) => {
-      vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
-        earningsTrend: {
-          trend: [
-            {
-              period: '0q',
-              endDate: new Date('2026-06-30'),
-              epsTrend: { current, '30daysAgo': 1 },
-              epsRevisions: { upLast30days: -1, downLast30days: 1.5 },
-            },
-          ],
-        },
-      } as never);
+    it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+      'does not classify a non-finite estimate as flat (%s)',
+      async (current) => {
+        vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({
+          earningsTrend: {
+            trend: [
+              {
+                period: '0q',
+                endDate: new Date('2026-06-30'),
+                epsTrend: { current, '30daysAgo': 1 },
+                epsRevisions: { upLast30days: -1, downLast30days: 1.5 },
+              },
+            ],
+          },
+        } as never);
 
-      const result = await getEarningsData('AAPL');
+        const result = await getEarningsData('AAPL');
 
-      expect(result.estimateRevisions).toEqual({
-        up30: null,
-        down30: null,
-        current: null,
-        thirtyDaysAgo: 1,
-        direction: null,
-      });
-    });
+        expect(result.estimateRevisions).toEqual({
+          up30: null,
+          down30: null,
+          current: null,
+          thirtyDaysAgo: 1,
+          direction: null,
+        });
+      }
+    );
 
     it('keeps negative current-quarter estimates and missing consensus values', async () => {
       vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({

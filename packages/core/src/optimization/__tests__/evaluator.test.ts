@@ -149,26 +149,22 @@ describe('matchPredictions', () => {
     expect(matchPredictions([makePrediction()], history)).toEqual([]);
   });
 
-  it.each([
-    0,
-    -1,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-  ])('skips an invalid historical entry price %s', (entryPrice) => {
-    expect(matchPredictions([makePrediction()], fiveSessionHistory(105, entryPrice))).toEqual([]);
-  });
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'skips an invalid historical entry price %s',
+    (entryPrice) => {
+      expect(matchPredictions([makePrediction()], fiveSessionHistory(105, entryPrice))).toEqual([]);
+    }
+  );
 
-  it.each([
-    0,
-    -1,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-  ])('skips an invalid fifth-session outcome %s without substituting a later price', (outcomePrice) => {
-    const history = fiveSessionHistory(outcomePrice);
-    history.get('AAPL')?.set('2025-01-14', 105);
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'skips an invalid fifth-session outcome %s without substituting a later price',
+    (outcomePrice) => {
+      const history = fiveSessionHistory(outcomePrice);
+      history.get('AAPL')?.set('2025-01-14', 105);
 
-    expect(matchPredictions([makePrediction()], history)).toEqual([]);
-  });
+      expect(matchPredictions([makePrediction()], history)).toEqual([]);
+    }
+  );
 
   it('skips a prediction without five subsequent observed sessions', () => {
     const history = fiveSessionHistory(105);

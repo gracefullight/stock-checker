@@ -15,17 +15,17 @@ describe('watchlist manager', () => {
   });
 
   describe('persistence failures', () => {
-    it.each([
-      'EACCES',
-      'EIO',
-    ])('does not overwrite a watchlist after a %s read failure', async (code) => {
-      const error = Object.assign(new Error('Failed to read watchlist'), { code });
-      vi.mocked(fs.readFile).mockRejectedValueOnce(error);
+    it.each(['EACCES', 'EIO'])(
+      'does not overwrite a watchlist after a %s read failure',
+      async (code) => {
+        const error = Object.assign(new Error('Failed to read watchlist'), { code });
+        vi.mocked(fs.readFile).mockRejectedValueOnce(error);
 
-      await expect(addTicker('PLTR')).rejects.toBe(error);
+        await expect(addTicker('PLTR')).rejects.toBe(error);
 
-      expect(fs.writeFile).not.toHaveBeenCalled();
-    });
+        expect(fs.writeFile).not.toHaveBeenCalled();
+      }
+    );
 
     it('does not overwrite malformed watchlist JSON', async () => {
       vi.mocked(fs.readFile).mockResolvedValueOnce('{"tickers":');

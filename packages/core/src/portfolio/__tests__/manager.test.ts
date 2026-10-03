@@ -37,17 +37,17 @@ describe('portfolio manager', () => {
       expect(portfolio.createdAt).toBeTruthy();
     });
 
-    it.each([
-      'EACCES',
-      'EIO',
-    ])('does not overwrite a portfolio after a %s read failure', async (code) => {
-      const error = Object.assign(new Error('Failed to read portfolio'), { code });
-      vi.mocked(fs.readFile).mockRejectedValueOnce(error);
+    it.each(['EACCES', 'EIO'])(
+      'does not overwrite a portfolio after a %s read failure',
+      async (code) => {
+        const error = Object.assign(new Error('Failed to read portfolio'), { code });
+        vi.mocked(fs.readFile).mockRejectedValueOnce(error);
 
-      await expect(addAsset('PLTR')).rejects.toBe(error);
+        await expect(addAsset('PLTR')).rejects.toBe(error);
 
-      expect(fs.writeFile).not.toHaveBeenCalled();
-    });
+        expect(fs.writeFile).not.toHaveBeenCalled();
+      }
+    );
 
     it('does not overwrite malformed portfolio JSON', async () => {
       vi.mocked(fs.readFile).mockResolvedValueOnce('{"assets":');

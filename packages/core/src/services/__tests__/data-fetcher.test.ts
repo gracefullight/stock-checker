@@ -41,18 +41,13 @@ describe('data-fetcher', () => {
       expect(result).toBeNull();
     });
 
-    it.each([
-      '42oops',
-      '',
-      ' ',
-      '-1',
-      '101',
-      '42.5',
-      Number.POSITIVE_INFINITY,
-    ])('rejects malformed or out-of-range sentiment %s', async (value) => {
-      mocks.get.mockResolvedValue({ data: { data: [{ value }] } });
+    it.each(['42oops', '', ' ', '-1', '101', '42.5', Number.POSITIVE_INFINITY])(
+      'rejects malformed or out-of-range sentiment %s',
+      async (value) => {
+        mocks.get.mockResolvedValue({ data: { data: [{ value }] } });
 
-      expect(await getFearGreedIndex()).toBeNull();
-    });
+        expect(await getFearGreedIndex()).toBeNull();
+      }
+    );
   });
 });

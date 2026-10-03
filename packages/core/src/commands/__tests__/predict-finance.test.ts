@@ -152,23 +152,23 @@ describe('equity prediction finance inputs', () => {
     );
   });
 
-  it.each([
-    'flat',
-    null,
-  ] as const)('keeps revision direction %s unknown for scoring', async (direction) => {
-    vi.mocked(getEarningsData).mockResolvedValue({
-      ...earnings,
-      estimateRevisions: earnings.estimateRevisions
-        ? { ...earnings.estimateRevisions, direction }
-        : null,
-    });
+  it.each(['flat', null] as const)(
+    'keeps revision direction %s unknown for scoring',
+    async (direction) => {
+      vi.mocked(getEarningsData).mockResolvedValue({
+        ...earnings,
+        estimateRevisions: earnings.estimateRevisions
+          ? { ...earnings.estimateRevisions, direction }
+          : null,
+      });
 
-    await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
+      await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
 
-    expect(evaluateSignal).toHaveBeenCalledWith(
-      expect.objectContaining({ earningsEstimateUp: null })
-    );
-  });
+      expect(evaluateSignal).toHaveBeenCalledWith(
+        expect.objectContaining({ earningsEstimateUp: null })
+      );
+    }
+  );
 
   it('skips analysis when ATR does not support valid positive risk levels', async () => {
     vi.mocked(calculateAllIndicators).mockReturnValue({ ...indicators, atr: 0 });

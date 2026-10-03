@@ -1,5 +1,6 @@
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
+import { getCorsOptions } from '@/lib/cors';
 import { marketRoutes } from '@/routes/market';
 import { portfolioRoutes } from '@/routes/portfolio';
 import { screenerRoutes } from '@/routes/screener';
@@ -7,9 +8,7 @@ import { watchlistRoutes } from '@/routes/watchlist';
 
 const app = Fastify({ logger: true });
 
-await app.register(cors, {
-  origin: process.env.CORS_ORIGIN ?? '*',
-});
+await app.register(cors, getCorsOptions());
 
 await app.register(screenerRoutes, { prefix: '/api' });
 await app.register(portfolioRoutes, { prefix: '/api' });

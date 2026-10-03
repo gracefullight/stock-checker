@@ -13,11 +13,12 @@ function candles(count: number) {
 }
 
 describe('optimizer signal-context minimum', () => {
-  it.each([
-    200, 209,
-  ])('rejects %i bars rather than reporting an unevaluated zero-trade optimum', (count) => {
-    expect(() => optimizeWithData(candles(count), 1)).toThrow(`Insufficient data: ${count} bars`);
-  });
+  it.each([200, 209])(
+    'rejects %i bars rather than reporting an unevaluated zero-trade optimum',
+    (count) => {
+      expect(() => optimizeWithData(candles(count), 1)).toThrow(`Insufficient data: ${count} bars`);
+    }
+  );
 
   it('accepts the shared signal context minimum of 210 bars', () => {
     expect(() => optimizeWithData(candles(210), 1)).not.toThrow();
