@@ -333,4 +333,4 @@ def get_strategy(name: str) -> Strategy:
 
 def list_strategies() -> Dict[str, str]:
     """List all available strategies with descriptions."""
-    return {name: strategy.__doc__.split('\n')[0] for name, strategy in STRATEGIES.items()}
+    return {name: (strategy.__doc__ or '').split('\n')[0] for name, strategy in STRATEGIES.items()}

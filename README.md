@@ -77,7 +77,7 @@ Tooling is managed by [mise](https://mise.jdx.dev); tasks wrap every common
 operation (run `mise tasks` to see them all).
 
 ```bash
-mise install        # pin runtimes (node 26, bun)
+mise install        # install node 26, bun, Python 3.14, and uv
 mise run install    # install workspace deps + repository git hooks
 mise run dev        # API (5101) + Web (5100) dev servers in parallel
 ```
@@ -87,6 +87,26 @@ Check and update workspace dependencies with `mise run deps:outdated` and
 share one lockfile. Type checks use the TypeScript 7 native `tsc`; the
 `typescript` import uses the official [TypeScript 6 compatibility package](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0) for
 tools such as Next.js that need the JavaScript compiler API.
+
+The app and its optimizer run in TypeScript. The managed financial-analysis
+skills use Python. Their dependencies are locked separately in
+`tools/finance/uv.lock` and run with Python 3.14:
+
+```bash
+mise run finance:install
+mise run finance:deps:outdated
+mise run finance:deps:update
+mise run finance:typecheck    # Pyrefly, targeting Python 3.14
+mise run finance:test         # offline regression tests
+mise run finance:run -- .codex/skills/stock-analysis/scripts/analyze_stock.py --help
+mise run finance:run -- .codex/skills/backtesting-trading-strategies/scripts/backtest.py --help
+```
+
+`finance:run` invokes Python inside the locked project environment, including
+for scripts with inline uv metadata.
+`mise run typecheck` also runs Pyrefly, and `mise run test` includes the Python
+regressions. Both run in GitHub Actions when the finance dependencies or scripts
+change.
 
 The pre-commit hook checks staged file contents with Biome and leaves file contents
 and staging unchanged. Fix reported issues and stage the changes before retrying

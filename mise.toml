@@ -1,6 +1,8 @@
 [tools]
 node = "26"
 bun = "1.4.2"
+python = "3.14"
+uv = "0.12.22"
 
 # ── Install ──────────────────────────────────────────────────
 [tasks.install]
@@ -20,6 +22,38 @@ bun update --latest --no-cache
 (cd apps/web && bun update --latest --no-cache)
 (cd packages/core && bun update --latest --no-cache)
 """
+
+# ── Python finance tools ──────────────────────────────────────
+[tasks."finance:install"]
+description = "Install the locked Python finance-tool dependencies"
+run = "uv sync --project tools/finance --locked --python 3.14"
+
+[tasks."finance:deps:outdated"]
+description = "Check outdated packages in the Python finance environment"
+depends = ["finance:install"]
+run = "uv pip list --python tools/finance/.venv/bin/python --outdated"
+
+[tasks."finance:deps:update"]
+description = "Update and install the Python finance dependency lockfile"
+run = """
+set -eu
+uv lock --project tools/finance --upgrade
+uv sync --project tools/finance --locked --python 3.14
+"""
+
+[tasks."finance:run"]
+description = "Run a Python finance script with the locked environment"
+env.PYTHONDONTWRITEBYTECODE = "1"
+run = 'uv run --project tools/finance --locked --python 3.14 python "$@"'
+
+[tasks."finance:typecheck"]
+description = "Type-check the Python financial analysis scripts with Pyrefly"
+run = "uv run --project tools/finance --locked --python 3.14 pyrefly check --config tools/finance/pyproject.toml --min-severity warn"
+
+[tasks."finance:test"]
+description = "Run Python finance regression tests"
+env.PYTHONDONTWRITEBYTECODE = "1"
+run = "uv run --project tools/finance --locked --python 3.14 pytest tools/finance/tests"
 
 # ── Dev Servers ──────────────────────────────────────────────
 [tasks."dev:api"]
@@ -82,7 +116,7 @@ run = "bun run typecheck"
 
 [tasks.typecheck]
 description = "Type-check all packages in parallel"
-depends = ["typecheck:core", "typecheck:api", "typecheck:web"]
+depends = ["typecheck:core", "typecheck:api", "typecheck:web", "finance:typecheck"]
 
 # ── Test ──────────────────────────────────────────────────────
 [tasks."test:core"]
@@ -99,7 +133,7 @@ run = "bun run test"
 
 [tasks.test]
 description = "Run all tests in parallel"
-depends = ["test:core", "test:api", "test:web"]
+depends = ["test:core", "test:api", "test:web", "finance:test"]
 
 [tasks."test:watch"]
 description = "Run core tests in watch mode"

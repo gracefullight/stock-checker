@@ -22,7 +22,7 @@ import json
 import sys
 import time
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 import pandas as pd
@@ -80,6 +80,7 @@ class StockData:
     analyst_info: dict | None
     price_history: pd.DataFrame | None
     asset_type: Literal["stock", "crypto"] = "stock"
+    ticker_obj: yf.Ticker | None = None
 
 
 @dataclass
@@ -197,7 +198,7 @@ class SentimentAnalysis:
     put_call_score: float | None = None
 
     # Raw data
-    fear_greed_value: int | None = None  # 0-100
+    fear_greed_value: float | None = None  # 0-100
     fear_greed_status: str | None = None  # "Extreme Fear", etc.
     short_interest_pct: float | None = None
     days_to_cover: float | None = None
@@ -270,6 +271,7 @@ def fetch_stock_data(ticker: str, verbose: bool = False) -> StockData | None:
                 analyst_info=analyst_info,
                 price_history=price_history,
                 asset_type=detect_asset_type(ticker),
+                ticker_obj=stock,
             )
 
         except Exception as e:
@@ -601,10 +603,15 @@ def analyze_historical_patterns(data: StockData) -> HistoricalPatterns | None:
 
                 # Try to get price reaction (day of earnings)
                 try:
+                    if not isinstance(earnings_date, (date, datetime, str)):
+                        continue
                     earnings_day = pd.Timestamp(earnings_date).date()
 
                     # Find closest trading day
-                    price_data = data.price_history[data.price_history.index.date == earnings_day]
+                    price_index = data.price_history.index
+                    if not isinstance(price_index, pd.DatetimeIndex):
+                        continue
+                    price_data = data.price_history[price_index.date == earnings_day]
 
                     if not price_data.empty:
                         day_change = ((price_data["Close"].iloc[0] - price_data["Open"].iloc[0]) / price_data["Open"].iloc[0]) * 100
@@ -904,22 +911,29 @@ def check_breaking_news(verbose: bool = False) -> list[str] | None:
                 for entry in feed.entries[:20]:  # Check top 20 headlines
                     # Parse publication date
                     pub_date = None
-                    if hasattr(entry, "published_parsed") and entry.published_parsed:
-                        pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                    published = entry.get("published_parsed")
+                    if isinstance(published, time.struct_time):
+                        pub_date = datetime(
+                            published.tm_year, published.tm_mon, published.tm_mday,
+                            published.tm_hour, published.tm_min, published.tm_sec,
+                            tzinfo=timezone.utc,
+                        )
 
                     # Skip if older than 24h
                     if pub_date and pub_date < cutoff_time:
                         continue
 
-                    title = entry.get("title", "").lower()
-                    summary = entry.get("summary", "").lower()
+                    raw_title = entry.get("title", "")
+                    raw_summary = entry.get("summary", "")
+                    title = raw_title.lower() if isinstance(raw_title, str) else ""
+                    summary = raw_summary.lower() if isinstance(raw_summary, str) else ""
                     text = f"{title} {summary}"
 
                     # Check for crisis keywords
                     for category, keywords in CRISIS_KEYWORDS.items():
                         for keyword in keywords:
                             if keyword in text:
-                                alert_text = entry.get("title", "Unknown alert")
+                                alert_text = raw_title if isinstance(raw_title, str) else "Unknown alert"
                                 hours_ago = int((now - pub_date).total_seconds() / 3600) if pub_date else None
                                 time_str = f"{hours_ago}h ago" if hours_ago is not None else "recent"
 
@@ -1314,7 +1328,7 @@ def _set_cache(key: str, value):
     _SENTIMENT_CACHE[key] = (value, time.time())
 
 
-async def get_fear_greed_index() -> tuple[float, int | None, str | None] | None:
+async def get_fear_greed_index() -> tuple[float, float | None, str | None] | None:
     """
     Fetch CNN Fear & Greed Index (contrarian indicator) with 1h cache.
     Returns: (score, value, status) or None on failure.
@@ -1567,16 +1581,17 @@ async def get_put_call_ratio(data: StockData) -> tuple[float, float | None, int 
     """
     def _fetch():
         try:
-            if data.ticker_obj is None:
+            ticker_obj = data.ticker_obj
+            if ticker_obj is None:
                 return None
 
             # Get options chain for nearest expiration
-            expirations = data.ticker_obj.options
+            expirations = ticker_obj.options
             if not expirations or len(expirations) == 0:
                 return None
 
             nearest_exp = expirations[0]
-            opt_chain = data.ticker_obj.option_chain(nearest_exp)
+            opt_chain = ticker_obj.option_chain(nearest_exp)
 
             # Calculate total put and call volume
             put_volume = opt_chain.puts["volume"].sum() if "volume" in opt_chain.puts.columns else 0
@@ -1955,7 +1970,7 @@ def synthesize_signal(
     caveats = caveats[:5]
 
     # Build components dict for output
-    components_dict = {}
+    components_dict: dict[str, dict[str, float | str | bool | list[str] | None]] = {}
     if earnings:
         components_dict["earnings_surprise"] = {
             "score": earnings.score,
@@ -2138,7 +2153,7 @@ def main():
     args = parser.parse_args()
 
     # Handle portfolio mode
-    portfolio_assets = []
+    portfolio_assets: list[tuple[str, float, float, str]] = []
     portfolio_name = None
     if args.portfolio:
         try:
@@ -2156,6 +2171,11 @@ def main():
                     sys.exit(1)
             else:
                 portfolio_name = portfolio.name
+
+            if portfolio is None:
+                print(f"Error: Portfolio '{args.portfolio}' not found", file=sys.stderr)
+                sys.exit(1)
+            portfolio_name = portfolio.name
 
             if not portfolio.assets:
                 print(f"Portfolio '{portfolio_name}' has no assets", file=sys.stderr)
@@ -2330,7 +2350,7 @@ def main():
         else:
             output_data = [asdict(r) for r in results]
             # Add portfolio summary if in portfolio mode
-            if portfolio_assets:
+            if portfolio_assets and portfolio_name is not None:
                 portfolio_summary = generate_portfolio_summary(
                     results, portfolio_assets, portfolio_name, args.period
                 )
@@ -2347,7 +2367,7 @@ def main():
             print(format_output_text(signal))
 
         # Print portfolio summary if in portfolio mode
-        if portfolio_assets:
+        if portfolio_assets and portfolio_name is not None:
             print_portfolio_summary(results, portfolio_assets, portfolio_name, args.period)
 
 

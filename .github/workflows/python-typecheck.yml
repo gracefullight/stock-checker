@@ -1,0 +1,42 @@
+name: Python checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".agents/skills/stock-analysis/scripts/**"
+      - ".agents/skills/backtesting-trading-strategies/scripts/**"
+      - "tools/finance/**"
+      - ".github/workflows/python-typecheck.yml"
+  pull_request:
+    paths:
+      - ".agents/skills/stock-analysis/scripts/**"
+      - ".agents/skills/backtesting-trading-strategies/scripts/**"
+      - "tools/finance/**"
+      - ".github/workflows/python-typecheck.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.12.22"
+          enable-cache: true
+          cache-dependency-glob: "tools/finance/uv.lock"
+      - name: Install locked finance dependencies
+        run: uv sync --project tools/finance --locked --python 3.14
+      - name: Check Python types with Pyrefly
+        run: uv run --project tools/finance --locked --python 3.14 pyrefly check --config tools/finance/pyproject.toml --min-severity warn
+      - name: Run finance regression tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: uv run --project tools/finance --locked --python 3.14 pytest tools/finance/tests

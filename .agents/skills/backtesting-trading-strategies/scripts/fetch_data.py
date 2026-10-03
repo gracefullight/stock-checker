@@ -12,6 +12,10 @@ import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 def parse_period(period: str) -> timedelta:

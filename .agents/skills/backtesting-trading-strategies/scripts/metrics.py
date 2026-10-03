@@ -20,7 +20,7 @@ class Trade:
     size: float
     pnl: float = 0.0
     pnl_pct: float = 0.0
-    duration: pd.Timedelta = None
+    duration: pd.Timedelta | None = None
     
     def __post_init__(self):
         if self.direction == "long":

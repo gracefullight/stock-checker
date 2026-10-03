@@ -73,7 +73,6 @@ export function calculateProbabilities(
 
 /**
  * Estimate calibration parameters from historical data
- * This should be called by the Python optimizer
  * @param historicalScores - Array of historical scores
  * @param actualOutcomes - Array of actual outcomes (1 for correct, 0 for incorrect)
  * @returns Calibration parameters for sigmoid function

@@ -26,7 +26,7 @@ export function fitPlattScaling(
   const scoresArr = scores;
   const outcomesArr = outcomes.map((o) => (o ? 1 : 0));
 
-  // Grid from python/calibrator.py
+  // Fixed grid shared with the learning evaluator.
   const slopes = [0.005, 0.01, 0.015, 0.02];
   const intercepts = [-2.0, -1.5, -1.0, -0.5, 0.0];
 

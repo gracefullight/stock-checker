@@ -84,7 +84,7 @@ def grid_search(
 def format_optimization_results(df: pd.DataFrame, param_names: List[str]) -> str:
     """Format optimization results as table."""
     
-    output = []
+    output: List[str] = []
     output.append("=" * 80)
     output.append("PARAMETER OPTIMIZATION RESULTS")
     output.append("=" * 80)

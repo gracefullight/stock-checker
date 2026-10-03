@@ -7,14 +7,17 @@
 - `apps/web/src/`: Next.js screener, charts, portfolio, and alerts.
 - `.github/workflows/daily-data.yml`: Nightly scheduler that runs the CLI and commits new CSVs.
 - `mise.toml`: Runtime versions and development, quality, and CLI tasks.
+- `tools/finance/`: Locked Python finance dependencies, Pyrefly settings, and pytest regressions.
 - `tsconfig.json`: Shared TypeScript config (strict mode, ESNext modules, bundler resolution).
 
 ## Build, Test, and Development Commands
-- `mise install`: Install Node 24 and Bun 1.3.14.
+- `mise install`: Install Node 26, Bun 1.4.2, Python 3.14, and uv 0.12.22.
 - `bun install`: Install workspace dependencies and repository Git hooks.
 - `mise run dev`: Start the API (5101) and web (5100) servers.
 - `mise run predict -- --ticker=TSLA,PLTR --sort=asc`: Run predictions and append monthly CSV rows.
 - `mise run lint`, `mise run typecheck`, `mise run test`: Run quality checks.
+- `mise run finance:typecheck`: Check the Python financial scripts with Pyrefly.
+- `mise run finance:test`: Run the offline Python finance regressions.
 - Slack alerts: `SLACK_WEBHOOK_URL=... mise run predict -- --ticker=AAPL` or `--slack-webhook=...`.
 
 ## Coding Style & Naming Conventions
@@ -27,6 +30,7 @@
 
 ## Testing Guidelines
 - Vitest suites are colocated as `*.test.ts` / `*.test.tsx` in each workspace's `src/`.
+- Python finance regressions use pytest under `tools/finance/tests/`.
 - Use `mise run test:core`, `mise run test:api`, or `mise run test:web` for scoped checks.
 - Add regression tests for behavior changes; use fixtures and mocks for external market data.
 

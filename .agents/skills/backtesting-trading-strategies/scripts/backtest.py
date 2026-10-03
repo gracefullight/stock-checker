@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TypedDict
 
 import pandas as pd
 import numpy as np
@@ -23,6 +23,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from strategies import get_strategy, list_strategies, Signal
 from metrics import Trade, BacktestResult, calculate_all_metrics, format_results
+
+
+class OpenPosition(TypedDict):
+    entry_time: pd.Timestamp
+    entry_price: float
+    direction: str
+    size: float
 
 
 def parse_period(period: str) -> timedelta:
@@ -50,9 +57,12 @@ def load_data(symbol: str, start: datetime, end: datetime, data_dir: Path) -> pd
     
     if cache_file.exists():
         df = pd.read_csv(cache_file, parse_dates=['date'], index_col='date')
+        index = df.index
+        if not isinstance(index, pd.DatetimeIndex):
+            raise ValueError("Cached price data must have a DatetimeIndex")
         # Remove timezone info for comparison
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
+        if index.tz is not None:
+            df.index = index.tz_localize(None)
         df = df[(df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))]
         if len(df) > 0:
             return df
@@ -66,8 +76,11 @@ def load_data(symbol: str, start: datetime, end: datetime, data_dir: Path) -> pd
         df.index.name = 'date'
 
         # Remove timezone for consistency
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
+        index = df.index
+        if not isinstance(index, pd.DatetimeIndex):
+            raise ValueError("Fetched price data must have a DatetimeIndex")
+        if index.tz is not None:
+            df.index = index.tz_localize(None)
 
         # Cache the data
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -86,7 +99,7 @@ def run_backtest(
     strategy_name: str,
     data: pd.DataFrame,
     initial_capital: float = 10000,
-    params: Dict[str, Any] = None,
+    params: Optional[Dict[str, Any]] = None,
     commission: float = 0.001,
     slippage: float = 0.0005,
 ) -> BacktestResult:
@@ -94,11 +107,14 @@ def run_backtest(
     
     params = params or {}
     strategy = get_strategy(strategy_name)
+    index = data.index
+    if not isinstance(index, pd.DatetimeIndex):
+        raise ValueError("Backtest price data must have a DatetimeIndex")
     
     trades: List[Trade] = []
     equity = [initial_capital]
     cash = initial_capital
-    position = None
+    position: Optional[OpenPosition] = None
     position_size = 0
     
     for i in range(strategy.lookback, len(data)):
@@ -106,7 +122,7 @@ def run_backtest(
         slice_data = data.iloc[:i+1].copy()
         current_bar = data.iloc[i]
         current_price = current_bar['close']
-        current_time = data.index[i]
+        current_time = index[i]
         
         # Generate signals
         signal = strategy.generate_signals(slice_data, params)
@@ -163,7 +179,7 @@ def run_backtest(
         
         trade = Trade(
             entry_time=position['entry_time'],
-            exit_time=data.index[-1],
+            exit_time=index[-1],
             entry_price=position['entry_price'],
             exit_price=final_price,
             direction=position['direction'],
@@ -173,14 +189,14 @@ def run_backtest(
         equity[-1] = cash
     
     # Create equity curve
-    equity_curve = pd.Series(equity, index=data.index[strategy.lookback-1:])
+    equity_curve = pd.Series(equity, index=index[strategy.lookback-1:])
     
     # Build result
     result = BacktestResult(
         strategy=strategy_name,
         symbol=data.attrs.get('symbol', 'Unknown'),
-        start_date=data.index[0],
-        end_date=data.index[-1],
+        start_date=index[0],
+        end_date=index[-1],
         initial_capital=initial_capital,
         final_capital=equity[-1],
         trades=trades,

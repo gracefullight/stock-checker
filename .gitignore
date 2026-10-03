@@ -10,6 +10,12 @@ dist
 # TypeScript
 *.tsbuildinfo
 
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
 # Next.js
 .next/
 out/
