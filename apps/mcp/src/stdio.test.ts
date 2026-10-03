@@ -36,7 +36,7 @@ describe('MCP stdio', () => {
       });
       expect(result).toMatchObject({
         isError: false,
-        structuredContent: { report: { ticker: 'AAPL', status: 'available' } },
+        structuredContent: { report: { ticker: 'AAPL', status: 'available', valuation: null } },
       });
       expect(JSON.stringify(result)).not.toContain('fixture-secret');
       expect(
@@ -125,7 +125,7 @@ describe('MCP stdio', () => {
         expect(result).toMatchObject({
           result: {
             isError: false,
-            structuredContent: { report: { ticker: 'AAPL', status: 'available' } },
+            structuredContent: { report: { ticker: 'AAPL', status: 'available', valuation: null } },
           },
         });
         expect(JSON.stringify(result)).not.toContain('fixture-secret');

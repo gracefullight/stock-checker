@@ -4,7 +4,7 @@ import {
   type ReportGenerator,
   SERVER_INSTRUCTIONS,
 } from '@mcp/server.ts';
-import { fixtureReport } from '@mcp/test-fixtures/report.ts';
+import { fixtureReport, fixtureValuation } from '@mcp/test-fixtures/report.ts';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 
@@ -41,7 +41,10 @@ describe('analyze_stock MCP tool', () => {
         });
         expect(result).toMatchObject({
           structuredContent: {
-            report: { historical: { fixedHold: { samples: 0, winRatePct: null } } },
+            report: {
+              historical: { fixedHold: { samples: 0, winRatePct: null } },
+              valuation: null,
+            },
           },
         });
       }
@@ -61,6 +64,29 @@ describe('analyze_stock MCP tool', () => {
           isError: true,
           content: [{ type: 'text', text: '# Analysis unavailable' }],
           structuredContent: { report },
+        });
+      }
+    );
+  });
+
+  test('preserves valuation metrics, peer samples, and provenance through the MCP transport', async () => {
+    const report = fixtureReport('OII');
+    report.valuation = fixtureValuation('OII');
+    await withClient(
+      async () => ({ report, markdown: '# OII valuation fixture' }),
+      async (client) => {
+        const result = await client.callTool({
+          name: 'analyze_stock',
+          arguments: { ticker: 'OII' },
+        });
+        expect(result).toMatchObject({
+          isError: false,
+          structuredContent: {
+            report: {
+              current: { decision: 'HOLD' },
+              valuation: report.valuation,
+            },
+          },
         });
       }
     );
@@ -89,6 +115,8 @@ describe('analyze_stock MCP tool', () => {
         });
         expect(SERVER_INSTRUCTIONS.slice(0, 512)).toContain('not success probabilities');
         expect(SERVER_INSTRUCTIONS.slice(0, 512)).toContain('may be unavailable');
+        expect(tools[0]?.description).toContain('trailing PER/PSR');
+        expect(tools[0]?.description).toContain('peer median PER/PSR with sample counts');
       }
     );
   });

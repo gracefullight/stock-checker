@@ -4,9 +4,11 @@ import { type BacktestSignal, type Candle, runSignalsWithContext } from '@/optim
 import { generateStockAnalystReport } from '@/reports/stock-analyst';
 import { type AnalystTargetsReport, getAnalystTargets } from '@/services/analyst-targets';
 import { analyzeTickerContext, type TickerAnalysisContext } from '@/services/ticker-analysis';
+import { getValuation, type ValuationReport } from '@/services/valuation';
 
 vi.mock('@/services/ticker-analysis', () => ({ analyzeTickerContext: vi.fn() }));
 vi.mock('@/services/analyst-targets', () => ({ getAnalystTargets: vi.fn() }));
+vi.mock('@/services/valuation', () => ({ getValuation: vi.fn() }));
 vi.mock('@/optimization/engine', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/optimization/engine')>()),
   runSignalsWithContext: vi.fn(),
@@ -129,13 +131,101 @@ const historicalBuy: BacktestSignal = {
   consecutiveOversold: 0,
 };
 
+const valuation: ValuationReport = {
+  ticker: 'TEST',
+  retrievedAt: '2026-10-03T00:00:00.000Z',
+  company: {
+    trailingPE: 12,
+    forwardPE: 10,
+    psr: 1.2,
+    currency: 'USD',
+    sector: 'Energy',
+    industry: 'Oil & Gas Equipment & Services',
+    industryKey: 'oil-gas-equipment-services',
+    priceAsOf: null,
+    sourceUrl: 'https://finance.yahoo.com/quote/TEST/key-statistics/',
+    peReason: null,
+    psrReason: null,
+  },
+  industryComparison: {
+    status: 'available',
+    medianPE: 15,
+    medianPSR: 2,
+    peSamples: 3,
+    psrSamples: 3,
+    peers: [
+      {
+        ticker: 'AAA',
+        trailingPE: 10,
+        psr: 1,
+        industry: 'Oil & Gas Equipment & Services',
+        currency: 'USD',
+      },
+      {
+        ticker: 'BBB',
+        trailingPE: 15,
+        psr: 2,
+        industry: 'Oil & Gas Equipment & Services',
+        currency: 'USD',
+      },
+      {
+        ticker: 'CCC',
+        trailingPE: 20,
+        psr: 3,
+        industry: 'Oil & Gas Equipment & Services',
+        currency: 'USD',
+      },
+    ],
+    method: 'Unweighted median of positive finite TTM values; at least 3 samples per metric',
+    sourceUrl: 'https://finance.yahoo.com/markets/stocks/industry/oil-gas-equipment-services/',
+    universe: 'Yahoo-selected US-region top companies, up to 12 same-industry peers',
+    coverage: {
+      candidateCount: 3,
+      requestedCount: 3,
+      matchingIndustryCount: 3,
+      failedRequests: 0,
+      excludedIndustryCount: 0,
+      excludedNonEquityCount: 0,
+      providerCompanyCount: 30,
+      peerLimit: 12,
+      minimumSamples: 3,
+    },
+    reason: null,
+  },
+  relative: { pePremiumPct: -20, psrPremiumPct: -40 },
+  warnings: ['Selected peer medians are not whole-industry averages.'],
+};
+
 beforeEach(() => {
   vi.mocked(analyzeTickerContext).mockResolvedValue(context);
   vi.mocked(getAnalystTargets).mockResolvedValue(targets);
+  vi.mocked(getValuation).mockResolvedValue(valuation);
   vi.mocked(runSignalsWithContext).mockReturnValue([historicalBuy]);
 });
 
 describe('stock analyst report', () => {
+  it('returns TTM valuation and peer samples while keeping forward PER separate', async () => {
+    const { report, markdown } = await generateStockAnalystReport(' test ');
+    expect(getValuation).toHaveBeenCalledWith('TEST');
+    expect(report.valuation).toEqual(valuation);
+    expect(markdown).toContain('| TTM PER | 12.00 | 15.00 | 3 | -20.00% |');
+    expect(markdown).toContain('| TTM PSR | 1.20 | 2.00 | 3 | -40.00% |');
+    expect(markdown).toContain('Forward PER: 10.00; it is separate from the TTM comparison.');
+    expect(markdown).toContain('Compared tickers: AAA, BBB, CCC');
+    expect(report.warnings).toContain('Selected peer medians are not whole-industry averages.');
+  });
+
+  it('preserves technical analysis when the optional valuation service fails', async () => {
+    vi.mocked(getValuation).mockRejectedValue(new Error('Provider is unavailable'));
+    const { report, markdown } = await generateStockAnalystReport('TEST');
+    expect(report.status).toBe('available');
+    expect(report.current?.decision).toBe('BUY');
+    expect(report.historical.fixedHold.samples).toBe(1);
+    expect(report.valuation).toBeNull();
+    expect(markdown).toContain('Valuation data is unavailable.');
+    expect(report.warnings.join(' ')).toContain('Valuation data could not be retrieved');
+  });
+
   it('keeps the future fill unknown and separates score weights from observed net wins', async () => {
     const { report, markdown } = await generateStockAnalystReport(' test ');
     expect(analyzeTickerContext).toHaveBeenCalledWith('TEST', null, { lookbackDays: 2920 });
@@ -194,6 +284,7 @@ describe('stock analyst report', () => {
       await expect(generateStockAnalystReport(ticker)).rejects.toThrow(TypeError);
       expect(analyzeTickerContext).not.toHaveBeenCalled();
       expect(getAnalystTargets).not.toHaveBeenCalled();
+      expect(getValuation).not.toHaveBeenCalled();
     }
   );
 

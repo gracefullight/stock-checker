@@ -1,10 +1,13 @@
 import { DateTime } from 'luxon';
 import pino from 'pino';
 import YahooFinance from 'yahoo-finance2';
+import { ExtendedCookieJar } from 'yahoo-finance2/lib/cookieJar';
 
 const stderrLogger = pino({ level: 'info' }, pino.destination(2));
+export const yahooCookieJar = new ExtendedCookieJar();
 
 const yahooFinance = new YahooFinance({
+  cookieJar: yahooCookieJar,
   suppressNotices: ['yahooSurvey', 'ripHistorical'],
   ...(process.env.MCP_LOG_STDERR === '1'
     ? {

@@ -142,8 +142,8 @@ It can call `analyze_stock` with:
 
 The tool returns Markdown and structured data: current signal and gate reasons,
 ATR risk reference prices, conditional next-session entry, historical five-session
-net win rate, stop/target touch rates, and available analyst targets. Lookback is
-bounded to 730–3650 calendar days. `mise run mcp` starts the server directly;
+net win rate, stop/target touch rates, available analyst targets, and PER/PSR
+valuation. Lookback is bounded to 730–3650 calendar days. `mise run mcp` starts the server directly;
 stdout carries JSON-RPC and logs go to stderr.
 
 Historical rates include observation counts, dates, and execution assumptions.
@@ -158,6 +158,16 @@ Recent updates cover the last 90 days, with a 30-day count; a retrieved consensu
 is not presented as a newly published analyst report. Analyst targets have a
 different horizon from the five-session trade statistics. Missing data or provider
 access is reported explicitly. Supply optional keys in the client's environment.
+
+Valuation includes the stock's trailing PER and PSR, separate forward PER,
+and medians from up to 12 Yahoo-selected US-region companies in the same industry.
+The subject stock, duplicates, non-equities, and industry mismatches are excluded.
+Each median requires at least three positive, finite peer values; missing data
+returns `null`, and losses make trailing PER unavailable. The report includes
+peer tickers, per-metric sample counts, coverage, relative premiums, sources, and
+retrieval times. These are selected peer medians, not whole-industry averages.
+Financial reporting periods may differ, and lower multiples alone do not change
+the technical BUY/SELL decision. Valuation results are cached for 15 minutes.
 
 Yahoo requires no API key. Codex forwards `FMP_API_KEY` and `TIINGO_API_KEY`
 through `env_vars`; Claude's shared MCP configuration expands those environment

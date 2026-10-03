@@ -1,4 +1,55 @@
 import type { StockAnalystReport } from '@stock-checker/core/src/reports/stock-analyst.ts';
+import type { ValuationReport } from '@stock-checker/core/src/services/valuation.ts';
+
+export function fixtureValuation(ticker: string): ValuationReport {
+  const industry = 'Oil & Gas Equipment & Services';
+  return {
+    ticker,
+    retrievedAt: '2026-10-02T22:00:00.000Z',
+    company: {
+      trailingPE: 24,
+      forwardPE: 18,
+      psr: 2,
+      currency: 'USD',
+      sector: 'Energy',
+      industry,
+      industryKey: 'oil-gas-equipment-services',
+      priceAsOf: '2026-10-02T20:00:00.000Z',
+      sourceUrl: `https://finance.yahoo.com/quote/${ticker}/`,
+      peReason: null,
+      psrReason: null,
+    },
+    industryComparison: {
+      status: 'available',
+      medianPE: 20,
+      medianPSR: 1,
+      peSamples: 3,
+      psrSamples: 3,
+      peers: [
+        { ticker: 'PEER1', trailingPE: 12, psr: 0.6, industry, currency: 'USD' },
+        { ticker: 'PEER2', trailingPE: 20, psr: 1, industry, currency: 'USD' },
+        { ticker: 'PEER3', trailingPE: 28, psr: 1.4, industry, currency: 'USD' },
+      ],
+      method: 'Median of positive trailing multiples from matching-industry equities',
+      sourceUrl: 'https://finance.yahoo.com/sectors/energy/oil-gas-equipment-services/',
+      universe: 'Yahoo top-company peer sample; not the entire industry',
+      coverage: {
+        candidateCount: 4,
+        requestedCount: 3,
+        matchingIndustryCount: 3,
+        failedRequests: 0,
+        excludedIndustryCount: 0,
+        excludedNonEquityCount: 0,
+        providerCompanyCount: 50,
+        peerLimit: 12,
+        minimumSamples: 3,
+      },
+      reason: null,
+    },
+    relative: { pePremiumPct: 20, psrPremiumPct: 100 },
+    warnings: ['Fixture: financial statement publication dates unavailable'],
+  };
+}
 
 export function fixtureReport(
   ticker: string,
@@ -98,6 +149,7 @@ export function fixtureReport(
       },
       warnings: ['Fixture: optional analyst targets unavailable'],
     },
+    valuation: null,
     warnings: ['Fixture: historical success rate unavailable without observations'],
   };
 }

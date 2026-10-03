@@ -6,6 +6,7 @@ import {
 import { type AnalystTargetsReport, getAnalystTargets } from '@/services/analyst-targets';
 import type { LongRiskLevels } from '@/services/risk-levels';
 import { analyzeTickerContext, type TickerAnalysisContext } from '@/services/ticker-analysis';
+import { getValuation, type ValuationReport } from '@/services/valuation';
 import type { PipelineResult } from '@/types';
 
 export interface StockAnalystReport {
@@ -46,6 +47,7 @@ export interface StockAnalystReport {
   };
   historical: HistoricalOutcomesReport;
   analystTargets: AnalystTargetsReport;
+  valuation: ValuationReport | null;
   warnings: string[];
 }
 
@@ -82,7 +84,7 @@ const price = (value: number | null): string => (value === null ? 'N/A' : value.
 const escapeMarkdown = (value: string): string => value.replace(/[\\`*_{}[\]()#+.!|<>-]/g, '\\$&');
 
 export function renderStockAnalystMarkdown(report: StockAnalystReport): string {
-  const { current, execution, historical, analystTargets } = report;
+  const { current, execution, historical, analystTargets, valuation } = report;
   const lines = [
     `# ${report.ticker} stock analyst report`,
     '',
@@ -144,6 +146,31 @@ export function renderStockAnalystMarkdown(report: StockAnalystReport): string {
       `- ${update.publishedAt}: ${escapeMarkdown(update.firm)}, target ${price(update.targetPrice)}, prior target ${price(update.priorTargetPrice)}, currency ${update.currency ?? 'unknown / unprovided'}, source ${update.source}${update.sourceUrl ? ` (${update.sourceUrl})` : ''}.`
     );
   }
+  lines.push('', '## Valuation', '');
+  if (valuation) {
+    const { company, industryComparison: industry, relative } = valuation;
+    lines.push(
+      `Source: [Yahoo Finance](${company.sourceUrl}); retrieved ${valuation.retrievedAt}; quote timestamp ${company.priceAsOf ?? 'unavailable'}.`,
+      `Sector: ${escapeMarkdown(company.sector ?? 'unavailable')}; industry: ${escapeMarkdown(company.industry ?? 'unavailable')}.`,
+      '',
+      '| Metric | Stock | Same-industry peer median | Valid peers | Relative premium |',
+      '|---|---:|---:|---:|---:|',
+      `| TTM PER | ${price(company.trailingPE)} | ${price(industry.medianPE)} | ${industry.peSamples} | ${percentage(relative.pePremiumPct)} |`,
+      `| TTM PSR | ${price(company.psr)} | ${price(industry.medianPSR)} | ${industry.psrSamples} | ${percentage(relative.psrPremiumPct)} |`,
+      '',
+      `Forward PER: ${price(company.forwardPE)}; it is separate from the TTM comparison.`,
+      `Peer comparison: ${industry.status}; ${escapeMarkdown(industry.method)}.`,
+      `Universe: ${escapeMarkdown(industry.universe)}.`,
+      `Compared tickers: ${industry.peers.map((peer) => peer.ticker).join(', ') || 'none'}.`,
+      `Coverage: ${industry.coverage.matchingIndustryCount} matching peers from ${industry.coverage.requestedCount} requested; ${industry.coverage.failedRequests} failed, ${industry.coverage.excludedIndustryCount} industry mismatches, ${industry.coverage.excludedNonEquityCount} non-equities excluded.`,
+      ...(industry.sourceUrl ? [`Peer source: ${industry.sourceUrl}.`] : []),
+      ...(company.peReason ? [`PER availability: ${escapeMarkdown(company.peReason)}`] : []),
+      ...(company.psrReason ? [`PSR availability: ${escapeMarkdown(company.psrReason)}`] : []),
+      ...(industry.reason ? [`Comparison availability: ${escapeMarkdown(industry.reason)}`] : [])
+    );
+  } else {
+    lines.push('Valuation data is unavailable.');
+  }
   lines.push('', '## Limitations', '', ...report.warnings.map((warning) => `- ${warning}`));
   return lines.join('\n');
 }
@@ -164,9 +191,10 @@ export async function generateStockAnalystReport(
   if (!Number.isInteger(lookbackDays) || lookbackDays < 730 || lookbackDays > 3650) {
     throw new TypeError('lookbackDays must be an integer from 730 to 3650');
   }
-  const [context, analystTargets] = await Promise.all([
+  const [context, analystTargets, valuation] = await Promise.all([
     analyzeTickerContext(symbol, null, { lookbackDays }),
     getAnalystTargets(symbol),
+    getValuation(symbol).catch(() => null),
   ]);
   const ctx = context
     ? buildTickerContext(context.dailyPrices, context.spyCandles, context.sectorCandles)
@@ -222,6 +250,7 @@ export async function generateStockAnalystReport(
     },
     historical,
     analystTargets,
+    valuation,
     warnings: [
       'Historical frequencies are descriptive observations, not calibrated probabilities or independently validated future performance.',
       'Historical sector selection uses current ticker/sector metadata and the surviving requested symbol; point-in-time metadata and delisted-stock coverage are unavailable, creating metadata and survivorship bias.',
@@ -239,6 +268,9 @@ export async function generateStockAnalystReport(
           ]
         : []),
       ...analystTargets.warnings,
+      ...(valuation?.warnings ?? [
+        'Valuation data could not be retrieved; the technical signal and historical outcomes remain available independently.',
+      ]),
     ],
   };
   return { report, markdown: renderStockAnalystMarkdown(report) };

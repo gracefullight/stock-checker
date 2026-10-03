@@ -5,7 +5,7 @@ import { z } from 'zod/v4';
 export type ReportGenerator = typeof generateStockAnalystReport;
 
 export const SERVER_INSTRUCTIONS =
-  'Analyze one ticker using completed market sessions. Buy/sell scores and score weights describe signals, not success probabilities. Historical rates describe observed backtest outcomes with sample counts and execution assumptions; they do not predict future returns. Optional fundamentals, earnings, analyst targets, and market sources may be unavailable. Read report warnings and availability before drawing conclusions. Reports provide analysis, not orders or guaranteed investment advice.';
+  'Analyze one ticker using completed market sessions. Buy/sell scores and score weights describe signals, not success probabilities. Historical rates describe observed backtest outcomes with sample counts and execution assumptions; they do not predict future returns. Optional fundamentals, earnings, analyst targets, valuation, and market sources may be unavailable. Valuation reports trailing PER and PSR, with forward PER shown separately. Industry comparisons use a bounded sample of Yahoo peers in the same industry, with separate sample counts for each median; they do not represent the entire industry. A lower multiple alone does not imply BUY. Read report warnings and availability before drawing conclusions. Reports provide analysis, not orders or guaranteed investment advice.';
 
 export const analyzeStockInput = z.strictObject({
   ticker: z
@@ -40,7 +40,7 @@ export function createStockAnalystServer(generator: ReportGenerator = generateRe
     {
       title: 'Analyze a stock',
       description:
-        'Create a stock report with current signals, conditional execution levels, observed historical outcomes, and source availability. Scores are not win probabilities. This tool reads market data and does not place orders.',
+        'Create a stock report with current signals, conditional execution levels, observed historical outcomes, analyst targets, and valuation. Includes trailing PER/PSR, separate forward PER, and same-industry Yahoo peer median PER/PSR with sample counts when available. Scores are not win probabilities. This tool reads market data and does not place orders.',
       inputSchema: analyzeStockInput,
       annotations: {
         readOnlyHint: true,
