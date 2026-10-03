@@ -41,10 +41,32 @@ describe('dividends service', () => {
       expect(result.dividendYield).toBe(0.015);
       expect(result.payoutRatio).toBe(0.45);
       expect(result.annualDividendRate).toBe(0.92);
-      expect(result.lastDividendDate).toEqual(new Date('2024-01-25'));
+      expect(result.lastDividendDate).toEqual(new Date('2024-02-25'));
       expect(result.dividendHistory).toHaveLength(4);
       expect(result.dividendHistory[0].amount).toBe(0.24);
     });
+
+    it.each(['ascending', 'descending'])(
+      'returns latest payments first when provider history is %s',
+      async (order) => {
+        const history = [
+          { date: new Date('2024-01-25'), dividends: 0.24 },
+          { date: new Date('2024-04-25'), dividends: 0.25 },
+          { date: new Date('2024-07-25'), dividends: 0.26 },
+        ];
+        if (order === 'descending') history.reverse();
+        const originalDates = history.map((row) => row.date.toISOString());
+        vi.mocked(yahooFinance).quoteSummary.mockResolvedValue({});
+        vi.mocked(yahooFinance).historical.mockResolvedValue(history);
+
+        const result = await getDividendInfo('AAPL');
+
+        expect(result.lastDividendDate).toEqual(new Date('2024-07-25'));
+        expect(result.dividendHistory.map((row) => row.amount)).toEqual([0.26, 0.25, 0.24]);
+        expect(calculateAnnualizedDividend(result.dividendHistory)).toBeCloseTo((0.75 / 182) * 365);
+        expect(history.map((row) => row.date.toISOString())).toEqual(originalDates);
+      }
+    );
 
     it('should return null values when API fails', async () => {
       vi.mocked(yahooFinance).quoteSummary.mockRejectedValue(new Error('API Error'));
@@ -61,6 +83,24 @@ describe('dividends service', () => {
   });
 
   describe('calculateAnnualizedDividend', () => {
+    it.each(['ascending', 'descending', 'unordered'])(
+      'uses the full observed date range for %s payments without mutating them',
+      (order) => {
+        const history = [
+          { date: new Date('2023-05-25'), amount: 0.24 },
+          { date: new Date('2023-08-25'), amount: 0.24 },
+          { date: new Date('2023-11-25'), amount: 0.24 },
+          { date: new Date('2024-01-25'), amount: 0.24 },
+        ];
+        if (order === 'descending') history.reverse();
+        if (order === 'unordered') history.push(history.shift()!);
+        const originalDates = history.map((row) => row.date.toISOString());
+
+        expect(calculateAnnualizedDividend(history)).toBeCloseTo((0.96 / 245) * 365);
+        expect(history.map((row) => row.date.toISOString())).toEqual(originalDates);
+      }
+    );
+
     it('should calculate annualized dividend from history', () => {
       const history = [
         { date: new Date('2024-01-25'), amount: 0.24 },

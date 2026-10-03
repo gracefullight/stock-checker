@@ -54,7 +54,8 @@ export async function getDividendInfo(ticker: string, daysAgo = 365): Promise<Di
       .map((d) => ({
         date: new Date(d.date),
         amount: d.dividends,
-      }));
+      }))
+      .sort((a, b) => b.date.getTime() - a.date.getTime());
 
     const lastDividendDate = dividendHistory.length > 0 ? dividendHistory[0].date : null;
 
@@ -87,8 +88,9 @@ export function calculateAnnualizedDividend(dividendHistory: DividendPayment[]):
   if (dividendHistory.length === 0) return 0;
 
   const totalDividends = dividendHistory.reduce((sum, d) => sum + d.amount, 0);
-  const firstPayment = dividendHistory[dividendHistory.length - 1].date;
-  const lastPayment = dividendHistory[0].date;
+  const chronological = [...dividendHistory].sort((a, b) => a.date.getTime() - b.date.getTime());
+  const firstPayment = chronological[0].date;
+  const lastPayment = chronological[chronological.length - 1].date;
 
   const daysBetween = Math.floor(
     (lastPayment.getTime() - firstPayment.getTime()) / (1000 * 60 * 60 * 24)
