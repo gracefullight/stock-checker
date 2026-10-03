@@ -9,6 +9,10 @@ uv = "0.12.22"
 description = "Install all dependencies"
 run = "bun install"
 
+[tasks."install:ci"]
+description = "Install workspace dependencies without changing the lockfile"
+run = "bun install --frozen-lockfile"
+
 [tasks."deps:outdated"]
 description = "Check outdated dependencies across all workspaces"
 run = "bun outdated --recursive --no-cache"
@@ -20,6 +24,7 @@ set -eu
 bun update --latest --no-cache
 (cd apps/api && bun update --latest --no-cache)
 (cd apps/web && bun update --latest --no-cache)
+(cd apps/mcp && bun update --latest --no-cache)
 (cd packages/core && bun update --latest --no-cache)
 """
 
@@ -80,6 +85,10 @@ env.PYTHONDONTWRITEBYTECODE = "1"
 run = "uv run --project tools/finance --locked --python 3.14 pytest tools/finance/tests"
 
 # ── Dev Servers ──────────────────────────────────────────────
+[tasks.mcp]
+description = "Run the local Stock Checker MCP server over stdio"
+run = "bun apps/mcp/src/index.ts"
+
 [tasks."dev:api"]
 description = "Start Fastify API server (port 5101)"
 dir = "apps/api"
@@ -141,9 +150,13 @@ run = "bun run typecheck"
 dir = "apps/web"
 run = "bun run typecheck"
 
+[tasks."typecheck:mcp"]
+dir = "apps/mcp"
+run = "bun run typecheck"
+
 [tasks.typecheck]
 description = "Type-check all packages in parallel"
-depends = ["typecheck:core", "typecheck:api", "typecheck:web", "finance:typecheck"]
+depends = ["typecheck:core", "typecheck:api", "typecheck:web", "typecheck:mcp", "finance:typecheck"]
 
 # ── Test ──────────────────────────────────────────────────────
 [tasks."test:core"]
@@ -158,9 +171,13 @@ run = "bun run test"
 dir = "apps/web"
 run = "bun run test"
 
+[tasks."test:mcp"]
+dir = "apps/mcp"
+run = "bun run test"
+
 [tasks.test]
 description = "Run all tests in parallel"
-depends = ["test:core", "test:api", "test:web", "finance:test"]
+depends = ["test:core", "test:api", "test:web", "test:mcp", "finance:test"]
 
 [tasks."test:watch"]
 description = "Run core tests in watch mode"

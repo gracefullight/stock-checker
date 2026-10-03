@@ -1,0 +1,49 @@
+name: Quality checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - "packages/core/src/**"
+      - "packages/core/scripts/**"
+      - "packages/core/*.json"
+      - "packages/core/vitest.config.ts"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.json"
+      - "biome.json"
+      - "mise.toml"
+      - ".github/workflows/quality.yml"
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/core/src/**"
+      - "packages/core/scripts/**"
+      - "packages/core/*.json"
+      - "packages/core/vitest.config.ts"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.json"
+      - "biome.json"
+      - "mise.toml"
+      - ".github/workflows/quality.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5.0.1
+      - name: Install locked workspace dependencies
+        run: mise run install:ci
+      - name: Lint and check formatting
+        run: mise run lint
+      - name: Check TypeScript and Python types
+        run: mise run typecheck
+      - name: Run offline tests
+        run: mise run test

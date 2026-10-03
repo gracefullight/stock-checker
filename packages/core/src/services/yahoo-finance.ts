@@ -1,8 +1,22 @@
 import { DateTime } from 'luxon';
+import pino from 'pino';
 import YahooFinance from 'yahoo-finance2';
+
+const stderrLogger = pino({ level: 'info' }, pino.destination(2));
 
 const yahooFinance = new YahooFinance({
   suppressNotices: ['yahooSurvey', 'ripHistorical'],
+  ...(process.env.MCP_LOG_STDERR === '1'
+    ? {
+        logger: {
+          info: (...args: unknown[]) => stderrLogger.info({ args }, 'Yahoo Finance'),
+          warn: (...args: unknown[]) => stderrLogger.warn({ args }, 'Yahoo Finance'),
+          error: (...args: unknown[]) => stderrLogger.error({ args }, 'Yahoo Finance'),
+          debug: (...args: unknown[]) => stderrLogger.debug({ args }, 'Yahoo Finance'),
+          dir: (...args: unknown[]) => stderrLogger.debug({ args }, 'Yahoo Finance'),
+        },
+      }
+    : {}),
 });
 
 export interface YahooDailyRow {

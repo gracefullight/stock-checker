@@ -9,6 +9,7 @@ historical data.
 | `packages/core` | Signal engine, backtest, and CLI (`predict` / `learn` / `optimize` / `backtest`) |
 | `apps/api` | Fastify API server (screener, ticker detail, OHLCV) — port 5101 |
 | `apps/web` | Next.js 16 screener UI (candlestick + Gaussian Channel band charts, portfolio, light/dark) — port 5100 |
+| `apps/mcp` | Local stdio MCP for stock analyst reports in Codex and Claude Code |
 
 | Screener | Ticker detail (Gaussian Channel band) |
 |---|---|
@@ -122,6 +123,50 @@ repository allowlist.
 |---|---|
 | `TIINGO_API_KEY` | Enables the [Tiingo](https://www.tiingo.com) daily-OHLCV fallback when Yahoo is rate-limited or down (free tier: 1,000 req/day). Without it, OHLCV degrades to empty on Yahoo failure. |
 | `SLACK_WEBHOOK_URL` | Slack notification for BUY/SELL opinions from `predict`. |
+| `FMP_API_KEY` | Optional [FMP](https://site.financialmodelingprep.com/developer/docs) fallback for recent individual analyst price-target updates. Yahoo consensus and available Yahoo target updates work without it. |
+
+### Local MCP (Codex and Claude Code)
+
+After `mise install` and `mise run install`, reopen the client in this repository.
+The project configurations register `stock_checker` through
+`.codex/config.toml` for [Codex](https://developers.openai.com/codex/mcp/)
+and `.mcp.json` for Claude Code. Executables and source paths are portable;
+no personal interpreter path is stored in the repository.
+
+Ask the client, for example: `TSLA 분석해줘. 근거, 승률, 진입, 손절, 최근 목표가까지.`
+It can call `analyze_stock` with:
+
+```json
+{"ticker":"TSLA","lookbackDays":2920}
+```
+
+The tool returns Markdown and structured data: current signal and gate reasons,
+ATR risk reference prices, conditional next-session entry, historical five-session
+net win rate, stop/target touch rates, and available analyst targets. Lookback is
+bounded to 730–3650 calendar days. `mise run mcp` starts the server directly;
+stdout carries JSON-RPC and logs go to stderr.
+
+Historical rates include observation counts, dates, and execution assumptions.
+They are empirical frequencies, not calibrated forecasts. The fixed-hold win
+rate charges 10 bps round trip; stop/target statistics are measured separately.
+Same-bar stop/target hits have unknown ordering and are reported as ambiguous.
+An empty sample produces an unavailable rate. Historical signals still carry
+the earnings, universe, and cluster-state limitations described above.
+
+Analyst consensus and individual updates have separate source/date metadata.
+Recent updates cover the last 90 days, with a 30-day count; a retrieved consensus
+is not presented as a newly published analyst report. Analyst targets have a
+different horizon from the five-session trade statistics. Missing data or provider
+access is reported explicitly. Supply optional keys in the client's environment.
+
+Yahoo requires no API key. Codex forwards `FMP_API_KEY` and `TIINGO_API_KEY`
+through `env_vars`; Claude's shared MCP configuration expands those environment
+variables with an empty default. An explicit key can also be supplied through
+`env` in a private user/local MCP configuration. For example, set
+`env.FMP_API_KEY` in that private configuration. Without a key, Yahoo remains
+the data source.
+
+Check the MCP app with `mise run typecheck:mcp` and `mise run test:mcp`.
 
 ### CLI (packages/core)
 
@@ -157,3 +202,5 @@ mise run ci          # lint → typecheck → test → build
   auto-commits the monthly CSV.
 - `.github/workflows/weekly-optimize.yml` — weekly parameter optimization,
   results uploaded as a build artifact.
+- `.github/workflows/quality.yml` — lint, type checks, and offline tests for
+  application and workspace changes, including the local MCP.

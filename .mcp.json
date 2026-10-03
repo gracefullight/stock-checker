@@ -11,6 +11,18 @@
         "SERENA_LOG_LEVEL": "info"
       }
     },
+    "stock_checker": {
+      "command": "mise",
+      "args": [
+        "--quiet",
+        "run",
+        "mcp"
+      ],
+      "env": {
+        "FMP_API_KEY": "${FMP_API_KEY:-}",
+        "TIINGO_API_KEY": "${TIINGO_API_KEY:-}"
+      }
+    },
     "aside": {
       "command": "aside",
       "args": [

@@ -5,7 +5,10 @@ import pino from 'pino';
 const logger = pino({
   level: 'debug',
   timestamp: pino.stdTimeFunctions.isoTime,
-  transport: { target: 'pino-pretty' },
+  transport: {
+    target: 'pino-pretty',
+    options: process.env.MCP_LOG_STDERR === '1' ? { destination: 2 } : undefined,
+  },
 });
 
 const axiosInstance = axios.create({

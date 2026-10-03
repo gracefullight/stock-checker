@@ -20,6 +20,8 @@
 - `mise run finance:lint`, `mise run finance:format:check`: Check Python lint and formatting with Ruff.
 - `mise run finance:fix`: Apply safe Ruff fixes, then format sequentially.
 - `mise run finance:test`: Run the offline Python finance regressions.
+- `mise run mcp`: Run the local stock analyst MCP over stdio; reserve stdout for JSON-RPC.
+- `mise run typecheck:mcp`, `mise run test:mcp`: Check the MCP integration.
 - Slack alerts: `SLACK_WEBHOOK_URL=... mise run predict -- --ticker=AAPL` or `--slack-webhook=...`.
 
 ## Coding Style & Naming Conventions

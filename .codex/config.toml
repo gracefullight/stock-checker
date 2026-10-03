@@ -10,6 +10,13 @@ SERENA_LOG_LEVEL = "info"
 command = "aside"
 args = [ "mcp" ]
 
+[mcp_servers.stock_checker]
+command = "mise"
+args = [ "--quiet", "run", "mcp" ]
+env_vars = [ "FMP_API_KEY", "TIINGO_API_KEY" ]
+startup_timeout_sec = 30
+tool_timeout_sec = 180
+
 [features]
 goals = true
 hooks = true
@@ -19,4 +26,3 @@ enabled = false
 
 [feedback]
 enabled = false
-
