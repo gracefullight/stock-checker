@@ -1,0 +1,23 @@
+/** The existing web screener universe; this is not a market-wide stock list. */
+export const DEFAULT_SCREENER_TICKERS = [
+  'TSLA',
+  'PLTR',
+  'GOOGL',
+  'NVDA',
+  'AAPL',
+  'META',
+  'AMD',
+  'MSFT',
+  'AMZN',
+  'NFLX',
+  'CRWD',
+  'NET',
+  'DDOG',
+  'COIN',
+  'SOFI',
+  'XYZ',
+  'SHOP',
+  'UBER',
+  'SNAP',
+  'PINS',
+] as const;

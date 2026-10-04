@@ -1,12 +1,18 @@
 import { Console } from 'node:console';
 import { format } from 'node:util';
-import type { DashboardGenerator, DashboardLauncher, ReportGenerator } from '@mcp/server.ts';
+import type {
+  DashboardGenerator,
+  DashboardLauncher,
+  ReportGenerator,
+  ScreenGenerator,
+} from '@mcp/server.ts';
 import type { StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 
 export async function startStdioServer(
   generator?: ReportGenerator,
   dashboardLauncher?: DashboardLauncher,
-  dashboardGenerator?: DashboardGenerator
+  dashboardGenerator?: DashboardGenerator,
+  screenGenerator?: ScreenGenerator
 ): Promise<StdioServerHandle> {
   process.env.MCP_LOG_STDERR = '1';
   Object.assign(
@@ -21,7 +27,8 @@ export async function startStdioServer(
   ]);
 
   return serveStdio(
-    () => createStockAnalystServer(generator, dashboardLauncher, dashboardGenerator),
+    () =>
+      createStockAnalystServer(generator, dashboardLauncher, dashboardGenerator, screenGenerator),
     {
       legacy: 'serve',
       onerror: () => {

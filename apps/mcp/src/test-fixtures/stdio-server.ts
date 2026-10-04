@@ -1,6 +1,7 @@
 import { mock } from 'bun:test';
 import { startStdioServer } from '@mcp/stdio.ts';
 import { fixtureReport } from '@mcp/test-fixtures/report.ts';
+import { fixtureScreen, fixtureScreenMatch } from '@mcp/test-fixtures/screen.ts';
 
 class FixtureYahooFinance {
   constructor(options: { logger?: { info: (...args: unknown[]) => void } }) {
@@ -57,5 +58,52 @@ await startStdioServer(
       },
       markdown: `# ${ticker} dashboard fixture`,
     };
+  },
+  async (options) => {
+    if (options?.tickers?.includes('FAIL')) {
+      throw new Error('Screen failed: https://fixture.example?key=fixture-secret');
+    }
+    globalThis.console.info('fixture screen log on stderr');
+    const tickers = [...new Set(options?.tickers ?? ['AAPL'])];
+    const candidates = tickers.map((ticker) => fixtureScreenMatch(ticker));
+    const decision = options?.decision ?? 'BUY';
+    const filtered = decision === 'BUY' || decision === 'ALL' ? candidates : [];
+    const limit = options?.limit ?? 20;
+    const matches = filtered.slice(0, limit);
+    const screen = fixtureScreen({
+      universe: { source: 'provided', tickers },
+      matches,
+      excluded: filtered.length
+        ? []
+        : candidates.map(({ ticker, decision, score, buyScore, sellScore, gateReasons }) => ({
+            ticker,
+            decision,
+            score,
+            buyScore,
+            sellScore,
+            gateReasons,
+          })),
+      decisionCounts: { BUY: candidates.length, SELL: 0, HOLD: 0 },
+      coverage: {
+        requested: tickers.length,
+        analyzed: candidates.length,
+        unavailable: 0,
+        matched: filtered.length,
+        returned: matches.length,
+        truncated: filtered.length > matches.length,
+      },
+    });
+    screen.criteria = {
+      ...screen.criteria,
+      decision,
+      lookbackDays: options?.lookbackDays ?? 730,
+      limit,
+      sort: {
+        metric: decision === 'SELL' ? 'sellScore' : 'buyScore',
+        order: 'descending',
+        tieBreaker: 'ticker-ascending',
+      },
+    };
+    return { screen, markdown: '# Offline screen fixture' };
   }
 );

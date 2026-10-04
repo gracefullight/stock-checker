@@ -8,14 +8,16 @@ import {
 } from '@mcp/dashboard-ui.ts';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { generateStockAnalystReport } from '@stock-checker/core/src/reports/stock-analyst.ts';
+import type { generateStockScreen } from '@stock-checker/core/src/reports/stock-screen.ts';
 import { z } from 'zod/v4';
 
 export type ReportGenerator = typeof generateStockAnalystReport;
 export type DashboardLauncher = typeof openStockDashboard;
 export type DashboardGenerator = typeof generateStockDashboard;
+export type ScreenGenerator = typeof generateStockScreen;
 
 export const SERVER_INSTRUCTIONS =
-  'Analyze one ticker using completed market sessions. Buy/sell scores and score weights describe signals, not success probabilities. Historical rates describe observed backtest outcomes with sample counts and execution assumptions; they do not predict future returns. Optional fundamentals, earnings, analyst targets, valuation, and market sources may be unavailable. Valuation reports trailing PER and PSR, with forward PER shown separately. Industry comparisons use a bounded sample of Yahoo peers in the same industry, with separate sample counts for each median; they do not represent the entire industry. A lower multiple alone does not imply BUY. Read report warnings and availability before drawing conclusions. Reports provide analysis, not orders or guaranteed investment advice. When the user asks for a dashboard in chat, use show_stock_dashboard. MCP Apps clients can render its interactive chart and report without a separate web server; other clients receive a text report and dashboard link. Use open_stock_dashboard only when the user asks to launch a browser. It checks the web listener and does not start servers. analyze_stock and show_stock_dashboard never launch a browser.';
+  'Analyze one ticker using completed market sessions. Buy/sell scores and score weights describe signals, not success probabilities. Historical rates describe observed backtest outcomes with sample counts and execution assumptions; they do not predict future returns. Optional fundamentals, earnings, analyst targets, valuation, and market sources may be unavailable. Valuation reports trailing PER and PSR, with forward PER shown separately. Industry comparisons use a bounded sample of Yahoo peers in the same industry, with separate sample counts for each median; they do not represent the entire industry. A lower multiple alone does not imply BUY. Read report warnings and availability before drawing conclusions. Reports provide analysis, not orders or guaranteed investment advice. When the user asks for a dashboard in chat, use show_stock_dashboard. MCP Apps clients can render its interactive chart and report without a separate web server; other clients receive a text report and dashboard link. Use open_stock_dashboard only when the user asks to launch a browser. It checks the web listener and does not start servers. analyze_stock and show_stock_dashboard never launch a browser. When the user asks to find BUY candidates across tickers using Stock Checker criteria, use screen_stocks. It filters the core engine final decision after quality gates, defaults to the existing 20-symbol web universe, and does not search the entire market. Distinguish no matching candidates from unavailable or partially missing analyses. When opening a candidate detail report, pass screen.criteria.lookbackDays to analyze_stock or show_stock_dashboard so decisions use the same history window.';
 
 export const analyzeStockInput = z.strictObject({
   ticker: z
@@ -36,6 +38,35 @@ export const analyzeStockInput = z.strictObject({
 
 export const openStockDashboardInput = analyzeStockInput.pick({ ticker: true });
 
+export const screenStocksInput = z.strictObject({
+  tickers: z
+    .array(analyzeStockInput.shape.ticker)
+    .min(1)
+    .max(50)
+    .optional()
+    .describe(
+      'Optional ticker list, 1–50 entries before deduplication; defaults to the web screener’s 20-symbol universe.'
+    ),
+  decision: z
+    .enum(['BUY', 'SELL', 'HOLD', 'ALL'])
+    .default('BUY')
+    .describe('Filter the final core engine decision after quality gates; default BUY.'),
+  lookbackDays: z
+    .number()
+    .int()
+    .min(730)
+    .max(3650)
+    .default(730)
+    .describe('Calendar days of history per ticker; default 730, range 730–3650.'),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(20)
+    .describe('Maximum matched rows to return; default 20, range 1–50.'),
+});
+
 async function generateReport(...args: Parameters<ReportGenerator>): ReturnType<ReportGenerator> {
   const core = await import('@stock-checker/core/src/reports/stock-analyst.ts');
   return core.generateStockAnalystReport(...args);
@@ -48,10 +79,16 @@ async function generateDashboard(
   return dashboard.generateStockDashboard(...args);
 }
 
+async function generateScreen(...args: Parameters<ScreenGenerator>): ReturnType<ScreenGenerator> {
+  const core = await import('@stock-checker/core/src/reports/stock-screen.ts');
+  return core.generateStockScreen(...args);
+}
+
 export function createStockAnalystServer(
   generator: ReportGenerator = generateReport,
   dashboardLauncher: DashboardLauncher = openStockDashboard,
-  dashboardGenerator: DashboardGenerator = generateDashboard
+  dashboardGenerator: DashboardGenerator = generateDashboard,
+  screenGenerator: ScreenGenerator = generateScreen
 ): McpServer {
   const server = new McpServer(
     { name: 'stock-checker', version: '0.0.0' },
@@ -188,6 +225,47 @@ export function createStockAnalystServer(
             {
               type: 'text',
               text: `Unable to prepare the dashboard for ${symbol}. Market data is unavailable; no dashboard data was produced.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'screen_stocks',
+    {
+      title: 'Screen stocks using Stock Checker criteria',
+      description:
+        'Screen up to 50 provided ticker entries using the core Stock Checker final BUY/SELL/HOLD decision after quality gates. Defaults to BUY matches in the web screener’s 20-symbol universe, with 730 calendar days of history and at most two concurrent ticker analyses. Returns matched candidates, coverage, unavailable tickers, and no-match results. This is a bounded universe screen; scores are not win probabilities. For matching detail decisions, pass screen.criteria.lookbackDays to analyze_stock or show_stock_dashboard. Reads market data without placing orders.',
+      inputSchema: screenStocksInput,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ tickers, decision, lookbackDays, limit }) => {
+      try {
+        const { screen, markdown } = await screenGenerator({
+          tickers: tickers?.map((ticker) => ticker.toUpperCase()),
+          decision,
+          lookbackDays,
+          limit,
+        });
+        return {
+          content: [{ type: 'text', text: markdown }],
+          structuredContent: { screen },
+          isError: screen.status === 'unavailable',
+        };
+      } catch {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'Unable to screen stocks. Market data or the screening service could not be accessed; no screening result was produced.',
             },
           ],
           isError: true,

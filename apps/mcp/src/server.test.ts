@@ -101,7 +101,7 @@ describe('analyze_stock MCP tool', () => {
       },
       async (client) => {
         const { tools } = await client.listTools();
-        expect(tools).toHaveLength(3);
+        expect(tools).toHaveLength(4);
         expect(tools[0]).toMatchObject({
           name: 'analyze_stock',
           annotations: { readOnlyHint: true, destructiveHint: false },

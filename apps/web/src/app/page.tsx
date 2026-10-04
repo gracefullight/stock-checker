@@ -1,3 +1,4 @@
+import { DEFAULT_SCREENER_TICKERS } from '@stock-checker/core/src/constants/screener';
 import { MarketHeatmap } from '@/components/market-heatmap';
 import { ScreenerTable } from '@/components/screener-table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -5,28 +6,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getScreener } from '@/lib/api';
 
-const TICKERS = [
-  'TSLA',
-  'PLTR',
-  'GOOGL',
-  'NVDA',
-  'AAPL',
-  'META',
-  'AMD',
-  'MSFT',
-  'AMZN',
-  'NFLX',
-  'CRWD',
-  'NET',
-  'DDOG',
-  'COIN',
-  'SOFI',
-  'XYZ',
-  'SHOP',
-  'UBER',
-  'SNAP',
-  'PINS',
-];
+const TICKERS = [...DEFAULT_SCREENER_TICKERS];
 
 function ScreenerSkeleton() {
   return (

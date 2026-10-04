@@ -29,8 +29,10 @@ describe('MCP stdio', () => {
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();
+      expect(tools).toHaveLength(4);
       expect(tools[0]?.name).toBe('analyze_stock');
       expect(tools[1]?.name).toBe('open_stock_dashboard');
+      expect(tools[3]?.name).toBe('screen_stocks');
       const result = await client.callTool({
         name: 'analyze_stock',
         arguments: { ticker: 'AAPL' },
@@ -40,6 +42,29 @@ describe('MCP stdio', () => {
         structuredContent: { report: { ticker: 'AAPL', status: 'available', valuation: null } },
       });
       expect(JSON.stringify(result)).not.toContain('fixture-secret');
+      expect(
+        await client.callTool({
+          name: 'screen_stocks',
+          arguments: { tickers: [' aapl ', 'AAPL'] },
+        })
+      ).toMatchObject({
+        isError: false,
+        structuredContent: {
+          screen: {
+            status: 'available',
+            universe: { tickers: ['AAPL'] },
+            criteria: { decision: 'BUY', lookbackDays: 730, limit: 20, timeBudgetMs: 45000 },
+            coverage: { requested: 1, analyzed: 1, matched: 1 },
+            matches: [{ ticker: 'AAPL', decision: 'BUY' }],
+          },
+        },
+      });
+      const failedScreen = await client.callTool({
+        name: 'screen_stocks',
+        arguments: { tickers: ['FAIL'] },
+      });
+      expect(failedScreen).toMatchObject({ isError: true });
+      expect(JSON.stringify(failedScreen)).not.toContain('fixture-secret');
       expect(
         await client.callTool({ name: 'open_stock_dashboard', arguments: { ticker: '^gspc' } })
       ).toMatchObject({
@@ -66,6 +91,7 @@ describe('MCP stdio', () => {
     }
     expect(stderr).toContain('fixture report log on stderr');
     expect(stderr).toContain('fixture Bun console.write on stderr');
+    expect(stderr).toContain('fixture screen log on stderr');
     expect(stderr).toContain('fixture Yahoo logger on stderr');
     expect(stderr).toContain('Failed to fetch historical prices from Yahoo');
     expect(stderr).not.toContain('fixture-secret');
@@ -133,6 +159,7 @@ describe('MCP stdio', () => {
               { name: 'analyze_stock' },
               { name: 'open_stock_dashboard' },
               { name: 'show_stock_dashboard' },
+              { name: 'screen_stocks' },
             ],
           },
         });
@@ -189,6 +216,30 @@ describe('MCP stdio', () => {
             ],
           },
         });
+        expect(
+          await request(8, 'tools/call', {
+            name: 'screen_stocks',
+            arguments: { tickers: ['aapl', 'AAPL'] },
+          })
+        ).toMatchObject({
+          result: {
+            isError: false,
+            structuredContent: {
+              screen: {
+                status: 'available',
+                universe: { tickers: ['AAPL'] },
+                criteria: { decision: 'BUY', lookbackDays: 730 },
+                matches: [{ ticker: 'AAPL', decision: 'BUY' }],
+              },
+            },
+          },
+        });
+        const failedScreen = await request(9, 'tools/call', {
+          name: 'screen_stocks',
+          arguments: { tickers: ['FAIL'] },
+        });
+        expect(failedScreen).toMatchObject({ result: { isError: true } });
+        expect(JSON.stringify(failedScreen)).not.toContain('fixture-secret');
         expect(invalidLines).toEqual([]);
         expect(stdout.length).toBeGreaterThanOrEqual(3);
       } finally {

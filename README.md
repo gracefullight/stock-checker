@@ -179,6 +179,37 @@ the data source.
 
 Check the MCP app with `mise run typecheck:mcp` and `mise run test:mcp`.
 
+For Stock Checker signal screening, ask `스톡체커 기준으로 BUY 후보 찾아줘`.
+The client calls `screen_stocks`; an empty input uses the same 20 symbols as the
+web screener and selects final `BUY` decisions. Specify a ticker list to scan
+your own candidates:
+
+```json
+{"tickers":["AAPL","TSLA","NVDA","OII","SPCX"],"decision":"BUY","limit":20}
+```
+
+The tool uses the existing signal engine and entry gates. A high BUY score alone
+does not qualify a ticker when the engine's final decision is HOLD. Matches
+include completed-session dates, scores, gate reasons, and ATR risk references.
+Entry remains conditional on the next session's open; the future fill price is
+unknown. SELL screening describes long-holder exit warnings.
+
+Inputs allow 1–50 symbols, with case normalization and deduplication. `decision`
+can be `BUY` (default), `SELL`, `HOLD`, or `ALL`. Lookback defaults to 730 calendar
+days, matching the web screener, and accepts 730–3650; `limit` accepts 1–50 and
+defaults to 20. Results sort by BUY score descending, or SELL score for SELL
+screening, with ticker order breaking ties. Coverage includes the total matches
+before truncation, other decisions, and unavailable symbols. A completed scan
+with no matching BUY is a normal result.
+
+At most two ticker analyses run concurrently. The scan has a 45-second time
+budget; unfinished symbols are reported as unavailable and already completed
+results are retained. This is a scan of the stated symbol list, not a whole-market
+search. For a selected candidate's historical win/stop-touch rates, valuation,
+and analyst targets, call `analyze_stock` or `show_stock_dashboard`.
+Pass the screen's `lookbackDays` to that follow-up call when comparing decisions;
+the detailed tools otherwise default to 2920 days.
+
 For an interactive dashboard inside chat, ask `SPCX 대시보드를 채팅 안에 보여줘`.
 The client calls `show_stock_dashboard` with the same ticker/lookback input as
 `analyze_stock`. The tool links `ui://stock-checker/dashboard`, a self-contained
