@@ -1,5 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +17,7 @@ import {
   type CreateMarketScreenOptions,
   createMarketScreenJob,
   getMarketScreenJob,
+  listMarketScreenJobs,
   MarketScreenJobNotFoundError,
   type MarketScreenJobSnapshot,
   pauseMarketScreenJob,
@@ -19,6 +29,7 @@ import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/tic
 import type { PipelineResult } from '@/types';
 
 const storeHooks = vi.hoisted(() => ({
+  beforeRead: undefined as undefined | ((file: string) => Promise<void>),
   beforeWrite: undefined as undefined | ((file: string, value: unknown) => Promise<void>),
 }));
 
@@ -26,6 +37,10 @@ vi.mock('@/reports/market-screen-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/reports/market-screen-store')>();
   return {
     ...actual,
+    readMarketScreenJson: async (file: string) => {
+      await storeHooks.beforeRead?.(file);
+      return actual.readMarketScreenJson(file);
+    },
     writeMarketScreenJson: async (file: string, value: unknown) => {
       await storeHooks.beforeWrite?.(file, value);
       return actual.writeMarketScreenJson(file, value);
@@ -162,8 +177,9 @@ describe('durable Finviz candidate jobs', () => {
   }
 
   beforeEach(async () => {
+    storeHooks.beforeRead = undefined;
     storeHooks.beforeWrite = undefined;
-    root = await mkdtemp(path.join(os.tmpdir(), 'stock-checker-market-job-'));
+    root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'stock-checker-market-job-')));
     ids = [];
     releases = [];
     analyze = vi
@@ -172,6 +188,7 @@ describe('durable Finviz candidate jobs', () => {
   });
 
   afterEach(async () => {
+    storeHooks.beforeRead = undefined;
     storeHooks.beforeWrite = undefined;
     for (const id of ids) {
       try {
@@ -757,6 +774,173 @@ describe('durable Finviz candidate jobs', () => {
     );
     await expect(getMarketScreenJob(created.job.id, { offset: -1 }, deps())).rejects.toThrow(
       TypeError
+    );
+  });
+
+  describe('read-only job listing', () => {
+    it('returns an empty page without creating a missing store', async () => {
+      const directory = path.join(root, 'not-created');
+      expect(await listMarketScreenJobs({}, { ...deps(), rootDirectory: directory })).toEqual({
+        jobs: [],
+        offset: 0,
+        limit: 20,
+        total: 0,
+        hasMore: false,
+      });
+      expect(await readdir(root)).toEqual([]);
+      expect(analyze).not.toHaveBeenCalled();
+    });
+
+    it('paginates by creation date descending and UUID ascending on ties', async () => {
+      const jobs = await Promise.all(
+        Array.from({ length: 4 }, () => create(input(['ONE'], { autoStart: false })))
+      );
+      const createdAt = [
+        '2026-02-01T00:00:00.000Z',
+        '2026-03-01T00:00:00.000Z',
+        '2026-03-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z',
+      ];
+      for (const [index, job] of jobs.entries())
+        await writeMarketScreenJson(path.join(root, job.job.id, 'state.json'), {
+          ...job.job,
+          createdAt: createdAt[index],
+        });
+
+      const first = await listMarketScreenJobs({ limit: 2 }, deps());
+      const second = await listMarketScreenJobs({ offset: 2, limit: 2 }, deps());
+      const beyond = await listMarketScreenJobs({ offset: 10 }, deps());
+      expect(first.jobs.map((job) => job.id)).toEqual([jobs[1].job.id, jobs[2].job.id].sort());
+      expect(second.jobs.map((job) => job.id)).toEqual([jobs[0].job.id, jobs[3].job.id]);
+      expect(first).toMatchObject({ offset: 0, limit: 2, total: 4, hasMore: true });
+      expect(second).toMatchObject({ offset: 2, limit: 2, total: 4, hasMore: false });
+      expect(beyond).toMatchObject({ jobs: [], offset: 10, limit: 20, total: 4, hasMore: false });
+      expect(analyze).not.toHaveBeenCalled();
+    });
+
+    it('ignores unrelated paths, UUID files and uncommitted UUID directories', async () => {
+      const created = await create(input(['ONE'], { autoStart: false }));
+      await mkdir(path.join(root, 'not-a-job'));
+      await mkdir(path.join(root, `.runner-stale-${randomUUID()}`));
+      await mkdir(path.join(root, randomUUID()));
+      await writeFile(path.join(root, randomUUID()), 'not a directory');
+      await writeFile(path.join(root, 'not-a-job', 'state.json'), 'private unrelated content');
+      await symlink(path.join(root, 'not-a-job'), path.join(root, randomUUID()));
+
+      const listed = await listMarketScreenJobs({}, deps());
+      expect(listed.total).toBe(1);
+      expect(listed.jobs.map((job) => job.id)).toEqual([created.job.id]);
+    });
+
+    it('uses existing recovered progress semantics without mutating state, control or stale leases', async () => {
+      const created = await create(input(['ONE', 'TWO'], { autoStart: false }));
+      const id = created.job.id;
+      await writeMarketScreenJson(path.join(root, id, 'results/matches/00000000.json'), {
+        index: 0,
+        kind: 'matches',
+        completedAt: new Date().toISOString(),
+        item: projectMatch('ONE', context('ONE')),
+      });
+      await writeMarketScreenJson(path.join(root, id, 'state.json'), {
+        ...created.job,
+        status: 'running',
+        progress: { ...created.job.progress, pending: 0, inFlight: 2 },
+      });
+      await writeMarketScreenJson(path.join(root, id, 'control.json'), {
+        desiredStatus: 'running',
+        reason: null,
+      });
+      await writeMarketScreenJson(path.join(root, '.runner.lock', 'owner.json'), {
+        pid: 2_147_483_647,
+        token: randomUUID(),
+        jobId: id,
+        createdAt: new Date().toISOString(),
+      });
+      const files = [
+        path.join(root, id, 'state.json'),
+        path.join(root, id, 'control.json'),
+        path.join(root, '.runner.lock', 'owner.json'),
+      ];
+      const before = await Promise.all(files.map((file) => readFile(file, 'utf8')));
+
+      const listed = await listMarketScreenJobs({}, deps());
+      expect(listed.jobs[0]).toMatchObject({
+        status: 'paused',
+        pauseReason: 'No worker is active; resume to continue pending candidates.',
+        progress: { analyzed: 1, matched: 1, unavailable: 0, inFlight: 0, pending: 1 },
+      });
+      expect(await Promise.all(files.map((file) => readFile(file, 'utf8')))).toEqual(before);
+      expect(analyze).not.toHaveBeenCalled();
+      await rm(path.join(root, '.runner.lock'), { recursive: true });
+    });
+
+    it('reads result directory counts only for the chosen page and never parses result rows', async () => {
+      const older = await create(input(['ONE'], { autoStart: false }));
+      const newer = await create(input(['TWO'], { autoStart: false }));
+      await writeMarketScreenJson(path.join(root, older.job.id, 'state.json'), {
+        ...older.job,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      });
+      await rm(path.join(root, older.job.id, 'results'), { recursive: true });
+      await writeFile(
+        path.join(root, newer.job.id, 'results/matches/00000000.json'),
+        'Result JSON is intentionally unreadable; listing should not open it.'
+      );
+      const readFiles: string[] = [];
+      storeHooks.beforeRead = async (file) => {
+        readFiles.push(file);
+      };
+
+      const listed = await listMarketScreenJobs({ limit: 1 }, deps());
+      expect(listed).toMatchObject({ total: 2, hasMore: true });
+      expect(listed.jobs[0]).toMatchObject({ id: newer.job.id, progress: { matched: 1 } });
+      expect(readFiles.some((file) => file.includes('/results/'))).toBe(false);
+      expect(readFiles).not.toContain(path.join(root, older.job.id, 'manifest.json'));
+      expect(readFiles).not.toContain(path.join(root, older.job.id, 'control.json'));
+    });
+
+    it('omits a job deleted during selected-page loading and fills the page with the next job', async () => {
+      const older = await create(input(['ONE'], { autoStart: false }));
+      const newer = await create(input(['TWO'], { autoStart: false }));
+      await writeMarketScreenJson(path.join(root, older.job.id, 'state.json'), {
+        ...older.job,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      });
+      let deleted = false;
+      storeHooks.beforeRead = async (file) => {
+        if (file === path.join(root, newer.job.id, 'manifest.json') && !deleted) {
+          deleted = true;
+          await rm(path.join(root, newer.job.id), { recursive: true });
+        }
+      };
+
+      const listed = await listMarketScreenJobs({ limit: 1 }, deps());
+      expect(deleted).toBe(true);
+      expect(listed.jobs.map((job) => job.id)).toEqual([older.job.id]);
+      expect(listed).toMatchObject({ total: 1, hasMore: false });
+    });
+
+    it('fails clearly on corrupt saved jobs rather than silently hiding them or exposing paths', async () => {
+      const created = await create(input(['ONE'], { autoStart: false }));
+      await writeFile(
+        path.join(root, created.job.id, 'state.json'),
+        'private fixture invalid JSON'
+      );
+      await expect(listMarketScreenJobs({}, deps())).rejects.toThrow(
+        'Saved market-screen jobs could not be listed.'
+      );
+      expect(analyze).not.toHaveBeenCalled();
+    });
+
+    it.each([{ offset: -1 }, { offset: 1.5 }, { limit: 0 }, { limit: 101 }, { limit: 1.5 }])(
+      'validates pagination before filesystem work (%j)',
+      async (options) => {
+        const directory = path.join(root, 'not-created');
+        await expect(
+          listMarketScreenJobs(options, { ...deps(), rootDirectory: directory })
+        ).rejects.toThrow(TypeError);
+        expect(await readdir(root)).toEqual([]);
+      }
     );
   });
 });

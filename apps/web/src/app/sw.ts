@@ -2,7 +2,8 @@
 /// <reference lib="webworker" />
 import { defaultCache } from '@serwist/turbopack/worker';
 import type { PrecacheEntry, SerwistGlobalConfig } from 'serwist';
-import { ExpirationPlugin, NetworkFirst, Serwist } from 'serwist';
+import { ExpirationPlugin, NetworkFirst, NetworkOnly, Serwist } from 'serwist';
+import { isMarketScreenRequest } from '@/features/market-screen/utils/market-screen-cache';
 
 // `injectionPoint` (default "self.__SW_MANIFEST") is replaced by the actual
 // precache manifest at build time.
@@ -20,6 +21,11 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
+    // Durable job state must never fall back to an offline progress snapshot.
+    {
+      matcher: ({ url }) => isMarketScreenRequest(url),
+      handler: new NetworkOnly(),
+    },
     // API GETs (cross-origin :5101 included — the SW intercepts all page fetches).
     // NetworkFirst with a generous timeout: the screener legitimately takes >10s.
     {

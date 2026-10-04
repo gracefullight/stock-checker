@@ -2,6 +2,7 @@ import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import { getCorsOptions } from '@/lib/cors';
 import { marketRoutes } from '@/routes/market';
+import { marketScreenRoutes } from '@/routes/market-screen';
 import { portfolioRoutes } from '@/routes/portfolio';
 import { screenerRoutes } from '@/routes/screener';
 import { watchlistRoutes } from '@/routes/watchlist';
@@ -14,6 +15,7 @@ await app.register(screenerRoutes, { prefix: '/api' });
 await app.register(portfolioRoutes, { prefix: '/api' });
 await app.register(watchlistRoutes, { prefix: '/api' });
 await app.register(marketRoutes, { prefix: '/api' });
+await app.register(marketScreenRoutes, { prefix: '/api' });
 
 const port = Number(process.env.PORT ?? 5101);
 await app.listen({ port, host: '0.0.0.0' });

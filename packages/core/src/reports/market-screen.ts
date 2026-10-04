@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DateTime } from 'luxon';
 import {
   acquireMarketScreenLease,
+  type MarketScreenLeaseOwner,
   marketScreenOwnerIsAlive,
   readMarketScreenJson,
   readMarketScreenLease,
@@ -47,6 +48,19 @@ export interface MarketScreenPageOptions {
   kind?: PageKind;
   offset?: number;
   limit?: number;
+}
+
+export interface MarketScreenListOptions {
+  offset?: number;
+  limit?: number;
+}
+
+export interface MarketScreenJobList {
+  jobs: MarketScreenJob[];
+  offset: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
 }
 
 export interface MarketScreenError {
@@ -139,6 +153,7 @@ interface Runtime {
 }
 
 const DEFAULT_ROOT = fileURLToPath(new URL('../../../../data/market-scans/', import.meta.url));
+const JOB_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const FINVIZ_PARAMETERS = new Set(['v', 'f', 'ft', 'o', 'r', 't', 's', 'c', 'ar', 'p', 'ta']);
 const activeRuntimes = new Map<string, Runtime>();
 const terminal = (status: JobStatus) => ['completed', 'partial', 'unavailable'].includes(status);
@@ -146,10 +161,7 @@ const timestamp = () => new Date().toISOString();
 const jobFile = (root: string, id: string, name: string) => path.join(root, id, name);
 
 function validId(id: string): string {
-  if (
-    typeof id !== 'string' ||
-    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)
-  ) {
+  if (typeof id !== 'string' || !JOB_ID_PATTERN.test(id)) {
     throw new TypeError('jobId must be a UUID');
   }
   return id.toLowerCase();
@@ -287,7 +299,7 @@ async function loadJob(
 ): Promise<{ job: MarketScreenJob; manifest: Manifest }> {
   try {
     const [job, manifest] = await Promise.all([
-      readMarketScreenJson(jobFile(root, id, 'state.json')),
+      readJobState(root, id),
       readMarketScreenJson(jobFile(root, id, 'manifest.json')),
     ]);
     const state = job as MarketScreenJob;
@@ -307,6 +319,21 @@ async function loadJob(
       throw new MarketScreenJobNotFoundError();
     throw new Error('Saved market-screen job could not be read.');
   }
+}
+
+async function readJobState(root: string, id: string): Promise<MarketScreenJob> {
+  const saved = (await readMarketScreenJson(jobFile(root, id, 'state.json'))) as MarketScreenJob;
+  if (
+    saved?.schemaVersion !== 1 ||
+    saved.id !== id ||
+    typeof saved.createdAt !== 'string' ||
+    !Number.isFinite(Date.parse(saved.createdAt)) ||
+    !Number.isInteger(saved.progress?.total) ||
+    saved.progress.total < 1 ||
+    saved.progress.total > 15_000
+  )
+    throw new Error('Invalid saved job');
+  return saved;
 }
 
 async function readControl(root: string, id: string): Promise<Control> {
@@ -343,24 +370,12 @@ async function results(root: string, id: string, kind: PageKind): Promise<SavedR
   return rows;
 }
 
-async function snapshot(
+async function refreshJobSummary(
   root: string,
   id: string,
-  options: MarketScreenPageOptions = {}
-): Promise<MarketScreenJobSnapshot> {
-  const kind = options.kind ?? 'matches';
-  const offset = options.offset ?? 0;
-  const limit = options.limit ?? 20;
-  if (
-    !['matches', 'excluded', 'unavailable'].includes(kind) ||
-    !Number.isSafeInteger(offset) ||
-    offset < 0 ||
-    !Number.isInteger(limit) ||
-    limit < 1 ||
-    limit > 100
-  )
-    throw new TypeError('Invalid result pagination');
-  const { job } = await loadJob(root, id);
+  job: MarketScreenJob,
+  sharedLease?: MarketScreenLeaseOwner | null
+): Promise<MarketScreenJob> {
   const control = await readControl(root, id);
   const savedCounts = await Promise.all(
     (['matches', 'excluded', 'unavailable'] as const).map(
@@ -381,7 +396,7 @@ async function snapshot(
   job.progress.pending =
     job.progress.total - job.progress.analyzed - job.progress.unavailable - job.progress.inFlight;
   if (!terminal(job.status)) {
-    const lease = await readMarketScreenLease(root);
+    const lease = sharedLease === undefined ? await readMarketScreenLease(root) : sharedLease;
     const isActive = lease?.jobId === id && marketScreenOwnerIsAlive(lease);
     if (control.desiredStatus === 'paused') {
       job.status = 'paused';
@@ -398,6 +413,28 @@ async function snapshot(
       job.progress.inFlight = 0;
     }
   }
+  return job;
+}
+
+async function snapshot(
+  root: string,
+  id: string,
+  options: MarketScreenPageOptions = {}
+): Promise<MarketScreenJobSnapshot> {
+  const kind = options.kind ?? 'matches';
+  const offset = options.offset ?? 0;
+  const limit = options.limit ?? 20;
+  if (
+    !['matches', 'excluded', 'unavailable'].includes(kind) ||
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > 100
+  )
+    throw new TypeError('Invalid result pagination');
+  const { job: saved } = await loadJob(root, id);
+  const job = await refreshJobSummary(root, id, saved);
   const rows = await results(root, id, kind);
   if (kind === 'unavailable') rows.sort((left, right) => left.index - right.index);
   else {
@@ -718,6 +755,87 @@ export async function getMarketScreenJob(
 ): Promise<MarketScreenJobSnapshot> {
   const jobId = validId(id);
   return snapshot(await storeRoot(dependencies), jobId, options);
+}
+
+/**
+ * Read-only, best-effort directory listing. Missing/deleted artifacts are omitted;
+ * corrupt or inaccessible saved jobs fail the request instead of disappearing.
+ * Result contents are never read, and result-directory counts are refreshed only
+ * for the selected page. Totals can change when another process creates/deletes jobs.
+ */
+export async function listMarketScreenJobs(
+  options: MarketScreenListOptions = {},
+  dependencies: MarketScreenDependencies = {}
+): Promise<MarketScreenJobList> {
+  const offset = options.offset ?? 0;
+  const limit = options.limit ?? 20;
+  if (
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > 100
+  )
+    throw new TypeError('Invalid job pagination');
+  const directory = dependencies.rootDirectory ?? DEFAULT_ROOT;
+  if (!path.isAbsolute(directory))
+    throw new TypeError('Market-screen store must use an absolute path');
+  const empty: MarketScreenJobList = { jobs: [], offset, limit, total: 0, hasMore: false };
+  let root: string;
+  try {
+    root = await realpath(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return empty;
+    throw new Error('Saved market-screen jobs could not be listed.');
+  }
+  const headers: MarketScreenJob[] = [];
+  try {
+    const entries = (await readdir(root, { withFileTypes: true })).filter(
+      (entry) => entry.isDirectory() && JOB_ID_PATTERN.test(entry.name)
+    );
+    for (let index = 0; index < entries.length; index += 20) {
+      const batch = await Promise.all(
+        entries.slice(index, index + 20).map(async (entry) => {
+          try {
+            return await readJobState(root, entry.name);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+            throw error;
+          }
+        })
+      );
+      for (const job of batch) if (job) headers.push(job);
+    }
+    headers.sort(
+      (left, right) =>
+        Date.parse(right.createdAt) - Date.parse(left.createdAt) || left.id.localeCompare(right.id)
+    );
+    const jobs: MarketScreenJob[] = [];
+    let cursor = offset;
+    let sharedLease: MarketScreenLeaseOwner | null | undefined;
+    while (jobs.length < limit && cursor < headers.length) {
+      const header = headers[cursor];
+      try {
+        const { job } = await loadJob(root, header.id);
+        if (!terminal(job.status) && sharedLease === undefined)
+          sharedLease = await readMarketScreenLease(root);
+        jobs.push(await refreshJobSummary(root, header.id, job, sharedLease));
+        cursor++;
+      } catch (error) {
+        if (
+          error instanceof MarketScreenJobNotFoundError ||
+          (error as NodeJS.ErrnoException).code === 'ENOENT'
+        ) {
+          headers.splice(cursor, 1);
+          continue;
+        }
+        throw error;
+      }
+    }
+    return { jobs, offset, limit, total: headers.length, hasMore: cursor < headers.length };
+  } catch {
+    throw new Error('Saved market-screen jobs could not be listed.');
+  }
 }
 
 export async function runMarketScreenJob(

@@ -279,16 +279,35 @@ unavailable symbols.
 
 Jobs and atomic checkpoints live in ignored `data/market-scans/`, anchored to the
 repository rather than the client's working directory. A shared process lock
-allows one active job across local Codex/Claude connections, with at most two
+allows one active job across local Codex/Claude connections and the web API, with at most two
 concurrent ticker analyses and a one-second minimum interval per worker. A busy
 job stays paused until explicitly resumed. Rate-limit errors or five consecutive
 unavailable analyses pause new requests; this general availability guard also
 handles provider errors that the data layer converts into empty data. The guard
 does not identify every data failure as rate-limiting. The 45-second `screen_stocks` budget
-does not apply to these background jobs; the MCP process must remain running.
+does not apply to these background jobs; the process that resumes the job (MCP
+or API) must remain running.
 Analysis completion and source collection coverage are reported separately.
 Results retain per-symbol session dates because a long scan may span market days.
 Use the job's history window for candidate detail reports.
+
+The web dashboard also exposes these jobs through the **[MARKET SCREEN]** menu
+at `http://localhost:5100/market-screen` after `mise run dev`. Jobs created by
+the MCP appear automatically because the API reads the same repository store.
+Select a job to inspect its Finviz filters and collection coverage, analysis
+progress, matched decisions, excluded candidates, and unavailable symbols.
+Results are paginated and link to each ticker's web detail page. Opening the
+page only reads saved jobs; **Resume** starts remaining analyses and **Pause**
+stops new launches while current requests finish. Create new candidate lists
+through the MCP/browser collection flow above.
+
+The dashboard reads `GET /api/market-screens` for job pages and
+`GET /api/market-screens/:jobId?kind=matches&offset=0&limit=20` for results.
+`POST /api/market-screens/:jobId/resume` and `/pause` control the same durable job.
+Job responses bypass browser/service-worker caches so old checkpoints are not
+presented as current progress. Browser controls use `CORS_ORIGIN` when configured;
+otherwise they accept the local web origins or the API's own origin. Local MCP
+access continues to use stdio.
 
 For an interactive dashboard inside chat, ask `SPCX 대시보드를 채팅 안에 보여줘`.
 The client calls `show_stock_dashboard` with the same ticker/lookback input as

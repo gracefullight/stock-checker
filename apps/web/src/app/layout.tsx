@@ -27,39 +27,53 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ThemeProvider>
             <TooltipProvider>
               {/* Top status bar */}
-              <header className="sticky top-0 z-50 flex items-center justify-between px-4 py-1.5 bg-card border-b border-border">
-                <div className="flex items-center gap-4">
+              <header className="sticky top-0 z-50 flex min-w-0 flex-col gap-2 px-4 py-1.5 bg-card border-b border-border lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-4">
                   <span className="text-xs font-bold font-mono tracking-widest text-primary">
                     STOCK SCREENER
                   </span>
-                  <nav className="flex items-center gap-3" aria-label="Main navigation">
+                  <nav
+                    className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2"
+                    aria-label="Main navigation"
+                  >
                     <Link
                       href="/"
+                      prefetch={false}
                       className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
                     >
                       [SCREENER]
                     </Link>
                     <Link
+                      href="/market-screen"
+                      prefetch={false}
+                      className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      [MARKET SCREEN]
+                    </Link>
+                    <Link
                       href="/portfolio"
+                      prefetch={false}
                       className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
                     >
                       [PORTFOLIO]
                     </Link>
                     <Link
                       href="/watchlist"
+                      prefetch={false}
                       className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
                     >
                       [WATCHLIST]
                     </Link>
                     <Link
                       href="/alerts"
+                      prefetch={false}
                       className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
                     >
                       [ALERTS]
                     </Link>
                   </nav>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                   <FxDisplay />
                   <FearGreedDisplay />
                   <ThemeToggle />
