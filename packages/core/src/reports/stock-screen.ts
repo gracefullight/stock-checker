@@ -148,7 +148,7 @@ function sessionDate(value: string): string | null {
     : null;
 }
 
-function projectMatch(ticker: string, context: TickerAnalysisContext): StockScreenMatch {
+export function projectMatch(ticker: string, context: TickerAnalysisContext): StockScreenMatch {
   const { result, pipelineResult: signal } = context;
   if (
     !['BUY', 'SELL', 'HOLD'].includes(signal.finalDecision) ||

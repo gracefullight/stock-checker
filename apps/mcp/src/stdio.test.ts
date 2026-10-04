@@ -29,7 +29,7 @@ describe('MCP stdio', () => {
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(4);
+      expect(tools).toHaveLength(8);
       expect(tools[0]?.name).toBe('analyze_stock');
       expect(tools[1]?.name).toBe('open_stock_dashboard');
       expect(tools[3]?.name).toBe('screen_stocks');
@@ -160,6 +160,10 @@ describe('MCP stdio', () => {
               { name: 'open_stock_dashboard' },
               { name: 'show_stock_dashboard' },
               { name: 'screen_stocks' },
+              { name: 'prepare_finviz_screen' },
+              { name: 'create_market_screen' },
+              { name: 'get_market_screen' },
+              { name: 'control_market_screen' },
             ],
           },
         });

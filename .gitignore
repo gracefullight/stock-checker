@@ -30,6 +30,7 @@ out/
 data/config/
 packages/core/data/config/
 packages/core/data/feedback/
+data/market-scans/
 
 # Backtest / prediction output
 packages/core/backtest-results-*.txt

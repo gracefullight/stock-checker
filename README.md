@@ -210,6 +210,86 @@ and analyst targets, call `analyze_stock` or `show_stock_dashboard`.
 Pass the screen's `lookbackDays` to that follow-up call when comparing decisions;
 the detailed tools otherwise default to 2920 days.
 
+For candidates across the US market, ask `Aside로 Finviz 후보를 모아서 스톡체커 BUY 기준으로 평가해줘`.
+The client calls `prepare_finviz_screen` to prepare a public Finviz Tickers-view
+URL, then uses an available browser MCP such as Aside to collect its symbols.
+The BUY default excludes funds and selects price below SMA50, reflecting the
+current SC pullback requirement. Market-cap, average-volume and price cuts default
+to `any`; these are optional speed limits, rather than mandatory SC rules. Disable
+the SMA50 prefilter to collect a broader list:
+
+```json
+{"belowSma50":false}
+```
+
+For a smaller liquidity-focused candidate set, optionally add
+`marketCap: "over2b"`, `averageVolume: "over500k"`, and `price: "over5"`.
+For SELL, HOLD or ALL, pass `decision` to preparation; the BUY-specific SMA50
+prefilter is then off unless explicitly requested. Use the same decision when
+creating the analysis job.
+
+Finviz selects the candidate universe; the existing Stock Checker final decision
+determines BUY. SC recomputes completed-session trend, relative strength against
+SPY and the sector ETF, SMA50, close location, ATR%, volume participation, confluence
+and final scores. Finviz may use an intraday quote and different price adjustments;
+its relative volume uses a different average period, so it is not substituted for
+the SC volume gate. These prefilters can exclude other stocks with a BUY signal.
+Finviz covers US exchanges, rather than all global stocks. The public browser
+route needs no Finviz API key; its [API/export access is an Elite feature](https://finviz.com/help/faq).
+The stock-checker server does not fetch Finviz pages or open the browser itself.
+Clients without a browser MCP can supply ticker rows from an authorized browser
+or CSV export.
+
+After collection, call `create_market_screen` with the ticker manifest and source
+metadata. For example, an intentionally partial two-symbol preview is:
+
+```json
+{
+  "tickers": ["A", "AA"],
+  "provenance": {
+    "source": "Finviz",
+    "url": "https://finviz.com/screener?v=411&f=cap_midover,ind_stocksonly,sh_avgvol_o500,sh_price_o5",
+    "filters": ["cap_midover", "ind_stocksonly", "sh_avgvol_o500", "sh_price_o5"],
+    "sourceTotal": 1669,
+    "capturedAt": "2026-10-04T05:00:00Z",
+    "completeness": "partial"
+  },
+  "autoStart": false
+}
+```
+
+The count above is an example from one collection, not a current universe size.
+Supply the actual displayed filtered total and capture time. Inputs accept up to
+15,000 rows before normalization and deduplication. `complete` requires the unique
+symbol count to equal the stated filtered total; this checks count consistency,
+not independent verification of the caller's Finviz collection. Record missing
+pages or security checks as `partial`. Preserve the source URL's exact ordered
+filter identifiers. Optional `overallTotal` and `pages` describe the unfiltered
+Finviz count and collected page count separately.
+
+Creation normally starts background analysis and immediately returns the job ID.
+`autoStart: false` saves a paused manifest without market-data calls. Use
+`get_market_screen` with `jobId`, optional `kind` (`matches`, `excluded`, or
+`unavailable`), `offset`, and `limit` to read progress and result pages. The default
+page is 20 matches, with a maximum of 100 rows. Use `control_market_screen` with
+the job ID and `action: "resume"` or `"pause"`. Pause stops new symbols while
+existing calls finish and save their results. Resume keeps completed symbols and
+reclaims interrupted work after an MCP restart; it does not automatically rerun
+unavailable symbols.
+
+Jobs and atomic checkpoints live in ignored `data/market-scans/`, anchored to the
+repository rather than the client's working directory. A shared process lock
+allows one active job across local Codex/Claude connections, with at most two
+concurrent ticker analyses and a one-second minimum interval per worker. A busy
+job stays paused until explicitly resumed. Rate-limit errors or five consecutive
+unavailable analyses pause new requests; this general availability guard also
+handles provider errors that the data layer converts into empty data. The guard
+does not identify every data failure as rate-limiting. The 45-second `screen_stocks` budget
+does not apply to these background jobs; the MCP process must remain running.
+Analysis completion and source collection coverage are reported separately.
+Results retain per-symbol session dates because a long scan may span market days.
+Use the job's history window for candidate detail reports.
+
 For an interactive dashboard inside chat, ask `SPCX 대시보드를 채팅 안에 보여줘`.
 The client calls `show_stock_dashboard` with the same ticker/lookback input as
 `analyze_stock`. The tool links `ui://stock-checker/dashboard`, a self-contained
