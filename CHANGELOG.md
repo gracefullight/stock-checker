@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/gracefullight/stock-checker/compare/v0.2.2...v0.3.0) (2026-10-05)
+
+
+### Features
+
+* **whatsapp:** use a local QR-linked notification gateway ([9239426](https://github.com/gracefullight/stock-checker/commit/9239426db1117f9b9ce9c71221bd9c80f6c8cf1d))
+
 ## [0.2.2](https://github.com/gracefullight/stock-checker/compare/v0.2.1...v0.2.2) (2026-10-05)
 
 
