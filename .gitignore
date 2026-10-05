@@ -6,6 +6,7 @@ dist
 .env
 .env.local
 .env.*.local
+mise.local.toml
 
 # TypeScript
 *.tsbuildinfo
@@ -34,6 +35,9 @@ data/market-scans/
 
 # WhatsApp Web linked-device session and local gateway token
 data/whatsapp/
+
+# Local service logs
+data/services/
 
 # Backtest / prediction output
 packages/core/backtest-results-*.txt

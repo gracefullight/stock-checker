@@ -100,6 +100,31 @@ description = "Run the local WhatsApp Web notification gateway"
 raw = true
 run = "node packages/core/src/whatsapp/index.ts"
 
+[tasks."whatsapp:service:install"]
+description = "Install the macOS WhatsApp user service (add --link for initial QR pairing)"
+raw = true
+run = 'node tools/services/launchd.cjs install whatsapp "$@"'
+
+[tasks."whatsapp:service:start"]
+description = "Start the installed macOS WhatsApp user service"
+raw = true
+run = "node tools/services/launchd.cjs start whatsapp"
+
+[tasks."whatsapp:service:stop"]
+description = "Stop the macOS WhatsApp user service"
+raw = true
+run = "node tools/services/launchd.cjs stop whatsapp"
+
+[tasks."whatsapp:service:status"]
+description = "Inspect the installed macOS WhatsApp user service"
+raw = true
+run = "node tools/services/launchd.cjs status whatsapp"
+
+[tasks."whatsapp:service:uninstall"]
+description = "Remove the macOS WhatsApp user service while preserving linked sessions"
+raw = true
+run = "node tools/services/launchd.cjs uninstall whatsapp"
+
 [tasks."dev:api"]
 description = "Start Fastify API server (port 5101)"
 dir = "apps/api"
@@ -141,17 +166,17 @@ run = "node --test .github/scripts/release.test.cjs"
 [tasks.lint]
 description = "Lint entire monorepo"
 depends = ["finance:lint", "finance:format:check"]
-run = "bunx biome check apps packages package.json tsconfig.json biome.json"
+run = "bunx biome check apps packages tools/services package.json tsconfig.json biome.json"
 
 [tasks."lint:fix"]
 description = "Lint + auto-fix"
 depends = ["finance:fix"]
-run = "bunx biome check --write --unsafe apps packages package.json tsconfig.json biome.json"
+run = "bunx biome check --write --unsafe apps packages tools/services package.json tsconfig.json biome.json"
 
 [tasks.format]
 description = "Format all files"
 depends = ["finance:format"]
-run = "bunx biome format --write apps packages package.json tsconfig.json biome.json"
+run = "bunx biome format --write apps packages tools/services package.json tsconfig.json biome.json"
 
 [tasks."typecheck:core"]
 dir = "packages/core"
@@ -190,9 +215,13 @@ run = "bun run test"
 dir = "apps/mcp"
 run = "bun run test"
 
+[tasks."services:test"]
+description = "Test local service installation and lifecycle without changing macOS services"
+run = "node --test tools/services/launchd.test.cjs"
+
 [tasks.test]
 description = "Run all tests in parallel"
-depends = ["test:core", "test:api", "test:web", "test:mcp", "finance:test", "release:test"]
+depends = ["test:core", "test:api", "test:web", "test:mcp", "finance:test", "release:test", "services:test"]
 
 [tasks."test:watch"]
 description = "Run core tests in watch mode"

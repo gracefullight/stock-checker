@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import pino from 'pino';
 import { ensureGatewayToken, getWhatsAppGatewayConfiguration } from './config.ts';
 import { createWhatsAppGateway } from './gateway.ts';
+import { createManagedSessionWatchdog, type ManagedSessionWatchdog } from './health.ts';
 import { createWhatsAppSession } from './session.ts';
 
 const logger = pino({ name: 'whatsapp-gateway' }, process.stderr);
@@ -20,6 +21,7 @@ export async function runWhatsAppGateway(
     environment.WHATSAPP_GATEWAY_TOKEN
   );
   let currentQr: string | null = null;
+  let watchdog: ManagedSessionWatchdog | undefined;
   const session = createWhatsAppSession({
     authDirectory: configuration.authDirectory,
     allowPairing: arguments_.includes('--link'),
@@ -28,6 +30,7 @@ export async function runWhatsAppGateway(
     },
     onState(state) {
       logger.info({ state }, 'WhatsApp 연결 상태');
+      watchdog?.onState(state);
     },
   });
   const gateway = createWhatsAppGateway({
@@ -39,6 +42,7 @@ export async function runWhatsAppGateway(
   let stopping: Promise<void> | undefined;
   const stop = (): Promise<void> => {
     stopping ??= (async () => {
+      watchdog?.stop();
       currentQr = null;
       await Promise.allSettled([gateway.stop(), session.stop()]);
       process.removeListener('SIGINT', onSignal);
@@ -49,6 +53,15 @@ export async function runWhatsAppGateway(
   const onSignal = (): void => {
     void stop();
   };
+  watchdog = createManagedSessionWatchdog({
+    enabled: environment.WHATSAPP_MANAGED_SERVICE === '1',
+    pairing: arguments_.includes('--link'),
+    async onTimeout() {
+      logger.warn('WhatsApp 연결이 복구되지 않아 관리 서비스를 다시 시작합니다.');
+      await stop();
+      process.exitCode = 1;
+    },
+  });
   try {
     const address = await gateway.start();
     process.once('SIGINT', onSignal);

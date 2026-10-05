@@ -270,6 +270,47 @@ self-chat. This integration needs no Meta business app, Graph API token,
 approved template, or Cloud API billing setup. It does not incur Cloud API
 message fees; running or hosting the process has separate costs.
 
+On macOS, install the gateway as a user service so it continues running after
+closing the terminal:
+
+```bash
+mise run whatsapp:service:install -- --link
+```
+
+Open `http://127.0.0.1:5102/` and scan the QR from WhatsApp's **Settings →
+Linked devices → Link a device**. After linking, switch the service to its
+normal mode without new-device pairing:
+
+```bash
+mise run whatsapp:service:install
+mise run whatsapp:service:status
+```
+
+The `com.stock-checker.whatsapp` LaunchAgent starts when you log in and
+restarts if its process exits. A linked connection that fails to recover for
+five minutes also restarts the managed process. Initial QR pairing and
+logged-out accounts require user action. It loads the repository's mise configuration,
+including private local environment settings. Save custom gateway settings
+in ignored `mise.local.toml`; temporary shell exports do not persist into a
+LaunchAgent. Installation resolves the
+project and executable paths on your machine; public configuration contains
+no fixed user paths, session credentials, or recipient numbers. Logs are kept
+in ignored `data/services/` with private file permissions.
+
+Use `mise run whatsapp:service:stop` to stop the service,
+`mise run whatsapp:service:start` to start it again, or
+`mise run whatsapp:service:uninstall` to remove its registration. Removing the
+service preserves the linked session. The stop command disables automatic
+startup until you run start or install again. Only one gateway can use an auth directory;
+stop a manually started gateway before installing the service. A user service
+runs while you are logged in; the computer must be awake and connected to send.
+
+This service maintains the WhatsApp connection. It does not schedule stock
+analysis or run the API, dashboard, or MCP. OMA schedules invoke agents and
+prompts; repeating a fixed SC command does not need an agent invocation.
+For a periodic analysis job, use a separate OS-scheduled CLI command and keep
+the gateway service running.
+
 From the repository, set your recipient in E.164 format and link the sender:
 
 ```bash
