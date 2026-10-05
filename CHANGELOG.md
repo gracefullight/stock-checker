@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/gracefullight/stock-checker/compare/v0.1.0...v0.1.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* wait for initial release metadata propagation ([944acb5](https://github.com/gracefullight/stock-checker/commit/944acb558d84a17a0e289f63451f5d752c688907))
+
 ## 0.1.0 (2026-10-05)
 
 
