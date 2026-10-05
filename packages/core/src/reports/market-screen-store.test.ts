@@ -88,6 +88,22 @@ afterEach(async () => {
 });
 
 describe('market-screen durable store', () => {
+  test('persists refresh purposes, shares exclusivity, and accepts legacy screen owners', async () => {
+    const root = await temporaryRoot();
+    const jobId = randomUUID();
+    const refresh = await acquireMarketScreenLease(root, jobId, 'forward-paper-performance');
+    expect(refresh.acquired).toBe(true);
+    expect((await readMarketScreenLease(root))?.purpose).toBe('forward-paper-performance');
+    expect((await acquireMarketScreenLease(root, jobId)).acquired).toBe(false);
+    const { purpose: _purpose, ...legacy } = refresh.owner;
+    await writeMarketScreenJson(path.join(root, '.runner.lock/owner.json'), legacy);
+    expect((await readMarketScreenLease(root))?.purpose).toBeUndefined();
+    expect(
+      (await acquireMarketScreenLease(root, randomUUID(), 'forward-paper-performance')).acquired
+    ).toBe(false);
+    await refresh.release();
+    expect(await readMarketScreenLease(root)).toBeNull();
+  });
   test('readers observe complete old or new JSON while progress is replaced atomically', async () => {
     const root = await temporaryRoot();
     const file = path.join(root, 'nested', 'progress.json');

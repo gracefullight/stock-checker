@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarketScreenDashboard } from '@/features/market-screen/components/market-screen-dashboard';
+import { fixturePaperSnapshot } from '@/features/market-screen/utils/market-screen-performance-test-fixtures';
 import {
   FIRST_MARKET_JOB,
   fixtureMarketScreenJob,
@@ -10,6 +11,7 @@ import {
 } from '@/features/market-screen/utils/market-screen-test-fixtures';
 import {
   getMarketScreen,
+  getMarketScreenPerformance,
   getMarketScreens,
   type MarketScreenJobSnapshot,
   pauseMarketScreen,
@@ -18,6 +20,8 @@ import {
 
 vi.mock('@/lib/api', () => ({
   getMarketScreen: vi.fn(),
+  getMarketScreenPerformance: vi.fn(),
+  refreshMarketScreenPerformance: vi.fn(),
   getMarketScreens: vi.fn(),
   pauseMarketScreen: vi.fn(),
   resumeMarketScreen: vi.fn(),
@@ -40,6 +44,7 @@ vi.mock('next/link', () => ({
 }));
 
 beforeEach(() => {
+  vi.mocked(getMarketScreenPerformance).mockReset().mockResolvedValue(fixturePaperSnapshot());
   vi.mocked(getMarketScreens)
     .mockReset()
     .mockResolvedValue({
@@ -109,7 +114,9 @@ describe('saved market-screen dashboard', () => {
     );
     expect(await screen.findByText('MISSING')).toBeInTheDocument();
     expect(screen.getByText(/unavailable data, not a HOLD decision/)).toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('table', { name: 'Saved market-screen decisions' })
+    ).not.toBeInTheDocument();
   });
 
   it('uses bounded result pagination and hides the preceding page while awaiting the next one', async () => {

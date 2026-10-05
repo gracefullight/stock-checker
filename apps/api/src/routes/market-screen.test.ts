@@ -1,6 +1,7 @@
 import type {
   MarketScreenJobList,
   MarketScreenJobSnapshot,
+  MarketScreenPerformanceSnapshot,
 } from '@stock-checker/core/src/reports/market-screen';
 import { MarketScreenJobNotFoundError } from '@stock-checker/core/src/reports/market-screen';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -8,6 +9,62 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type MarketScreenApiService, marketScreenRoutes } from '@/routes/market-screen';
 
 const JOB_ID = 'bd6128e1-d410-4a61-a90e-dfbd6a86167e';
+
+function performanceFixture(): MarketScreenPerformanceSnapshot {
+  return {
+    jobId: JOB_ID,
+    policy: {
+      id: 'us-buy-next-open-five-session-v1',
+      mode: 'forward-paper',
+      timezone: 'America/New_York',
+      entry: 'next-session-open',
+      exit: 'fifth-session-close',
+      horizonSessions: 5,
+      costBpsRoundTrip: 10,
+      adjustment: 'same-fetched-adjusted-series',
+    },
+    updatedAt: null,
+    summary: {
+      totalRecommendations: 1,
+      completed: 0,
+      wins: 0,
+      losses: 0,
+      breakeven: 0,
+      pending: 1,
+      open: 0,
+      unavailable: 0,
+      ineligible: 0,
+      legacyUntracked: 0,
+      winRatePct: null,
+      averageNetReturnPct: null,
+    },
+    page: {
+      offset: 0,
+      limit: 20,
+      total: 1,
+      hasMore: false,
+      items: [
+        {
+          recommendationId: 'fixture-recommendation',
+          ticker: 'AAPL',
+          dataAsOf: '2026-10-02',
+          recommendedAt: '2026-10-05T13:00:00.000Z',
+          status: 'pending',
+          reason: 'The next eligible session has not completed.',
+          entryDate: null,
+          exitDate: null,
+          entryPrice: null,
+          exitPrice: null,
+          grossReturnPct: null,
+          netReturnPct: null,
+          outcome: null,
+          updatedAt: null,
+        },
+      ],
+    },
+    refresh: { status: 'idle', selected: 0, processed: 0, reason: null },
+  };
+}
 
 function fixture(): MarketScreenJobSnapshot {
   return {
@@ -67,6 +124,12 @@ function fakeService(value = fixture()) {
     get: vi.fn(async () => value),
     pause: vi.fn(async () => value),
     resume: vi.fn(async () => value),
+    getPerformance: vi.fn<MarketScreenApiService['getPerformance']>(async () =>
+      performanceFixture()
+    ),
+    refreshPerformance: vi.fn<MarketScreenApiService['refreshPerformance']>(async () =>
+      performanceFixture()
+    ),
   } satisfies MarketScreenApiService;
 }
 
@@ -275,12 +338,20 @@ describe('marketScreenRoutes', () => {
     service.get.mockRejectedValue(error);
     service.pause.mockRejectedValue(error);
     service.resume.mockRejectedValue(error);
+    service.getPerformance.mockRejectedValue(error);
+    service.refreshPerformance.mockRejectedValue(error);
     const logs = vi.spyOn(app.log, 'error');
     for (const request of [
       { method: 'GET' as const, url: '/api/market-screens' },
       { method: 'GET' as const, url: `/api/market-screens/${JOB_ID}` },
       { method: 'POST' as const, url: `/api/market-screens/${JOB_ID}/pause`, payload: {} },
       { method: 'POST' as const, url: `/api/market-screens/${JOB_ID}/resume`, payload: {} },
+      { method: 'GET' as const, url: `/api/market-screens/${JOB_ID}/performance` },
+      {
+        method: 'POST' as const,
+        url: `/api/market-screens/${JOB_ID}/performance/refresh`,
+        payload: { limit: 20 },
+      },
     ]) {
       const response = await app.inject(request);
       expect(response.statusCode).toBe(500);
@@ -289,8 +360,135 @@ describe('marketScreenRoutes', () => {
       expect(response.body).not.toContain('finance-secret');
       expect(response.body).not.toContain('/Users/private');
     }
-    expect(logs).toHaveBeenCalledTimes(4);
+    expect(logs).toHaveBeenCalledTimes(6);
     expect(JSON.stringify(logs.mock.calls)).not.toContain('finance-secret');
     expect(JSON.stringify(logs.mock.calls)).not.toContain('/Users/private');
   });
+
+  it.each([
+    '/api/market-screens/not-a-uuid/performance',
+    `/api/market-screens/${JOB_ID}/performance?offset=15001`,
+    `/api/market-screens/${JOB_ID}/performance?offset=-1`,
+    `/api/market-screens/${JOB_ID}/performance?offset=1.5`,
+    `/api/market-screens/${JOB_ID}/performance?limit=101`,
+    `/api/market-screens/${JOB_ID}/performance?limit=0`,
+    `/api/market-screens/${JOB_ID}/performance?limit=20&limit=40`,
+    `/api/market-screens/${JOB_ID}/performance?refresh=true`,
+  ])('rejects invalid performance reads without providers or store access: %s', async (url) => {
+    const response = await app.inject({ method: 'GET', url });
+    expect(response.statusCode).toBe(400);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(service.getPerformance).not.toHaveBeenCalled();
+    expect(service.refreshPerformance).not.toHaveBeenCalled();
+    expect(service.resume).not.toHaveBeenCalled();
+  });
+
+  it('reads saved performance with defaults and null rates without starting provider updates', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/market-screens/${JOB_ID.toUpperCase()}/performance`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.json()).toEqual(performanceFixture());
+    expect(service.getPerformance).toHaveBeenCalledWith(JOB_ID, { offset: 0, limit: 20 });
+    expect(service.refreshPerformance).not.toHaveBeenCalled();
+    expect(service.resume).not.toHaveBeenCalled();
+    expect(service.get).not.toHaveBeenCalled();
+  });
+
+  it('passes bounded saved-performance pagination', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/market-screens/${JOB_ID}/performance?offset=20&limit=100`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(service.getPerformance).toHaveBeenCalledWith(JOB_ID, { offset: 20, limit: 100 });
+  });
+
+  it.each([undefined, {}, { limit: 50 }])(
+    'starts an explicit bounded refresh and returns background progress: %j',
+    async (payload) => {
+      const value = performanceFixture();
+      value.refresh = {
+        status: 'running',
+        selected: 1,
+        processed: 0,
+        reason: null,
+      };
+      service.refreshPerformance.mockResolvedValue(value);
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/market-screens/${JOB_ID.toUpperCase()}/performance/refresh`,
+        headers: { origin: 'http://localhost:5100' },
+        ...(payload !== undefined ? { payload } : {}),
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.json()).toEqual(value);
+      expect(service.refreshPerformance).toHaveBeenCalledWith(JOB_ID, {
+        limit: payload?.limit ?? 20,
+      });
+      expect(service.resume).not.toHaveBeenCalled();
+      expect(service.pause).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    { limit: 0 },
+    { limit: 51 },
+    { limit: 1.5 },
+    { limit: '20' },
+    { limit: null },
+    { offset: 20 },
+    { rootDirectory: '/tmp/jobs' },
+    { limit: 20, concurrency: 50 },
+    [],
+  ])('rejects invalid performance refresh bodies before provider calls: %j', async (payload) => {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/market-screens/${JOB_ID}/performance/refresh`,
+      payload,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(service.refreshPerformance).not.toHaveBeenCalled();
+    expect(service.resume).not.toHaveBeenCalled();
+  });
+
+  it('rejects performance refresh query controls and an unrelated browser origin', async () => {
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/market-screens/${JOB_ID}/performance/refresh?limit=20`,
+          payload: {},
+        })
+      ).statusCode
+    ).toBe(400);
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/market-screens/${JOB_ID}/performance/refresh`,
+      headers: { origin: 'https://untrusted.invalid' },
+      payload: { limit: 20 },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(service.refreshPerformance).not.toHaveBeenCalled();
+  });
+
+  it.each(['getPerformance', 'refreshPerformance'] as const)(
+    'returns a sanitized 404 for an unknown performance job through %s',
+    async (action) => {
+      service[action].mockRejectedValue(new MarketScreenJobNotFoundError());
+      const response = await app.inject({
+        method: action === 'getPerformance' ? 'GET' : 'POST',
+        url: `/api/market-screens/${JOB_ID}/performance${action === 'refreshPerformance' ? '/refresh' : ''}`,
+        ...(action === 'refreshPerformance' ? { payload: {} } : {}),
+      });
+      expect(response.statusCode).toBe(404);
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.json()).toEqual({ error: 'Market-screen job was not found.' });
+    }
+  );
 });

@@ -12,6 +12,7 @@ import {
 
 const fixturePath = fileURLToPath(new URL('./test-fixtures/stdio-server.ts', import.meta.url));
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
+const PERFORMANCE_JOB_ID = 'bd6128e1-d410-4a61-a90e-dfbd6a86167e';
 
 describe('MCP stdio', () => {
   test('SDK client discovers and calls the tool while console logs stay on stderr', async () => {
@@ -29,10 +30,34 @@ describe('MCP stdio', () => {
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(8);
+      expect(tools).toHaveLength(10);
       expect(tools[0]?.name).toBe('analyze_stock');
       expect(tools[1]?.name).toBe('open_stock_dashboard');
       expect(tools[3]?.name).toBe('screen_stocks');
+      expect(tools[8]?.name).toBe('get_market_screen_performance');
+      expect(tools[9]?.name).toBe('refresh_market_screen_performance');
+      expect(
+        await client.callTool({
+          name: 'get_market_screen_performance',
+          arguments: { jobId: PERFORMANCE_JOB_ID },
+        })
+      ).toMatchObject({
+        isError: false,
+        structuredContent: {
+          jobId: PERFORMANCE_JOB_ID,
+          policy: { mode: 'forward-paper', horizonSessions: 5 },
+          summary: { completed: 1, pending: 1, open: 1, unavailable: 1 },
+        },
+      });
+      expect(
+        await client.callTool({
+          name: 'refresh_market_screen_performance',
+          arguments: { jobId: PERFORMANCE_JOB_ID, limit: 50 },
+        })
+      ).toMatchObject({
+        isError: false,
+        structuredContent: { refresh: { status: 'running', selected: 3, processed: 0 } },
+      });
       const result = await client.callTool({
         name: 'analyze_stock',
         arguments: { ticker: 'AAPL' },
@@ -90,6 +115,8 @@ describe('MCP stdio', () => {
       await client.close();
     }
     expect(stderr).toContain('fixture report log on stderr');
+    expect(stderr).toContain('fixture saved performance read on stderr');
+    expect(stderr).toContain('fixture performance refresh on stderr');
     expect(stderr).toContain('fixture Bun console.write on stderr');
     expect(stderr).toContain('fixture screen log on stderr');
     expect(stderr).toContain('fixture Yahoo logger on stderr');
@@ -164,6 +191,8 @@ describe('MCP stdio', () => {
               { name: 'create_market_screen' },
               { name: 'get_market_screen' },
               { name: 'control_market_screen' },
+              { name: 'get_market_screen_performance' },
+              { name: 'refresh_market_screen_performance' },
             ],
           },
         });
@@ -244,6 +273,31 @@ describe('MCP stdio', () => {
         });
         expect(failedScreen).toMatchObject({ result: { isError: true } });
         expect(JSON.stringify(failedScreen)).not.toContain('fixture-secret');
+        expect(
+          await request(10, 'tools/call', {
+            name: 'get_market_screen_performance',
+            arguments: { jobId: PERFORMANCE_JOB_ID },
+          })
+        ).toMatchObject({
+          result: {
+            isError: false,
+            structuredContent: {
+              policy: { mode: 'forward-paper', horizonSessions: 5 },
+              summary: { completed: 1, pending: 1 },
+            },
+          },
+        });
+        expect(
+          await request(11, 'tools/call', {
+            name: 'refresh_market_screen_performance',
+            arguments: { jobId: PERFORMANCE_JOB_ID, limit: 50 },
+          })
+        ).toMatchObject({
+          result: {
+            isError: false,
+            structuredContent: { refresh: { status: 'running', selected: 3 } },
+          },
+        });
         expect(invalidLines).toEqual([]);
         expect(stdout.length).toBeGreaterThanOrEqual(3);
       } finally {

@@ -187,6 +187,36 @@ describe('durable Finviz candidate jobs', () => {
       .mockImplementation(async (ticker) => context(ticker));
   });
 
+  it('atomically publishes a frozen forward policy only alongside matched final BUY rows', async () => {
+    analyze.mockImplementation(async (ticker) =>
+      context(ticker, ticker === 'ONE' ? 'BUY' : ticker === 'TWO' ? 'SELL' : 'HOLD')
+    );
+    const created = await create(input(['ONE', 'TWO', 'THREE'], { decision: 'ALL' }));
+    await settled(created.job.id);
+    const rows = await Promise.all(
+      [0, 1, 2].map(async (index) =>
+        JSON.parse(
+          await readFile(
+            path.join(
+              root,
+              created.job.id,
+              `results/matches/${String(index).padStart(8, '0')}.json`
+            ),
+            'utf8'
+          )
+        )
+      )
+    );
+    expect(rows[0].forwardPerformance).toMatchObject({
+      schemaVersion: 1,
+      recommendedAt: rows[0].completedAt,
+      dataAsOf: rows[0].item.dataAsOf,
+      policy: { mode: 'forward-paper', horizonSessions: 5, costBpsRoundTrip: 10 },
+    });
+    expect(rows[1].forwardPerformance).toBeUndefined();
+    expect(rows[2].forwardPerformance).toBeUndefined();
+  });
+
   afterEach(async () => {
     storeHooks.beforeRead = undefined;
     storeHooks.beforeWrite = undefined;

@@ -2,7 +2,9 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type {
   createMarketScreenJob,
   getMarketScreenJob,
+  getMarketScreenPerformance,
   pauseMarketScreenJob,
+  refreshMarketScreenPerformance,
   runMarketScreenJob,
 } from '@stock-checker/core/src/reports/market-screen.ts';
 import { z } from 'zod/v4';
@@ -12,6 +14,8 @@ export interface MarketScreenService {
   get: typeof getMarketScreenJob;
   resume: typeof runMarketScreenJob;
   pause: typeof pauseMarketScreenJob;
+  getPerformance: typeof getMarketScreenPerformance;
+  refreshPerformance: typeof refreshMarketScreenPerformance;
 }
 
 const FINVIZ_PARAMETERS = new Set(['v', 'f', 'ft', 'o', 'r', 't', 's', 'c', 'ar', 'p', 'ta']);
@@ -154,6 +158,23 @@ export const controlMarketScreenInput = z.strictObject({
   action: z.enum(['resume', 'pause']),
 });
 
+export const getMarketScreenPerformanceInput = z.strictObject({
+  jobId: jobIdInput,
+  offset: z.number().int().min(0).max(15000).default(0),
+  limit: z.number().int().min(1).max(100).default(20),
+});
+
+export const refreshMarketScreenPerformanceInput = z.strictObject({
+  jobId: jobIdInput,
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(20)
+    .describe('Maximum recommendation observations to refresh explicitly; default 20, maximum 50.'),
+});
+
 const defaultService: MarketScreenService = {
   async create(...args) {
     const core = await import('@stock-checker/core/src/reports/market-screen.ts');
@@ -171,9 +192,18 @@ const defaultService: MarketScreenService = {
     const core = await import('@stock-checker/core/src/reports/market-screen.ts');
     return core.pauseMarketScreenJob(...args);
   },
+  async getPerformance(...args) {
+    const core = await import('@stock-checker/core/src/reports/market-screen.ts');
+    return core.getMarketScreenPerformance(...args);
+  },
+  async refreshPerformance(...args) {
+    const core = await import('@stock-checker/core/src/reports/market-screen.ts');
+    return core.refreshMarketScreenPerformance(...args);
+  },
 };
 
 type MarketScreenSnapshot = Awaited<ReturnType<MarketScreenService['get']>>;
+type MarketScreenPerformanceSnapshot = Awaited<ReturnType<MarketScreenService['getPerformance']>>;
 
 const escapeMarkdown = (value: string): string => value.replace(/[\\`*_{}[\]()#+.!|<>-]/g, '\\$&');
 const numeric = (value: number): string => (Number.isFinite(value) ? value.toFixed(2) : 'N/A');
@@ -242,6 +272,59 @@ function renderSnapshot(snapshot: MarketScreenSnapshot): string {
 function snapshotResult(snapshot: MarketScreenSnapshot) {
   return {
     content: [{ type: 'text' as const, text: renderSnapshot(snapshot) }],
+    structuredContent: { ...snapshot },
+    isError: false,
+  };
+}
+
+function renderPerformance(snapshot: MarketScreenPerformanceSnapshot): string {
+  const { jobId, policy, summary, page, refresh } = snapshot;
+  const percentage = (value: number | null): string =>
+    value !== null && Number.isFinite(value) ? `${value.toFixed(2)}%` : 'N/A';
+  const price = (value: number | null): string => (value === null ? 'N/A' : numeric(value));
+  const lines = [
+    `# Recommendation performance — ${jobId}`,
+    '',
+    'Forward paper observations after eligible saved US BUY recommendations, not actual fills, trading-account returns, or calibrated success probabilities.',
+    `Policy: next session open → fifth session close; ${policy.horizonSessions} sessions; ${policy.costBpsRoundTrip} bps round-trip cost. Adjusted prices come from the same fetched series. Timezone: ${policy.timezone}.`,
+    `Updated: ${snapshot.updatedAt ?? 'not refreshed yet'}. Refresh: ${refresh.status}; ${refresh.processed}/${refresh.selected} selected observations processed.`,
+    ...(refresh.reason ? [`Refresh note: ${escapeMarkdown(refresh.reason)}`] : []),
+    '',
+    `Recommendations: ${summary.totalRecommendations}; completed: ${summary.completed}; wins: ${summary.wins}; losses: ${summary.losses}; breakeven: ${summary.breakeven}.`,
+    `Pending entry: ${summary.pending}; open observations: ${summary.open}; unavailable: ${summary.unavailable}; ineligible: ${summary.ineligible}; legacy untracked: ${summary.legacyUntracked}.`,
+    summary.completed > 0
+      ? `Observed positive net-return rate: ${percentage(summary.winRatePct)} (n=${summary.completed} completed); average completed net return: ${percentage(summary.averageNetReturnPct)}.`
+      : 'Observed positive net-return rate: N/A (n=0 completed); average completed net return: N/A.',
+    'Only completed observations enter the rate and average. Pending, open, unavailable, ineligible, and legacy untracked observations are separate. Overlapping recommendations are not independent trade samples.',
+    `Result page: offset ${page.offset}, limit ${page.limit}; ${page.total} total rows${page.hasMore ? '; more pages available' : ''}.`,
+  ];
+  if (page.items.length) {
+    lines.push(
+      '',
+      '| Ticker | Signal session | Recommended at | Status | Entry session | Entry (USD) | Exit session | Exit (USD) | Net return | Outcome |',
+      '|---|---|---|---|---|---:|---|---:|---:|---|'
+    );
+    for (const row of page.items) {
+      lines.push(
+        `| ${escapeMarkdown(row.ticker)} | ${row.dataAsOf ?? 'N/A'} | ${row.recommendedAt ?? 'N/A'} | ${row.status} | ${row.entryDate ?? 'N/A'} | ${price(row.entryPrice)} | ${row.exitDate ?? 'N/A'} | ${price(row.exitPrice)} | ${percentage(row.netReturnPct)} | ${row.outcome ?? 'N/A'} |`
+      );
+    }
+    for (const row of page.items)
+      if (row.reason)
+        lines.push('', `${escapeMarkdown(row.ticker)}: ${escapeMarkdown(row.reason)}`);
+  } else {
+    lines.push('', 'No saved recommendation observations on this page.');
+  }
+  lines.push(
+    '',
+    'get_market_screen_performance reads saved results only. refresh_market_screen_performance explicitly starts a bounded background price refresh; it does not resume screening or place orders.'
+  );
+  return lines.join('\n');
+}
+
+function performanceResult(snapshot: MarketScreenPerformanceSnapshot) {
+  return {
+    content: [{ type: 'text' as const, text: renderPerformance(snapshot) }],
     structuredContent: { ...snapshot },
     isError: false,
   };
@@ -331,6 +414,54 @@ export function registerMarketScreenTools(
         return snapshotResult(
           await (action === 'resume' ? service.resume(jobId) : service.pause(jobId))
         );
+      } catch {
+        return failure();
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_market_screen_performance',
+    {
+      title: 'Read saved recommendation paper performance',
+      description:
+        'Read saved forward paper observations after eligible US BUY recommendations: next session open to fifth-session close, with 10 bps round-trip cost. Returns completed sample counts and observed net-return rates separately from pending, open, unavailable, ineligible, and legacy untracked observations. A zero completed sample has no percentage. Defaults to offset 0 and limit 20, maximum 100 rows. Reads saved data only; never requests market prices, resumes screening, or places orders. Observations are not actual fills or calibrated win probabilities.',
+      inputSchema: getMarketScreenPerformanceInput,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ jobId, offset, limit }) => {
+      try {
+        return performanceResult(
+          await service.getPerformance(jobId.toLowerCase(), { offset, limit })
+        );
+      } catch {
+        return failure();
+      }
+    }
+  );
+
+  server.registerTool(
+    'refresh_market_screen_performance',
+    {
+      title: 'Refresh a bounded set of recommendation observations',
+      description:
+        'Explicitly start a bounded background price refresh for eligible saved US BUY recommendation paper observations. Default 20, maximum 50 observations per request; respects the core refresh lock and returns progress promptly. Poll get_market_screen_performance to read saved updates. This updates local performance state and requests market data, but does not resume screening or place orders. Five-session paper outcomes are separate from actual trading fills and calibrated success probabilities.',
+      inputSchema: refreshMarketScreenPerformanceInput,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ jobId, limit }) => {
+      try {
+        return performanceResult(await service.refreshPerformance(jobId.toLowerCase(), { limit }));
       } catch {
         return failure();
       }

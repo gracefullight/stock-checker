@@ -3,10 +3,13 @@ import {
   controlMarketScreenInput,
   createMarketScreenInput,
   getMarketScreenInput,
+  getMarketScreenPerformanceInput,
   isFinvizScreenSource,
   type MarketScreenService,
+  refreshMarketScreenPerformanceInput,
   registerMarketScreenTools,
 } from '@mcp/market-screen.ts';
+import { fixturePerformance } from '@mcp/test-fixtures/performance.ts';
 import { fixtureScreenMatch } from '@mcp/test-fixtures/screen.ts';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server';
@@ -93,6 +96,8 @@ function serviceFor(value: Snapshot = snapshot()) {
     get: mock(async () => value),
     resume: mock(async () => value),
     pause: mock(async () => value),
+    getPerformance: mock(async () => fixturePerformance()),
+    refreshPerformance: mock(async () => fixturePerformance()),
   } satisfies MarketScreenService;
 }
 
@@ -249,6 +254,8 @@ describe('durable market-screen MCP tools', () => {
         'create_market_screen',
         'get_market_screen',
         'control_market_screen',
+        'get_market_screen_performance',
+        'refresh_market_screen_performance',
       ]);
       expect(tools[0]).toMatchObject({
         annotations: {
@@ -280,6 +287,23 @@ describe('durable market-screen MCP tools', () => {
       });
       expect(tools[2]).toMatchObject({
         annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: true },
+      });
+      expect(tools[3]).toMatchObject({
+        annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            offset: { minimum: 0, maximum: 15000, default: 0 },
+            limit: { minimum: 1, maximum: 100, default: 20 },
+          },
+        },
+      });
+      expect(tools[4]).toMatchObject({
+        annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
+        inputSchema: {
+          additionalProperties: false,
+          properties: { limit: { minimum: 1, maximum: 50, default: 20 } },
+        },
       });
       expect(service.create).not.toHaveBeenCalled();
       expect(service.get).not.toHaveBeenCalled();
@@ -478,13 +502,22 @@ describe('durable market-screen MCP tools', () => {
       );
     });
     await withMarketClient(
-      { create: fail, get: fail, resume: fail, pause: fail },
+      {
+        create: fail,
+        get: fail,
+        resume: fail,
+        pause: fail,
+        getPerformance: fail,
+        refreshPerformance: fail,
+      },
       async (client) => {
         for (const request of [
           { name: 'create_market_screen', arguments: candidates() },
           { name: 'get_market_screen', arguments: { jobId: JOB_ID } },
           { name: 'control_market_screen', arguments: { jobId: JOB_ID, action: 'resume' } },
           { name: 'control_market_screen', arguments: { jobId: JOB_ID, action: 'pause' } },
+          { name: 'get_market_screen_performance', arguments: { jobId: JOB_ID } },
+          { name: 'refresh_market_screen_performance', arguments: { jobId: JOB_ID } },
         ]) {
           const result = await client.callTool(request);
           expect(result.isError).toBe(true);
@@ -495,5 +528,140 @@ describe('durable market-screen MCP tools', () => {
         }
       }
     );
+  });
+
+  test('reads saved paper outcomes and completed sample rates without requesting a refresh', async () => {
+    const service = serviceFor();
+    await withMarketClient(service, async (client) => {
+      const result = await client.callTool({
+        name: 'get_market_screen_performance',
+        arguments: { jobId: JOB_ID.toUpperCase() },
+      });
+      expect(service.getPerformance).toHaveBeenCalledWith(JOB_ID, { offset: 0, limit: 20 });
+      expect(service.refreshPerformance).not.toHaveBeenCalled();
+      expect(service.resume).not.toHaveBeenCalled();
+      expect(service.create).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ isError: false, structuredContent: fixturePerformance() });
+      const text = JSON.stringify(result.content);
+      expect(text).toContain('not actual fills');
+      expect(text).toContain('fifth session close');
+      expect(text).toContain('100.00% (n=1 completed)');
+      expect(text).toContain('Pending entry: 1; open observations: 1; unavailable: 1');
+      expect(text).toContain(
+        '| AAPL | 2026-10-02 | 2026-10-05T13:00:00.000Z | completed | 2026-10-05 | 100.00 | 2026-10-09 | 102.00 | 1.90% | win |'
+      );
+      await client.callTool({
+        name: 'get_market_screen_performance',
+        arguments: { jobId: JOB_ID, offset: 20, limit: 100 },
+      });
+      expect(service.getPerformance).toHaveBeenLastCalledWith(JOB_ID, { offset: 20, limit: 100 });
+    });
+  });
+
+  test('shows no percentage for an empty closed sample and retains pending/unavailable observations', async () => {
+    const value = fixturePerformance();
+    value.summary.completed = 0;
+    value.summary.wins = 0;
+    value.summary.totalRecommendations = 3;
+    value.summary.winRatePct = null;
+    value.summary.averageNetReturnPct = null;
+    value.page.items = value.page.items.filter((row) => row.status !== 'completed');
+    value.page.total = 3;
+    const service = { ...serviceFor(), getPerformance: mock(async () => value) };
+    await withMarketClient(service, async (client) => {
+      const result = await client.callTool({
+        name: 'get_market_screen_performance',
+        arguments: { jobId: JOB_ID },
+      });
+      const text = JSON.stringify(result.content);
+      expect(text).toContain('N/A (n=0 completed)');
+      expect(text).not.toContain('0.00%');
+      expect(text).toContain('unavailable: 1');
+      expect(result.isError).toBe(false);
+    });
+  });
+
+  test('distinguishes an observed zero positive-return rate from an empty sample', async () => {
+    const value = fixturePerformance();
+    value.summary.wins = 0;
+    value.summary.losses = 1;
+    value.summary.winRatePct = 0;
+    value.summary.averageNetReturnPct = -1.1;
+    value.page.items[0] = {
+      ...value.page.items[0]!,
+      exitPrice: 99,
+      grossReturnPct: -1,
+      netReturnPct: -1.1,
+      outcome: 'loss',
+    };
+    await withMarketClient(
+      { ...serviceFor(), getPerformance: mock(async () => value) },
+      async (client) => {
+        const result = await client.callTool({
+          name: 'get_market_screen_performance',
+          arguments: { jobId: JOB_ID },
+        });
+        expect(JSON.stringify(result.content)).toContain('0.00% (n=1 completed)');
+        expect(JSON.stringify(result.content)).toContain('-1.10%');
+      }
+    );
+  });
+
+  test('starts performance refresh separately from screening and returns bounded background progress', async () => {
+    const value = fixturePerformance();
+    value.refresh = { status: 'running', selected: 3, processed: 0, reason: null };
+    const service = { ...serviceFor(), refreshPerformance: mock(async () => value) };
+    await withMarketClient(service, async (client) => {
+      const result = await client.callTool({
+        name: 'refresh_market_screen_performance',
+        arguments: { jobId: JOB_ID },
+      });
+      expect(service.refreshPerformance).toHaveBeenCalledWith(JOB_ID, { limit: 20 });
+      expect(result).toMatchObject({
+        isError: false,
+        structuredContent: { refresh: { status: 'running', selected: 3, processed: 0 } },
+      });
+      expect(JSON.stringify(result.content)).toContain('Refresh: running; 0/3');
+      expect(service.resume).not.toHaveBeenCalled();
+      expect(service.getPerformance).not.toHaveBeenCalled();
+      await client.callTool({
+        name: 'refresh_market_screen_performance',
+        arguments: { jobId: JOB_ID, limit: 50 },
+      });
+      expect(service.refreshPerformance).toHaveBeenLastCalledWith(JOB_ID, { limit: 50 });
+    });
+  });
+
+  test('rejects unsupported performance inputs before saved reads or price updates', async () => {
+    const service = serviceFor();
+    expect(getMarketScreenPerformanceInput.safeParse({ jobId: JOB_ID }).data).toEqual({
+      jobId: JOB_ID,
+      offset: 0,
+      limit: 20,
+    });
+    expect(refreshMarketScreenPerformanceInput.safeParse({ jobId: JOB_ID }).data).toEqual({
+      jobId: JOB_ID,
+      limit: 20,
+    });
+    await withMarketClient(service, async (client) => {
+      for (const request of [
+        { name: 'get_market_screen_performance', arguments: { jobId: '../../jobs' } },
+        { name: 'get_market_screen_performance', arguments: { jobId: JOB_ID, offset: 15001 } },
+        { name: 'get_market_screen_performance', arguments: { jobId: JOB_ID, limit: 101 } },
+        { name: 'get_market_screen_performance', arguments: { jobId: JOB_ID, refresh: true } },
+        { name: 'refresh_market_screen_performance', arguments: { jobId: JOB_ID, limit: 51 } },
+        { name: 'refresh_market_screen_performance', arguments: { jobId: JOB_ID, limit: 0 } },
+        { name: 'refresh_market_screen_performance', arguments: { jobId: JOB_ID, limit: 1.5 } },
+        { name: 'refresh_market_screen_performance', arguments: { jobId: JOB_ID, offset: 20 } },
+        {
+          name: 'refresh_market_screen_performance',
+          arguments: { jobId: JOB_ID, rootDirectory: '/tmp/jobs' },
+        },
+      ])
+        expect((await client.callTool(request)).isError).toBe(true);
+      expect(service.getPerformance).not.toHaveBeenCalled();
+      expect(service.refreshPerformance).not.toHaveBeenCalled();
+      expect(service.resume).not.toHaveBeenCalled();
+    });
   });
 });

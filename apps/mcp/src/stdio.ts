@@ -1,5 +1,6 @@
 import { Console } from 'node:console';
 import { format } from 'node:util';
+import type { MarketScreenService } from '@mcp/market-screen.ts';
 import type {
   DashboardGenerator,
   DashboardLauncher,
@@ -12,7 +13,8 @@ export async function startStdioServer(
   generator?: ReportGenerator,
   dashboardLauncher?: DashboardLauncher,
   dashboardGenerator?: DashboardGenerator,
-  screenGenerator?: ScreenGenerator
+  screenGenerator?: ScreenGenerator,
+  marketScreenService?: MarketScreenService
 ): Promise<StdioServerHandle> {
   process.env.MCP_LOG_STDERR = '1';
   Object.assign(
@@ -28,7 +30,13 @@ export async function startStdioServer(
 
   return serveStdio(
     () =>
-      createStockAnalystServer(generator, dashboardLauncher, dashboardGenerator, screenGenerator),
+      createStockAnalystServer(
+        generator,
+        dashboardLauncher,
+        dashboardGenerator,
+        screenGenerator,
+        marketScreenService
+      ),
     {
       legacy: 'serve',
       onerror: () => {

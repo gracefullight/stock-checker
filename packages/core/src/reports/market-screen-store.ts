@@ -7,6 +7,7 @@ export interface MarketScreenLeaseOwner {
   token: string;
   jobId: string;
   createdAt: string;
+  purpose?: 'market-screen' | 'forward-paper-performance';
 }
 
 export function marketScreenOwnerIsAlive(owner: MarketScreenLeaseOwner): boolean {
@@ -47,6 +48,11 @@ export async function readMarketScreenLease(root: string): Promise<MarketScreenL
       !/^[a-f0-9-]{36}$/.test(owner.jobId)
     )
       throw new Error('Invalid lease');
+    if (
+      owner.purpose !== undefined &&
+      !['market-screen', 'forward-paper-performance'].includes(owner.purpose)
+    )
+      throw new Error('Invalid lease purpose');
     return owner;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -57,7 +63,8 @@ export async function readMarketScreenLease(root: string): Promise<MarketScreenL
 /** A prepared nonempty directory makes competing rename operations exclusive. */
 export async function acquireMarketScreenLease(
   root: string,
-  jobId: string
+  jobId: string,
+  purpose: MarketScreenLeaseOwner['purpose'] = 'market-screen'
 ): Promise<{
   acquired: boolean;
   owner: MarketScreenLeaseOwner;
@@ -69,6 +76,7 @@ export async function acquireMarketScreenLease(
     token: randomUUID(),
     jobId,
     createdAt: new Date().toISOString(),
+    purpose,
   };
   const prepared = path.join(root, `.runner-prepared-${owner.token}`);
   const active = path.join(root, '.runner.lock');

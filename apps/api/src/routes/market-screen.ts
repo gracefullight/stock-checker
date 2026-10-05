@@ -1,8 +1,10 @@
 import {
   getMarketScreenJob,
+  getMarketScreenPerformance,
   listMarketScreenJobs,
   MarketScreenJobNotFoundError,
   pauseMarketScreenJob,
+  refreshMarketScreenPerformance,
   runMarketScreenJob,
 } from '@stock-checker/core/src/reports/market-screen';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -12,6 +14,8 @@ export interface MarketScreenApiService {
   get: typeof getMarketScreenJob;
   pause: typeof pauseMarketScreenJob;
   resume: typeof runMarketScreenJob;
+  getPerformance: typeof getMarketScreenPerformance;
+  refreshPerformance: typeof refreshMarketScreenPerformance;
 }
 
 interface MarketScreenRouteOptions {
@@ -36,6 +40,8 @@ const defaultService: MarketScreenApiService = {
   get: getMarketScreenJob,
   pause: pauseMarketScreenJob,
   resume: runMarketScreenJob,
+  getPerformance: getMarketScreenPerformance,
+  refreshPerformance: refreshMarketScreenPerformance,
 };
 
 const paginationProperties = {
@@ -157,6 +163,74 @@ export const marketScreenRoutes: FastifyPluginAsync<MarketScreenRouteOptions> = 
     async (request, reply) => {
       try {
         return reply.send(await service.get(request.params.jobId.toLowerCase(), request.query));
+      } catch (error) {
+        return failedRequest(error, request, reply);
+      }
+    }
+  );
+
+  app.get<{ Params: JobParams; Querystring: ListQuery }>(
+    '/market-screens/:jobId/performance',
+    {
+      schema: {
+        params: jobParamsSchema,
+        querystring: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ...paginationProperties,
+            offset: { type: 'integer', minimum: 0, maximum: 15000, default: 0 },
+          },
+        },
+      },
+      preValidation: queryGuard(['offset', 'limit']),
+    },
+    async (request, reply) => {
+      try {
+        return reply.send(
+          await service.getPerformance(request.params.jobId.toLowerCase(), request.query)
+        );
+      } catch (error) {
+        return failedRequest(error, request, reply);
+      }
+    }
+  );
+
+  app.post<{ Params: JobParams }>(
+    '/market-screens/:jobId/performance/refresh',
+    {
+      schema: {
+        params: jobParamsSchema,
+        querystring: { type: 'object', additionalProperties: false, properties: {} },
+      },
+      onRequest: mutationGuard,
+      preValidation: queryGuard([]),
+    },
+    async (request, reply) => {
+      const body = request.body;
+      if (
+        body !== undefined &&
+        (body === null ||
+          typeof body !== 'object' ||
+          Array.isArray(body) ||
+          Object.keys(body).some((key) => key !== 'limit') ||
+          ('limit' in body &&
+            (typeof body.limit !== 'number' ||
+              !Number.isInteger(body.limit) ||
+              body.limit < 1 ||
+              body.limit > 50)))
+      ) {
+        return reply.status(400).send({
+          error: 'Performance refresh accepts only an integer limit between 1 and 50.',
+        });
+      }
+      const options = body as { limit?: number } | undefined;
+      try {
+        return reply.send(
+          await service.refreshPerformance(request.params.jobId.toLowerCase(), {
+            limit: options?.limit ?? 20,
+          })
+        );
       } catch (error) {
         return failedRequest(error, request, reply);
       }

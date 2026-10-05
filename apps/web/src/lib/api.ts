@@ -2,6 +2,8 @@ import type {
   MarketScreenError,
   MarketScreenJob,
   MarketScreenJobSnapshot,
+  MarketScreenPerformanceRow,
+  MarketScreenPerformanceSnapshot,
 } from '@stock-checker/core/src/reports/market-screen.ts';
 import type { StockScreenMatch } from '@stock-checker/core/src/reports/stock-screen.ts';
 import type { TickerResult } from '@stock-checker/core/src/types';
@@ -12,7 +14,13 @@ import axios, { type AxiosError } from 'axios';
 //   process.env.API_URL (server-only)  →  process.env.NEXT_PUBLIC_API_URL  →  localhost
 const API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5101';
 
-export type { MarketScreenJob, MarketScreenJobSnapshot, TickerResult };
+export type {
+  MarketScreenJob,
+  MarketScreenJobSnapshot,
+  MarketScreenPerformanceRow,
+  MarketScreenPerformanceSnapshot,
+  TickerResult,
+};
 
 export interface FearGreedResult {
   value: number;
@@ -455,3 +463,160 @@ export const pauseMarketScreen = (jobId: string, signal?: AbortSignal) =>
   controlMarketScreen(jobId, 'pause', signal);
 export const resumeMarketScreen = (jobId: string, signal?: AbortSignal) =>
   controlMarketScreen(jobId, 'resume', signal);
+
+const paperStatuses = new Set([
+  'pending',
+  'open',
+  'completed',
+  'unavailable',
+  'ineligible',
+  'legacy-untracked',
+]);
+const nullableFinite = (value: unknown) =>
+  value === null || (typeof value === 'number' && Number.isFinite(value));
+const nullablePrice = (value: unknown) =>
+  value === null || (typeof value === 'number' && Number.isFinite(value) && value > 0);
+const nullableTimestamp = (value: unknown) =>
+  value === null || (typeof value === 'string' && Number.isFinite(Date.parse(value)));
+const nullableSession = (value: unknown) =>
+  value === null ||
+  (typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString().slice(0, 10) === value);
+
+function validPaperRow(value: unknown): value is MarketScreenPerformanceRow {
+  if (!record(value)) return false;
+  return (
+    typeof value.recommendationId === 'string' &&
+    typeof value.ticker === 'string' &&
+    paperStatuses.has(String(value.status)) &&
+    nullableSession(value.dataAsOf) &&
+    nullableTimestamp(value.recommendedAt) &&
+    nullableTimestamp(value.updatedAt) &&
+    nullableSession(value.entryDate) &&
+    nullableSession(value.exitDate) &&
+    nullablePrice(value.entryPrice) &&
+    nullablePrice(value.exitPrice) &&
+    nullableFinite(value.grossReturnPct) &&
+    nullableFinite(value.netReturnPct) &&
+    (value.reason === null || typeof value.reason === 'string') &&
+    (value.status === 'completed'
+      ? ['win', 'loss', 'breakeven'].includes(String(value.outcome)) &&
+        value.netReturnPct !== null &&
+        value.grossReturnPct !== null &&
+        value.entryDate !== null &&
+        value.exitDate !== null &&
+        value.entryPrice !== null &&
+        value.exitPrice !== null
+      : value.outcome === null && value.netReturnPct === null && value.grossReturnPct === null)
+  );
+}
+
+function checkedPaperSnapshot(value: unknown, jobId: string): MarketScreenPerformanceSnapshot {
+  const invalid = () => new Error('Invalid paper-performance response; retry saved outcomes.');
+  if (
+    !record(value) ||
+    value.jobId !== jobId ||
+    !nullableTimestamp(value.updatedAt) ||
+    !record(value.policy) ||
+    !record(value.summary) ||
+    !record(value.page) ||
+    !record(value.refresh)
+  )
+    throw invalid();
+  const { policy, summary, page, refresh } = value;
+  const counts = [
+    'totalRecommendations',
+    'completed',
+    'wins',
+    'losses',
+    'breakeven',
+    'pending',
+    'open',
+    'unavailable',
+    'ineligible',
+    'legacyUntracked',
+  ];
+  if (!counts.every((key) => nonnegativeInteger(summary[key]))) throw invalid();
+  const s = summary as unknown as MarketScreenPerformanceSnapshot['summary'];
+  if (
+    policy.id !== 'us-buy-next-open-five-session-v1' ||
+    policy.mode !== 'forward-paper' ||
+    policy.timezone !== 'America/New_York' ||
+    policy.entry !== 'next-session-open' ||
+    policy.exit !== 'fifth-session-close' ||
+    policy.horizonSessions !== 5 ||
+    policy.costBpsRoundTrip !== 10 ||
+    policy.adjustment !== 'same-fetched-adjusted-series' ||
+    s.completed !== s.wins + s.losses + s.breakeven ||
+    s.totalRecommendations !==
+      s.completed + s.pending + s.open + s.unavailable + s.ineligible + s.legacyUntracked ||
+    (s.completed === 0
+      ? s.winRatePct !== null || s.averageNetReturnPct !== null
+      : typeof s.winRatePct !== 'number' ||
+        !Number.isFinite(s.winRatePct) ||
+        Math.abs(s.winRatePct - (s.wins / s.completed) * 100) > 0.000001 ||
+        typeof s.averageNetReturnPct !== 'number' ||
+        !Number.isFinite(s.averageNetReturnPct)) ||
+    !nonnegativeInteger(page.offset) ||
+    !nonnegativeInteger(page.total) ||
+    !Number.isInteger(page.limit) ||
+    Number(page.limit) < 1 ||
+    Number(page.limit) > 100 ||
+    typeof page.hasMore !== 'boolean' ||
+    !Array.isArray(page.items) ||
+    page.items.length > Number(page.limit) ||
+    !page.items.every(validPaperRow) ||
+    !['idle', 'running'].includes(String(refresh.status)) ||
+    !nonnegativeInteger(refresh.selected) ||
+    !nonnegativeInteger(refresh.processed) ||
+    refresh.processed > refresh.selected ||
+    (refresh.reason !== null && typeof refresh.reason !== 'string')
+  )
+    throw invalid();
+  return value as unknown as MarketScreenPerformanceSnapshot;
+}
+
+function paperPageOptions(offset: number, limit: number, maximum: number) {
+  if (!nonnegativeInteger(offset) || !Number.isInteger(limit) || limit < 1 || limit > maximum) {
+    throw new Error('Invalid paper-performance page or refresh limit.');
+  }
+}
+
+/** Reads saved outcomes only; this request does not fetch market prices. */
+export async function getMarketScreenPerformance(
+  jobId: string,
+  options: { offset?: number; limit?: number; signal?: AbortSignal } = {}
+): Promise<MarketScreenPerformanceSnapshot> {
+  const offset = options.offset ?? 0;
+  const limit = options.limit ?? 20;
+  paperPageOptions(offset, limit, 100);
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  const value = await apiFetch<unknown>(
+    `/api/market-screens/${encodeURIComponent(jobId)}/performance?${params}`,
+    { signal: options.signal }
+  );
+  const snapshot = checkedPaperSnapshot(value, jobId);
+  if (snapshot.page.offset !== offset || snapshot.page.limit !== limit)
+    throw new Error('Invalid paper-performance response; retry saved outcomes.');
+  return snapshot;
+}
+
+/** Starts a bounded background price refresh after an explicit user action. */
+export async function refreshMarketScreenPerformance(
+  jobId: string,
+  options: { limit?: number; signal?: AbortSignal } = {}
+): Promise<MarketScreenPerformanceSnapshot> {
+  const limit = options.limit ?? 20;
+  paperPageOptions(0, limit, 50);
+  const value = await apiFetch<unknown>(
+    `/api/market-screens/${encodeURIComponent(jobId)}/performance/refresh`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ limit }),
+      signal: options.signal,
+    }
+  );
+  return checkedPaperSnapshot(value, jobId);
+}

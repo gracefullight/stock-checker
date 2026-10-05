@@ -4,6 +4,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DateTime } from 'luxon';
 import {
+  type MarketScreenPerformanceRegistration,
+  registerMarketScreenRecommendation,
+} from '@/reports/market-screen-performance';
+import {
   acquireMarketScreenLease,
   type MarketScreenLeaseOwner,
   marketScreenOwnerIsAlive,
@@ -13,6 +17,17 @@ import {
 } from '@/reports/market-screen-store';
 import { projectMatch, type StockScreenMatch } from '@/reports/stock-screen';
 import type { analyzeTickerContext } from '@/services/ticker-analysis';
+
+export {
+  getMarketScreenPerformance,
+  type MarketScreenPerformanceDependencies,
+  type MarketScreenPerformancePolicy,
+  type MarketScreenPerformanceRow,
+  type MarketScreenPerformanceSnapshot,
+  type MarketScreenPerformanceStatus,
+  type MarketScreenPerformanceSummary,
+  refreshMarketScreenPerformance,
+} from '@/reports/market-screen-performance';
 
 type Decision = 'BUY' | 'SELL' | 'HOLD' | 'ALL';
 type PageKind = 'matches' | 'excluded' | 'unavailable';
@@ -142,6 +157,7 @@ interface SavedResult {
   kind: PageKind;
   completedAt: string;
   item: StockScreenMatch | MarketScreenError;
+  forwardPerformance?: MarketScreenPerformanceRegistration;
 }
 interface Runtime {
   jobId: string;
@@ -397,7 +413,10 @@ async function refreshJobSummary(
     job.progress.total - job.progress.analyzed - job.progress.unavailable - job.progress.inFlight;
   if (!terminal(job.status)) {
     const lease = sharedLease === undefined ? await readMarketScreenLease(root) : sharedLease;
-    const isActive = lease?.jobId === id && marketScreenOwnerIsAlive(lease);
+    const isActive =
+      lease?.jobId === id &&
+      lease.purpose !== 'forward-paper-performance' &&
+      marketScreenOwnerIsAlive(lease);
     if (control.desiredStatus === 'paused') {
       job.status = 'paused';
       job.pauseReason = control.reason;
@@ -573,6 +592,12 @@ async function execute(
                 completedAt: timestamp(),
                 item: match,
               };
+              if (saved.kind === 'matches' && match.decision === 'BUY') {
+                saved.forwardPerformance = registerMarketScreenRecommendation(
+                  match.dataAsOf,
+                  saved.completedAt
+                );
+              }
             } catch (error) {
               if (rateLimited(error)) {
                 fatalStop = true;
@@ -856,12 +881,15 @@ export async function runMarketScreenJob(
   }
   const lease = await acquireMarketScreenLease(root, jobId);
   if (!lease.acquired) {
-    const sameJob = lease.owner.jobId === jobId;
+    const sameJob =
+      lease.owner.jobId === jobId && lease.owner.purpose !== 'forward-paper-performance';
     await writeMarketScreenJson(jobFile(root, jobId, 'control.json'), {
       desiredStatus: sameJob ? 'running' : 'paused',
       reason: sameJob
         ? null
-        : 'Another market-screen job is active; resume after its workers finish.',
+        : lease.owner.purpose === 'forward-paper-performance'
+          ? 'A paper performance refresh is active; resume after its worker finishes.'
+          : 'Another market-screen job is active; resume after its workers finish.',
     } satisfies Control);
     return snapshot(root, jobId);
   }

@@ -1,5 +1,6 @@
 import { mock } from 'bun:test';
 import { startStdioServer } from '@mcp/stdio.ts';
+import { fixturePerformance } from '@mcp/test-fixtures/performance.ts';
 import { fixtureReport } from '@mcp/test-fixtures/report.ts';
 import { fixtureScreen, fixtureScreenMatch } from '@mcp/test-fixtures/screen.ts';
 
@@ -105,5 +106,45 @@ await startStdioServer(
       },
     };
     return { screen, markdown: '# Offline screen fixture' };
+  },
+  {
+    async create() {
+      throw new Error('Market-screen creation is not used by this offline fixture.');
+    },
+    async get() {
+      throw new Error('Market-screen reads are not used by this offline fixture.');
+    },
+    async resume() {
+      throw new Error('Market-screen resume is not used by this offline fixture.');
+    },
+    async pause() {
+      throw new Error('Market-screen pause is not used by this offline fixture.');
+    },
+    async getPerformance(jobId, options) {
+      globalThis.console.info('fixture saved performance read on stderr');
+      const value = fixturePerformance();
+      return {
+        ...value,
+        jobId,
+        page: { ...value.page, offset: options?.offset ?? 0, limit: options?.limit ?? 20 },
+      };
+    },
+    async refreshPerformance(jobId, options) {
+      globalThis.console.info('fixture performance refresh on stderr');
+      const value = fixturePerformance();
+      return {
+        ...value,
+        jobId,
+        refresh: {
+          status: 'running' as const,
+          selected: Math.min(
+            options?.limit ?? 20,
+            value.summary.pending + value.summary.open + value.summary.unavailable
+          ),
+          processed: 0,
+          reason: null,
+        },
+      };
+    },
   }
 );

@@ -250,6 +250,8 @@ an available browser MCP or a supplied authorized export.
 | `create_market_screen` | Save a candidate manifest and create a durable job | Starts analysis by default; `autoStart: false` saves it paused |
 | `get_market_screen` | Read progress, provenance, and a result page | Reads saved data only |
 | `control_market_screen` | Pause or resume an existing job | `resume` starts remaining analyses |
+| `get_market_screen_performance` | Read saved recommendation outcomes and their win-rate sample | Reads saved data only |
+| `refresh_market_screen_performance` | Update a bounded batch of recommendation outcomes | Fetches later market prices explicitly |
 
 ### Ticker analyst reports
 
@@ -462,6 +464,53 @@ Use the job's history window for candidate detail reports. If the runner process
 exits, restart it and explicitly resume the saved job; simply opening the web
 page or reconnecting the MCP does not restart analysis.
 
+#### Forward paper performance
+
+New matched BUY recommendations retain their recommendation time and signal
+session. Their forward paper outcomes are measured separately from the ticker
+report's historical backtest rates. Existing recommendations recorded before
+tracking was introduced are identified as untracked legacy records and excluded
+from the new validation sample.
+
+The fixed policy uses the next regular US trading session's open as a simulated
+entry and the fifth trading session's completed close, including the entry
+session, as the exit. Net return subtracts 10 bps (0.1%) in total round-trip
+costs. A positive net return is a win; a negative return is a loss. Recommendations
+issued after their intended entry open are ineligible for this policy.
+Entry and exit use the same fetched adjustment scale. The five-session policy
+holds through ATR stop/target touches; its return measures the fixed holding
+period rather than an early stop or target exit.
+The scheduler uses the [published NYSE calendar](https://www.nyse.com/trade/hours-calendars)
+for 2026–2028, including holidays and early closes. Windows outside that verified
+calendar remain unavailable until calendar support is updated.
+
+Only completed outcomes enter the win-rate denominator. Pending entries, open
+positions, missing prices, and provider errors remain separate. With no completed
+sample, the win rate is unavailable. The summary reports sample size alongside
+wins, losses, and average net return; this average is not a portfolio return.
+These are paper observations from market prices, not brokerage fills.
+
+The web **MARKET SCREEN** page and `get_market_screen_performance` read cached
+outcomes. Use **Refresh performance** or `refresh_market_screen_performance` to
+update a bounded batch explicitly. Reads do not start scans or fetch later
+prices. Completed outcomes stay fixed across subsequent refreshes and restarts.
+
+Replace `JOB_ID` with the saved job UUID. Read its performance through
+`get_market_screen_performance`:
+
+```json
+{"jobId":"JOB_ID","offset":0,"limit":20}
+```
+
+Request a batch update through `refresh_market_screen_performance`:
+
+```json
+{"jobId":"JOB_ID","limit":20}
+```
+
+Each update processes at most 50 recommendations, with a default batch of 20.
+Read the returned refresh status and use another update for remaining records.
+
 #### Market-screen API
 
 The [web dashboard](#web-dashboard) uses these endpoints:
@@ -472,13 +521,16 @@ The [web dashboard](#web-dashboard) uses these endpoints:
 | GET | `/api/market-screens/:jobId?kind=matches&offset=0&limit=20` | Job summary and a page of `matches`, `excluded`, or `unavailable` results |
 | POST | `/api/market-screens/:jobId/resume` | Current snapshot after requesting resume |
 | POST | `/api/market-screens/:jobId/pause` | Current snapshot after requesting pause |
+| GET | `/api/market-screens/:jobId/performance?offset=0&limit=20` | Cached forward paper summary and paginated recommendation outcomes |
+| POST | `/api/market-screens/:jobId/performance/refresh` | Updated performance snapshot after an explicit bounded refresh |
 
-Both GET endpoints default to `offset=0` and `limit=20`; `limit` accepts 1–100.
+GET endpoints default to `offset=0` and `limit=20`; `limit` accepts 1–100.
 Result offsets are bounded to 0–15000. Job lists are sorted by creation time,
-newest first. Result ranking follows the job's decision filter. Control endpoints
+newest first. Result ranking follows the job's decision filter. Pause/resume endpoints
 accept no body or an empty JSON object `{}`; unknown query parameters or control
 options return `400`. Invalid UUIDs return `400`, missing jobs `404`, and rejected
-browser control origins `403`.
+browser control origins `403`. Performance refresh accepts an optional
+`limit` of 1–50, defaulting to 20.
 
 ```bash
 # Read saved jobs without starting analysis

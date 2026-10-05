@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress, ProgressLabel, ProgressValue } from '@/components/ui/progress';
+import { MarketScreenPerformance } from '@/features/market-screen/components/market-screen-performance';
 import { MarketScreenResults } from '@/features/market-screen/components/market-screen-results';
 import {
   MARKET_SCREEN_PAGE_SIZE,
@@ -346,6 +347,7 @@ export function MarketScreenDashboard() {
               />
             </CardContent>
           </Card>
+          <MarketScreenPerformance key={job.id} jobId={job.id} />
         </>
       )}
     </div>
