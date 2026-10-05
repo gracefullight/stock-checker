@@ -648,21 +648,82 @@ describe('durable Finviz candidate jobs', () => {
   });
 
   it('enforces minimum per-worker pacing while preserving the two-worker global limit', async () => {
-    const starts: number[] = [];
+    const nativeSetTimeout = globalThis.setTimeout;
+    const waitForIO = async (check: () => Promise<boolean> | boolean) => {
+      for (let attempt = 0; attempt < 500; attempt++) {
+        if (await check()) return;
+        await new Promise<void>((resolve) => nativeSetTimeout(resolve, 5));
+      }
+      throw new Error('Pacing fixture did not settle');
+    };
+    const gates: Record<string, ReturnType<typeof blocked>> = {
+      ONE: blocked(),
+      TWO: blocked(),
+      THREE: blocked(),
+      FOUR: blocked(),
+    };
+    const starts = new Map<string, number>();
+    let active = 0;
+    let peak = 0;
+    const initialTime = Date.now();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(initialTime);
     analyze.mockImplementation(async (ticker) => {
-      starts.push(Date.now());
-      return context(ticker);
+      starts.set(ticker, Date.now() - initialTime);
+      active++;
+      peak = Math.max(peak, active);
+      // Filesystem checkpoints can stagger the initial workers. Hold both analyses
+      // and make that skew explicit instead of comparing unrelated worker clocks.
+      if (ticker === 'ONE') vi.setSystemTime(initialTime + 20);
+      try {
+        await gates[ticker].gate;
+        return context(ticker);
+      } finally {
+        active--;
+      }
     });
-    const started = await createMarketScreenJob(input(['ONE', 'TWO', 'THREE', 'FOUR']), {
-      ...deps(),
-      minIntervalMs: 50,
-    });
-    ids.push(started.job.id);
-    await settled(started.job.id);
+    try {
+      const started = await createMarketScreenJob(input(['ONE', 'TWO', 'THREE', 'FOUR']), {
+        ...deps(),
+        minIntervalMs: 50,
+      });
+      ids.push(started.job.id);
+      await waitForIO(() => starts.size === 2);
+      expect(starts.get('ONE')).toBe(0);
+      expect(starts.get('TWO')).toBe(20);
 
-    expect(starts).toHaveLength(4);
-    expect(starts[2] - Math.max(starts[0], starts[1])).toBeGreaterThanOrEqual(40);
-    expect(starts[3] - Math.min(starts[0], starts[1])).toBeGreaterThanOrEqual(40);
+      // TWO stays blocked, so THREE must reuse ONE's worker at its own t=50.
+      gates.ONE.release();
+      await waitForIO(() => vi.getTimerCount() === 1);
+      await vi.advanceTimersByTimeAsync(29);
+      expect(starts.has('THREE')).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await waitForIO(() => starts.has('THREE'));
+      expect(starts.get('THREE')).toBe(50);
+
+      // THREE now stays blocked, forcing FOUR onto TWO's worker at t=70.
+      gates.TWO.release();
+      await waitForIO(() => vi.getTimerCount() === 1);
+      await vi.advanceTimersByTimeAsync(19);
+      expect(starts.has('FOUR')).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await waitForIO(() => starts.has('FOUR'));
+      expect(starts.get('FOUR')).toBe(70);
+      expect((starts.get('THREE') as number) - (starts.get('ONE') as number)).toBe(50);
+      expect((starts.get('FOUR') as number) - (starts.get('TWO') as number)).toBe(50);
+      expect(peak).toBe(2);
+      expect(active).toBe(2);
+
+      gates.THREE.release();
+      gates.FOUR.release();
+      await waitForIO(async () => (await readMarketScreenLease(root)) === null);
+      expect((await getMarketScreenJob(started.job.id, {}, deps())).job.status).toBe('completed');
+      expect(analyze).toHaveBeenCalledTimes(4);
+    } finally {
+      for (const gate of Object.values(gates)) gate.release();
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
   });
 
   it('releases an acquired lease if control-file setup fails before any worker starts', async () => {
