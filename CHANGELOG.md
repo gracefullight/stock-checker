@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/gracefullight/stock-checker/compare/v0.1.1...v0.2.0) (2026-10-05)
+
+
+### Features
+
+* add whatsapp stock signal and screening notifications ([be08793](https://github.com/gracefullight/stock-checker/commit/be08793ba314642c9fe7f7ea21672d0c2d03df2c))
+
 ## [0.1.1](https://github.com/gracefullight/stock-checker/compare/v0.1.0...v0.1.1) (2026-10-05)
 
 
