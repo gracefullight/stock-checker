@@ -22,6 +22,7 @@
 - `mise run finance:test`: Run the offline Python finance regressions.
 - `mise run mcp`: Run the local stock analyst MCP over stdio; reserve stdout for JSON-RPC.
 - `mise run typecheck:mcp`, `mise run test:mcp`: Check the MCP integration.
+- `mise run release:test`: Check release PR validation, Bun version synchronization, and merge guards.
 - Slack alerts: `SLACK_WEBHOOK_URL=... mise run predict -- --ticker=AAPL` or `--slack-webhook=...`.
 
 ## Coding Style & Naming Conventions
@@ -42,6 +43,7 @@
 - Commits: Follow Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`). Examples in history: `feat: add INTC and UPST tickers`, `fix: notify slack after csv write`.
 - PRs: Include a concise description, linked issue (if any), and a sample run (command used plus snippet of CSV output or logs). Note any changes affecting the GH Action.
 - CI: Ensure the nightly workflow continues to succeed without extra setup (no new required secrets).
+- Releases: Main pushes generate a Release Please PR, validate its exact commit, automatically squash-merge passing version changes, and create the tag/GitHub Release. Keep root/workspace versions and `bun.lock` synchronized.
 
 ## Security & Configuration Tips
 - Do not commit secrets. Pass Slack webhooks via env vars or GitHub Secrets.

@@ -12,6 +12,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import type { generateStockAnalystReport } from '@stock-checker/core/src/reports/stock-analyst.ts';
 import type { generateStockScreen } from '@stock-checker/core/src/reports/stock-screen.ts';
 import { z } from 'zod/v4';
+import packageMetadata from '../package.json' with { type: 'json' };
 
 export type ReportGenerator = typeof generateStockAnalystReport;
 export type DashboardLauncher = typeof openStockDashboard;
@@ -94,7 +95,7 @@ export function createStockAnalystServer(
   marketScreenService?: MarketScreenService
 ): McpServer {
   const server = new McpServer(
-    { name: 'stock-checker', version: '0.0.0' },
+    { name: 'stock-checker', version: packageMetadata.version },
     { instructions: SERVER_INSTRUCTIONS }
   );
 

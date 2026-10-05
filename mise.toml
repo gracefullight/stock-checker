@@ -123,6 +123,10 @@ description = "Build all apps"
 depends = ["build:api", "build:web"]
 
 # ── Quality ───────────────────────────────────────────────────
+[tasks."release:test"]
+description = "Test release PR validation, lockfile synchronization, and merge guards"
+run = "node --test .github/scripts/release.test.cjs"
+
 [tasks.lint]
 description = "Lint entire monorepo"
 depends = ["finance:lint", "finance:format:check"]
@@ -177,7 +181,7 @@ run = "bun run test"
 
 [tasks.test]
 description = "Run all tests in parallel"
-depends = ["test:core", "test:api", "test:web", "test:mcp", "finance:test"]
+depends = ["test:core", "test:api", "test:web", "test:mcp", "finance:test", "release:test"]
 
 [tasks."test:watch"]
 description = "Run core tests in watch mode"

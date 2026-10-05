@@ -203,6 +203,35 @@ and staging unchanged. Fix reported issues and stage the changes before retrying
 the commit. The commit-message hook checks co-author addresses against the
 repository allowlist.
 
+## Releases
+
+Every `main` push runs [Release Please](.github/workflows/release.yml). It creates
+or updates a release PR, synchronizes the root and four workspace versions plus
+`bun.lock`, and runs lint, type checks, and offline tests against that exact PR
+commit. Passing release PRs are squash-merged automatically; the same workflow
+then creates the `vX.Y.Z` tag and GitHub Release. No additional token or secret is
+required. MCP server discovery reads its version from its package manifest.
+
+Use Conventional Commits: `feat:` increments the minor version, `fix:` increments
+the patch version, and `!` or a `BREAKING CHANGE:` footer increments the major
+version. Documented maintenance types (`docs`, `test`, `ci`, `chore`, `build`,
+`perf`, `refactor`, `style`, and `revert`) also produce patch releases. Commits
+without a recognized type produce no release by themselves. The first release
+starts at `0.1.0`; its changelog starts when this automation was introduced.
+
+The workflow merges only its generated same-repository release PR, after checking
+that changes contain only release metadata and workspace versions. If quality
+checks fail or `main` / the PR head changes during validation, the PR stays open.
+A later `main` push or manual **Release Please → Run workflow** retries it. The
+workflow also recovers a merged release whose tag creation previously failed.
+
+Release configuration lives in [release-please-config.json](release-please-config.json)
+and [.release-please-manifest.json](.release-please-manifest.json). Run
+`mise run release:test` for the merge and lockfile regression checks. GitHub Actions
+must allow creating pull requests under **Settings → Actions → General → Workflow
+permissions**. If branch protection later adds required PR checks or reviews,
+adapt this flow to satisfy those rules before enabling automatic releases.
+
 ## Configuration
 
 Yahoo data does not require an API key. The data-provider keys below are optional;

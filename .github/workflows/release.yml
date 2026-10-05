@@ -1,0 +1,147 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      number: ${{ steps.prepare.outputs.number }}
+      head_sha: ${{ steps.prepare.outputs.head_sha }}
+      base_sha: ${{ steps.prepare.outputs.base_sha }}
+      version: ${{ steps.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check this run still targets the current main commit
+        id: current
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { data } = await github.rest.git.getRef({
+              ...context.repo, ref: 'heads/main'
+            });
+            core.setOutput('current', data.object.sha === context.sha);
+            if (data.object.sha !== context.sha) {
+              core.notice('A newer main push will handle this release.');
+            }
+      - name: Create or update the release pull request
+        if: steps.current.outputs.current == 'true'
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Validate release changes and synchronize Bun workspace versions
+        if: steps.current.outputs.current == 'true'
+        id: prepare
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+        with:
+          script: |
+            const { findReleasePrNumber, prepareRelease } = require('./.github/scripts/release.cjs');
+            const prNumber = await findReleasePrNumber({
+              github, context, prOutput: process.env.RELEASE_PR
+            });
+            if (!prNumber) {
+              core.notice('No release-worthy changes or open release pull request.');
+              return;
+            }
+            const release = await prepareRelease({
+              github, context, core,
+              prNumber,
+              expectedBaseSha: context.sha
+            });
+            core.setOutput('number', release.prNumber);
+            core.setOutput('head_sha', release.headSha);
+            core.setOutput('base_sha', release.baseSha);
+            core.setOutput('version', release.version);
+
+  quality:
+    needs: prepare
+    if: needs.prepare.outputs.number != ''
+    uses: ./.github/workflows/quality.yml
+    with:
+      ref: ${{ needs.prepare.outputs.head_sha }}
+
+  release:
+    needs: [prepare, quality]
+    if: needs.prepare.outputs.number != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Squash merge the exact release commit that passed quality checks
+        id: merge
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_PR_NUMBER: ${{ needs.prepare.outputs.number }}
+          RELEASE_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          RELEASE_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+        with:
+          script: |
+            const { mergeRelease } = require('./.github/scripts/release.cjs');
+            const merged = await mergeRelease({
+              github, context, core,
+              prNumber: Number(process.env.RELEASE_PR_NUMBER),
+              expectedHeadSha: process.env.RELEASE_HEAD_SHA,
+              expectedBaseSha: process.env.RELEASE_BASE_SHA
+            });
+            core.setOutput('sha', merged.sha);
+      # GITHUB_TOKEN merges do not trigger another push workflow.
+      - name: Create the version tag and GitHub Release after merging
+        id: publish
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
+      - name: Verify the published tag matches the merged release commit
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_MERGE_SHA: ${{ steps.merge.outputs.sha }}
+        with:
+          script: |
+            const tag = `v${process.env.RELEASE_VERSION}`;
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              ...context.repo, tag
+            });
+            const { data: ref } = await github.rest.git.getRef({
+              ...context.repo, ref: `tags/${tag}`
+            });
+            let target = ref.object;
+            if (target.type === 'tag') {
+              const { data } = await github.rest.git.getTag({
+                ...context.repo, tag_sha: target.sha
+              });
+              target = data.object;
+            }
+            if (release.draft || release.tag_name !== tag ||
+                target.type !== 'commit' || target.sha !== process.env.RELEASE_MERGE_SHA) {
+              throw new Error('Published release does not match the validated release commit.');
+            }
+            await core.summary.addLink(tag, release.html_url).write();

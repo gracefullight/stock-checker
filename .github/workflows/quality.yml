@@ -15,6 +15,10 @@ on:
       - "biome.json"
       - "mise.toml"
       - ".github/workflows/quality.yml"
+      - ".github/workflows/release.yml"
+      - ".github/scripts/**"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
   pull_request:
     paths:
       - "apps/**"
@@ -28,7 +32,17 @@ on:
       - "biome.json"
       - "mise.toml"
       - ".github/workflows/quality.yml"
+      - ".github/workflows/release.yml"
+      - ".github/scripts/**"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact commit to validate before automatically merging a release
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -38,6 +52,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
       - uses: jdx/mise-action@v5.0.1
       - name: Install locked workspace dependencies
         run: mise run install:ci

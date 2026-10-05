@@ -8,6 +8,7 @@ import {
 import { fixtureReport, fixtureValuation } from '@mcp/test-fixtures/report.ts';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
+import packageMetadata from '../package.json' with { type: 'json' };
 
 async function withClient(
   generator: ReportGenerator,
@@ -101,6 +102,10 @@ describe('analyze_stock MCP tool', () => {
       },
       async (client) => {
         const { tools } = await client.listTools();
+        expect(client.getServerVersion()).toEqual({
+          name: 'stock-checker',
+          version: packageMetadata.version,
+        });
         expect(tools).toHaveLength(10);
         expect(tools[0]).toMatchObject({
           name: 'analyze_stock',
