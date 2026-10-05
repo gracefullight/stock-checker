@@ -130,12 +130,21 @@ async function fixture(t, overrides = {}) {
       assert.equal(arguments_[2], plistPath);
       state.loaded = true;
       state.origin = plistPath;
+    } else if (command === 'kickstart') {
+      if (argument === '-k') {
+        assert.equal(arguments_[2], target);
+        assert.equal(arguments_.length, 3);
+        state.pid++;
+      } else {
+        assert.equal(argument, target);
+        assert.equal(arguments_.length, 2);
+      }
     } else {
       assert.equal(argument, target);
       if (command === 'enable') state.disabled = false;
       else if (command === 'disable') state.disabled = true;
       else if (command === 'bootout') state.loaded = false;
-      else assert.equal(command, 'kickstart');
+      else assert.fail(`Unexpected launchctl subcommand: ${command}`);
     }
     return { stdout: '', stderr: '' };
   }
@@ -169,6 +178,14 @@ function lifecycleCalls(calls) {
     .map(({ arguments_ }) => arguments_);
 }
 
+test('explicit restart is accepted as a managed lifecycle command', () => {
+  assert.deepEqual(parseArguments(['restart', 'whatsapp']), {
+    command: 'restart',
+    service: 'whatsapp',
+    link: false,
+  });
+});
+
 test('CLI accepts only the WhatsApp service and explicit install pairing', () => {
   assert.deepEqual(parseArguments(['install']), {
     command: 'install',
@@ -187,16 +204,17 @@ test('CLI accepts only the WhatsApp service and explicit install pairing', () =>
   });
   for (const arguments_ of [
     [],
-    ['restart'],
+    ['reload'],
     ['install', 'api'],
     ['status', '--link'],
     ['install', '--link', '--link'],
     ['start', 'whatsapp', 'whatsapp'],
     ['install', '--all'],
+    ['restart', '--link'],
   ]) {
     assert.throws(() => parseArguments(arguments_), {
       code:
-        arguments_.length === 0 || arguments_[0] === 'restart'
+        arguments_.length === 0 || arguments_[0] === 'reload'
           ? 'invalid-command'
           : 'invalid-arguments',
     });
@@ -353,6 +371,72 @@ test('stopping twice avoids a nonexistent bootout and leaves the managed definit
   assert.equal((await setup.manager.status()).installed, true);
 });
 
+test('restart targets the existing process while preserving pairing mode and private configuration', async (t) => {
+  for (const link of [false, true]) {
+    const setup = await fixture(t);
+    await setup.manager.install({ link });
+    const originalConfiguration = await setup.readPlist();
+    const originalInode = (await fs.stat(setup.plistPath)).ino;
+    const files = [
+      path.join(setup.projectRoot, 'data/whatsapp/creds.json'),
+      path.join(setup.projectRoot, 'data/whatsapp/gateway-token'),
+      path.join(setup.projectRoot, '.env.whatsapp.local'),
+    ];
+    await fs.mkdir(path.dirname(files[0]), { recursive: true });
+    for (const file of files)
+      await fs.writeFile(file, 'private-fixture-preserved', { mode: 0o600 });
+    setup.calls.length = 0;
+    const originalPid = setup.state.pid;
+    const result = await main(['restart', 'whatsapp'], setup.options);
+    const target = `gui/${setup.options.uid}/${SERVICE_LABEL}`;
+    assert.deepEqual(lifecycleCalls(setup.calls), [
+      ['enable', target],
+      ['kickstart', '-k', target],
+    ]);
+    assert.equal(result.pid, originalPid + 1);
+    assert.equal(result.pairing, link);
+    assert.equal((await fs.stat(setup.plistPath)).ino, originalInode);
+    assert.deepEqual(await setup.readPlist(), originalConfiguration);
+    for (const file of files)
+      assert.equal(await fs.readFile(file, 'utf8'), 'private-fixture-preserved');
+  }
+});
+
+test('restart enables and starts a stopped service without killing the newly bootstrapped process', async (t) => {
+  const setup = await fixture(t);
+  await setup.manager.install({ link: true });
+  await setup.manager.stop();
+  assert.equal(setup.state.disabled, true);
+  setup.calls.length = 0;
+  const originalPid = setup.state.pid;
+  const result = await setup.manager.restart();
+  const target = `gui/${setup.options.uid}/${SERVICE_LABEL}`;
+  assert.deepEqual(lifecycleCalls(setup.calls), [
+    ['enable', target],
+    ['bootstrap', `gui/${setup.options.uid}`, setup.plistPath],
+    ['kickstart', target],
+  ]);
+  assert.equal(result.state, 'running');
+  assert.equal(result.pairing, true);
+  assert.equal(result.pid, originalPid);
+  assert.equal(setup.state.disabled, false);
+});
+
+test('restart fails before process mutation if runtime readiness has changed', async (t) => {
+  const setup = await fixture(t);
+  await setup.manager.install();
+  const manager = createServiceManager({
+    ...setup.options,
+    run: async (program, arguments_, options) => {
+      if (program === setup.misePath) return { stdout: 'v25.9.0\n', stderr: '' };
+      return setup.options.run(program, arguments_, options);
+    },
+  });
+  setup.calls.length = 0;
+  await assert.rejects(manager.restart(), { code: 'node-26-required' });
+  assert.deepEqual(lifecycleCalls(setup.calls), []);
+});
+
 test('start revalidates private log paths before enabling the stopped service', async (t) => {
   const setup = await fixture(t);
   await setup.manager.install();
@@ -364,6 +448,7 @@ test('start revalidates private log paths before enabling the stopped service', 
   await fs.symlink(protectedFile, configuration.StandardOutPath);
   setup.calls.length = 0;
   await assert.rejects(setup.manager.start(), { code: 'unsafe-log-file' });
+  await assert.rejects(setup.manager.restart(), { code: 'unsafe-log-file' });
   assert.equal(await fs.readFile(protectedFile, 'utf8'), 'untouched');
   assert.deepEqual(lifecycleCalls(setup.calls), []);
   assert.equal(setup.state.disabled, true);
@@ -412,7 +497,7 @@ test('a foreign installed agent is rejected without replacement or lifecycle com
   await fs.mkdir(path.dirname(setup.plistPath), { recursive: true });
   const foreign = renderPlist({ Label: SERVICE_LABEL, WorkingDirectory: '/another/repository' });
   await fs.writeFile(setup.plistPath, foreign, { mode: 0o600 });
-  for (const command of ['install', 'start', 'stop', 'status', 'uninstall']) {
+  for (const command of ['install', 'start', 'restart', 'stop', 'status', 'uninstall']) {
     await assert.rejects(setup.manager[command](), { code: 'unmanaged-service' });
   }
   assert.equal(await fs.readFile(setup.plistPath, 'utf8'), foreign);
@@ -443,7 +528,7 @@ test('owned markers cannot authorize an arbitrary executable, environment or uns
   setup.calls.length = 0;
   for (const variant of variants) {
     await fs.writeFile(setup.plistPath, renderPlist(variant), { mode: 0o600 });
-    for (const command of ['install', 'start', 'stop', 'uninstall']) {
+    for (const command of ['install', 'start', 'restart', 'stop', 'uninstall']) {
       await assert.rejects(setup.manager[command](), { code: 'unmanaged-service' });
     }
   }
@@ -467,7 +552,7 @@ test('loaded foreign or unknown-origin jobs cannot be stopped even with a matchi
   setup.calls.length = 0;
   for (const origin of ['/somewhere/foreign.plist', 'unknown']) {
     setup.state.origin = origin;
-    for (const command of ['install', 'start', 'stop', 'uninstall']) {
+    for (const command of ['install', 'start', 'restart', 'stop', 'uninstall']) {
       await assert.rejects(setup.manager[command](), { code: 'unmanaged-service' });
     }
   }
@@ -624,6 +709,7 @@ test('unexpected launchctl inspection errors fail closed and never expose raw er
 test('start and stop require an installed managed agent', async (t) => {
   const setup = await fixture(t);
   await assert.rejects(setup.manager.start(), { code: 'service-not-installed' });
+  await assert.rejects(setup.manager.restart(), { code: 'service-not-installed' });
   await assert.rejects(setup.manager.stop(), { code: 'service-not-installed' });
   assert.deepEqual(lifecycleCalls(setup.calls), []);
 });

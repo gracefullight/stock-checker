@@ -10,6 +10,7 @@
       "apps/*/src/**",
       "packages/*/src/**",
       "tools/services/**",
+      "tools/whatsapp/**",
       "apps/*/package.json",
       "packages/*/package.json",
       "package.json",

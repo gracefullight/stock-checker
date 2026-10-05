@@ -74,7 +74,7 @@ describe('managed WhatsApp connection watchdog', () => {
     expect(onTimeout).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['unlinked', 'logged-out'] as const)(
+  it.each(['unlinked', 'logged-out', 'pairing-expired'] as const)(
     'cancels automatic retirement when %s requires user action',
     async (state) => {
       const onTimeout = vi.fn();

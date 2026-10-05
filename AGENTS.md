@@ -28,6 +28,8 @@
 - `mise run whatsapp:gateway`: Run the linked local gateway on loopback port 5102.
 - `mise run whatsapp:service:install -- --link`: Install the macOS user service and enable initial QR pairing; omit `--link` after pairing. See README for service lifecycle commands.
 - `mise run whatsapp:service:status`, `mise run services:test`: Inspect the local service and test its installer offline.
+- `mise run whatsapp:test`: Verify the pinned Baileys registration patch against mocked SDK sockets and timers without network access.
+- `mise run whatsapp:service:restart`: Restart the owned macOS service, preserving credentials and its QR/gateway mode; renew an expired initial QR attempt.
 - WhatsApp alerts: set `WHATSAPP_TO` in E.164 format and keep the local gateway running. CLI BUY/SELL batches, saved market-screen completion summaries, and MCP `screen_stocks` with `notifyWhatsApp: true` send bounded plain-text summaries. MCP notification defaults to `false`; see README for setup.
 
 ## Coding Style & Naming Conventions

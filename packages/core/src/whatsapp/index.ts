@@ -32,6 +32,9 @@ export async function runWhatsAppGateway(
       logger.info({ state }, 'WhatsApp 연결 상태');
       watchdog?.onState(state);
     },
+    onDiagnostic(diagnostic) {
+      logger.info(diagnostic, 'WhatsApp 연결 진단');
+    },
   });
   const gateway = createWhatsAppGateway({
     session,

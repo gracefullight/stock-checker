@@ -19,6 +19,7 @@ import makeWASocket, {
   type ConnectionState,
   DisconnectReason,
   initAuthCreds,
+  jidDecode,
   proto,
   type SignalDataTypeMap,
   type WASocket,
@@ -30,6 +31,7 @@ export type WhatsAppSessionState =
   | 'linking'
   | 'connected'
   | 'disconnected'
+  | 'pairing-expired'
   | 'logged-out';
 
 export type WhatsAppSessionSendResult =
@@ -44,12 +46,18 @@ export type WhatsAppSessionSendResult =
         | 'send-error';
     };
 
+export type WhatsAppSessionDiagnostic =
+  | { event: 'companion-registration-refresh'; validChild: boolean }
+  | { event: 'pairing-success' }
+  | { event: 'disconnect'; statusCode?: number };
+
 export interface WhatsAppSessionOptions {
   authDirectory: string;
   /** Only the explicit linking command may start a new QR pairing. */
   allowPairing?: boolean;
   onQr?: (qr: string | null) => void;
   onState?: (state: WhatsAppSessionState) => void;
+  onDiagnostic?: (diagnostic: WhatsAppSessionDiagnostic) => void;
 }
 
 export interface WhatsAppSession {
@@ -59,7 +67,9 @@ export interface WhatsAppSession {
   sendText(to: string, text: string): Promise<WhatsAppSessionSendResult>;
 }
 
-type SessionSocket = Pick<WASocket, 'ev' | 'sendMessage' | 'end'>;
+type SessionSocket = Pick<WASocket, 'ev' | 'sendMessage' | 'end'> & {
+  ws?: Pick<WASocket['ws'], 'on' | 'off'>;
+};
 
 export interface WhatsAppSessionDependencies {
   /** Offline tests provide sockets and may shorten timers. */
@@ -219,9 +229,41 @@ async function acquireSessionLock(directory: string): Promise<() => Promise<void
 function disconnectCode(update: Partial<ConnectionState>): number | undefined {
   const error = update.lastDisconnect?.error;
   if (!error || !('output' in error) || !error.output || typeof error.output !== 'object') return;
-  return 'statusCode' in error.output && typeof error.output.statusCode === 'number'
-    ? error.output.statusCode
+  const code = 'statusCode' in error.output ? error.output.statusCode : undefined;
+  return typeof code === 'number' &&
+    Number.isFinite(code) &&
+    Number.isInteger(code) &&
+    code >= 100 &&
+    code <= 999
+    ? code
     : undefined;
+}
+
+function hasPairedIdentity(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string') {
+    return false;
+  }
+  if (!/^\d+(?:_\d+)?(?::\d+)?@(?:s\.whatsapp\.net|c\.us)$/.test(value.id)) return false;
+  const identity = jidDecode(value.id);
+  return (
+    !!identity &&
+    Number.isSafeInteger(Number(identity.user)) &&
+    Number(identity.user) > 0 &&
+    (identity.device === undefined ||
+      (Number.isSafeInteger(identity.device) && identity.device >= 0))
+  );
+}
+
+function hasPairedAuthentication(creds: AuthenticationCreds | undefined): boolean {
+  // Verified QR pairing saves me/account but leaves registered=false in the SDK.
+  // Pairing-code requests save me before authentication, so identity alone is insufficient.
+  return (
+    creds?.registered === true ||
+    (hasPairedIdentity(creds?.me) &&
+      !!creds?.account &&
+      typeof creds.account === 'object' &&
+      !Array.isArray(creds.account))
+  );
 }
 
 export function createWhatsAppSession(
@@ -247,6 +289,8 @@ export function createWhatsAppSession(
   let sendTail: Promise<void> = Promise.resolve();
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let reconnectAttempts = 0;
+  let qrWasIssued = false;
+  let pairingSuccessReported = false;
   let generation = 0;
   const outstandingSends = new Set<Promise<unknown>>();
   const cancelSends = new Set<() => void>();
@@ -265,6 +309,13 @@ export function createWhatsAppSession(
       options.onQr?.(qr);
     } catch {
       /* QR values are never logged or persisted. */
+    }
+  }
+  function diagnose(diagnostic: WhatsAppSessionDiagnostic): void {
+    try {
+      options.onDiagnostic?.(diagnostic);
+    } catch {
+      // Diagnostics never alter connection or key persistence.
     }
   }
   function closeSocket(): void {
@@ -322,6 +373,9 @@ export function createWhatsAppSession(
     ) {
       throw new Error('Invalid WhatsApp authentication state.');
     }
+    if (saved && typeof saved === 'object' && 'me' in saved && !hasPairedIdentity(saved.me)) {
+      throw new Error('Invalid WhatsApp authentication state.');
+    }
     const creds = (saved ?? initAuthCreds()) as AuthenticationCreds;
     return {
       creds,
@@ -362,7 +416,13 @@ export function createWhatsAppSession(
     };
   }
   function scheduleReconnect(code?: number): void {
-    if (stopped || reconnectTimer || reconnectAttempts >= maxReconnectAttempts) return;
+    if (stopped || reconnectTimer) return;
+    if (reconnectAttempts >= maxReconnectAttempts) {
+      if (options.allowPairing && !hasPairedAuthentication(auth?.creds) && qrWasIssued) {
+        setState('pairing-expired');
+      }
+      return;
+    }
     reconnectAttempts++;
     const expectedGeneration = generation;
     const delay =
@@ -403,6 +463,7 @@ export function createWhatsAppSession(
     const onConnection = (update: Partial<ConnectionState>) => {
       if (stopped || socket !== current || expectedGeneration !== generation) return;
       if (update.qr) {
+        qrWasIssued = true;
         if (!options.allowPairing) {
           stopped = true;
           closeSocket();
@@ -414,12 +475,16 @@ export function createWhatsAppSession(
         setQr(update.qr);
         setState('linking');
       }
+      if (update.isNewLogin === true) setQr(null);
       if (update.connection === 'open') {
         reconnectAttempts = 0;
         setQr(null);
         setState('connected');
       } else if (update.connection === 'close') {
         const code = disconnectCode(update);
+        diagnose(
+          code === undefined ? { event: 'disconnect' } : { event: 'disconnect', statusCode: code }
+        );
         closeSocket();
         setQr(null);
         if (
@@ -454,9 +519,35 @@ export function createWhatsAppSession(
     };
     current.ev.on('connection.update', onConnection);
     current.ev.on('creds.update', onCredentials);
+    const diagnosticIsCurrent = () =>
+      !stopped && socket === current && expectedGeneration === generation;
+    const onCompanionRefresh = (node: unknown) => {
+      if (!diagnosticIsCurrent() || hasPairedAuthentication(auth?.creds)) return;
+      const children =
+        node && typeof node === 'object' && 'content' in node ? node.content : undefined;
+      const validChild =
+        Array.isArray(children) &&
+        children.some(
+          (child: unknown) =>
+            child &&
+            typeof child === 'object' &&
+            'tag' in child &&
+            (child.tag === 'companion_reg_refresh' || child.tag === 'pair-device-rotate-qr')
+        );
+      diagnose({ event: 'companion-registration-refresh', validChild });
+    };
+    const onPairingSuccess = () => {
+      if (!diagnosticIsCurrent() || pairingSuccessReported) return;
+      pairingSuccessReported = true;
+      diagnose({ event: 'pairing-success' });
+    };
+    current.ws?.on('CB:notification,type:companion_reg_refresh', onCompanionRefresh);
+    current.ws?.on('CB:iq,,pair-success', onPairingSuccess);
     disconnectListeners = () => {
       current.ev.off('connection.update', onConnection);
       current.ev.off('creds.update', onCredentials);
+      current.ws?.off('CB:notification,type:companion_reg_refresh', onCompanionRefresh);
+      current.ws?.off('CB:iq,,pair-success', onPairingSuccess);
     };
   }
   async function start(): Promise<void> {
@@ -465,6 +556,8 @@ export function createWhatsAppSession(
     if (releaseLock || releasePromise) throw new Error('WhatsApp auth directory is still in use.');
     const currentGeneration = ++generation;
     reconnectAttempts = 0;
+    qrWasIssued = false;
+    pairingSuccessReported = false;
     stopped = false;
     startPromise = (async () => {
       try {
@@ -475,7 +568,7 @@ export function createWhatsAppSession(
           await releaseWhenIdle();
           return;
         }
-        if (!auth.creds.registered && !options.allowPairing) {
+        if (!hasPairedAuthentication(auth.creds) && !options.allowPairing) {
           stopped = true;
           setState('unlinked');
           await releaseWhenIdle();
@@ -507,7 +600,9 @@ export function createWhatsAppSession(
     reconnectTimer = undefined;
     closeSocket();
     setQr(null);
-    if (state !== 'logged-out') setState(auth?.creds.registered ? 'disconnected' : 'unlinked');
+    if (state !== 'logged-out') {
+      setState(hasPairedAuthentication(auth?.creds) ? 'disconnected' : 'unlinked');
+    }
     for (const cancel of cancelSends) cancel();
     stopPromise = (async () => {
       await storageTail;

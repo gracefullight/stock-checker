@@ -11,7 +11,7 @@ const { isDeepStrictEqual, promisify } = require('node:util');
 const execute = promisify(execFile);
 const SERVICE_LABEL = 'com.stock-checker.whatsapp';
 const OWNER_VERSION = 1;
-const COMMANDS = new Set(['install', 'start', 'stop', 'status', 'uninstall']);
+const COMMANDS = new Set(['install', 'start', 'restart', 'stop', 'status', 'uninstall']);
 const TASKS = new Set(['whatsapp:gateway', 'whatsapp:link']);
 const SAFE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 
@@ -387,7 +387,7 @@ function createServiceManager(options = {}) {
     await command('/bin/launchctl', ['bootout', context.target], 'service-stop-failed');
   }
 
-  async function activate(loaded) {
+  async function activate(loaded, restartRunning = false) {
     await command('/bin/launchctl', ['enable', context.target], 'service-enable-failed');
     if (!loaded) {
       await command(
@@ -396,7 +396,11 @@ function createServiceManager(options = {}) {
         'service-start-failed'
       );
     }
-    await command('/bin/launchctl', ['kickstart', context.target], 'service-start-failed');
+    const arguments_ =
+      loaded && restartRunning
+        ? ['kickstart', '-k', context.target]
+        : ['kickstart', context.target];
+    await command('/bin/launchctl', arguments_, 'service-start-failed');
   }
 
   async function status() {
@@ -429,7 +433,7 @@ function createServiceManager(options = {}) {
     return status();
   }
 
-  async function start() {
+  async function startOwnedService(restartRunning) {
     const { owned, loaded } = await inspect();
     if (!owned) throw new ServiceError('service-not-installed');
     await checkReadiness(
@@ -437,8 +441,16 @@ function createServiceManager(options = {}) {
       owned.configuration.ProgramArguments[3]
     );
     await prepareLocalFiles();
-    await activate(loaded);
+    await activate(loaded, restartRunning);
     return status();
+  }
+
+  async function start() {
+    return startOwnedService(false);
+  }
+
+  async function restart() {
+    return startOwnedService(true);
   }
 
   async function stop() {
@@ -462,7 +474,7 @@ function createServiceManager(options = {}) {
     return status();
   }
 
-  return { install, start, stop, status, uninstall };
+  return { install, start, restart, stop, status, uninstall };
 }
 
 async function main(arguments_ = process.argv.slice(2), options = {}) {

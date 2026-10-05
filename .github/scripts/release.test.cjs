@@ -65,12 +65,18 @@ function lockFixture(version = '0.0.0') {
   return `{\n  "lockfileVersion": 1,\n  "configVersion": 1,\n  "workspaces": {\n${workspaces.join('\n')}\n  },\n  "packages": {\n    "fixture": ["fixture@0.0.0", "", {}, "sha512-,}\\\"quoted"],\n  },\n}\n`;
 }
 
-function apiFixture({ synchronized = false } = {}) {
+const patchMetadata = '  "patchedDependencies": {\n    "@whiskeysockets/baileys@7.0.0-rc14": "patches/@whiskeysockets%2Fbaileys@7.0.0-rc14.patch",\n  },\n';
+
+function patchedLockFixture(version = '0.0.0') {
+  return lockFixture(version).replace('  "packages": {', `${patchMetadata}  "packages": {`);
+}
+
+function apiFixture({ synchronized = false, patched = false } = {}) {
   const repository = { id: 1, full_name: 'gracefullight/stock-checker' };
   const baseFiles = {
     'package.json': JSON.stringify({ name: 'stock-checker', version: '0.0.0', private: true, scripts: { test: 'node --test' } }),
     '.release-please-manifest.json': JSON.stringify({ '.': '0.0.0' }),
-    'bun.lock': lockFixture(),
+    'bun.lock': patched ? patchedLockFixture() : lockFixture(),
   };
   for (const [path, name] of Object.entries(workspaceNames)) {
     baseFiles[`${path}/package.json`] = JSON.stringify({ name, version: '0.0.0', private: true, dependencies: { fixture: '^1.0.0' } });
@@ -174,6 +180,39 @@ test('lock updater handles the repository Bun lockfile without changing anything
   const updated = updateWorkspaceLock(original, current, next);
   assert.equal(updated, original.replaceAll(`"version": "${current}"`, `"version": "${next}"`));
 });
+
+test('lock updater preserves intervening Bun patch metadata byte for byte', () => {
+  const original = patchedLockFixture();
+  const expected = original.replaceAll('"version": "0.0.0"', '"version": "0.1.0"');
+  assert.equal(updateWorkspaceLock(original, '0.0.0', '0.1.0'), expected);
+  assert.equal(updateWorkspaceLock(original.replaceAll('\n', '\r\n'), '0.0.0', '0.1.0'), expected.replaceAll('\n', '\r\n'));
+  assert.ok(expected.includes(patchMetadata));
+});
+
+test('prepare synchronizes workspace versions while retaining Bun patch metadata', async () => {
+  const fixture = apiFixture({ patched: true });
+  const original = fixture.state.baseFiles['bun.lock'];
+  const result = await prepareRelease(prepareOptions(fixture));
+  assert.equal(result.headSha, LOCK_SHA);
+  assert.equal(fixture.state.writes.length, 1);
+  const written = Buffer.from(fixture.state.writes[0].content, 'base64').toString('utf8');
+  assert.equal(written, original.replaceAll('"version": "0.0.0"', '"version": "0.1.0"'));
+  assert.ok(written.includes(patchMetadata));
+});
+
+for (const [name, change] of [
+  ['modified patch path', (text) => text.replace('patches/@whiskeysockets%2Fbaileys@7.0.0-rc14.patch', 'patches/unrelated.patch')],
+  ['removed patch mapping', (text) => text.replace(patchMetadata, '')],
+  ['additional patch mapping', (text) => text.replace('  "patchedDependencies": {', '  "patchedDependencies": {\n    "fixture@0.0.0": "patches/fixture.patch",')],
+]) {
+  test(`prepare rejects ${name} in a release version update`, async () => {
+    const fixture = apiFixture({ patched: true, synchronized: true });
+    fixture.state.headFiles['bun.lock'] = change(fixture.state.headFiles['bun.lock']);
+    await assert.rejects(prepareRelease(prepareOptions(fixture)), /Unexpected changes in release lockfile/);
+    assert.equal(fixture.state.writes.length, 0);
+    assert.equal(fixture.state.merges.length, 0);
+  });
+}
 
 for (const [name, change] of [
   ['missing workspace', (text) => text.replace('"apps/api"', '"apps/other"')],

@@ -1,0 +1,81 @@
+diff --git a/lib/Socket/messages-recv.js b/lib/Socket/messages-recv.js
+index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..af2d9a081e57bcc5ff83c6c90a0ab1919473e40a 100644
+--- a/lib/Socket/messages-recv.js
++++ b/lib/Socket/messages-recv.js
+@@ -359,7 +359,7 @@ export const makeMessagesRecvSocket = (config) => {
+         }
+     };
+     const sendMessageAck = async (node, errorCode) => {
+-        const stanza = buildAckStanza(node, errorCode, authState.creds.me.id);
++        const stanza = buildAckStanza(node, errorCode, authState.creds.me?.id);
+         logger.debug({ recv: { tag: node.tag, attrs: node.attrs }, sent: stanza.attrs }, 'sent ack');
+         await sendNode(stanza);
+     };
+diff --git a/lib/Socket/socket.js b/lib/Socket/socket.js
+index ae34a8f315a0b9fd101472cc69e59624c6c63861..569704deb08254661923a91f3102f58caaecc828 100644
+--- a/lib/Socket/socket.js
++++ b/lib/Socket/socket.js
+@@ -273,6 +273,7 @@ export const makeSocket = (config) => {
+     let epoch = 1;
+     let keepAliveReq;
+     let qrTimer;
++    let refreshPairingQr;
+     let closed = false;
+     const socketEndHandlers = [];
+     /** log & process any unexpected errors */
+@@ -475,6 +476,7 @@ export const makeSocket = (config) => {
+             return;
+         }
+         closed = true;
++        refreshPairingQr = undefined;
+         logger.info({ trace: error?.stack }, error ? 'connection errored' : 'connection closed');
+         clearInterval(keepAliveReq);
+         clearTimeout(qrTimer);
+@@ -690,6 +692,18 @@ export const makeSocket = (config) => {
+     ws.on('close', () => void end(new Boom('Connection Terminated', { statusCode: DisconnectReason.connectionClosed })));
+     // the server terminated the connection
+     ws.on('CB:xmlstreamend', () => void end(new Boom('Connection Terminated by Server', { statusCode: DisconnectReason.connectionClosed })));
++    // Pending registration material can be retired independently of QR refs.
++    ws.on('CB:notification,type:companion_reg_refresh', (node) => {
++        if (node?.tag !== 'notification' || node.attrs?.type !== 'companion_reg_refresh' || closed || !ws.isOpen || creds.me || creds.registered) {
++            return;
++        }
++        if (!getBinaryNodeChild(node, 'companion_reg_refresh') && !getBinaryNodeChild(node, 'pair-device-rotate-qr')) {
++            return;
++        }
++        creds.advSecretKey = randomBytes(32).toString('base64');
++        ev.emit('creds.update', { advSecretKey: creds.advSecretKey });
++        refreshPairingQr?.();
++    });
+     // QR gen
+     ws.on('CB:iq,type:set,pair-device', async (stanza) => {
+         const iq = {
+@@ -705,7 +719,15 @@ export const makeSocket = (config) => {
+         const refNodes = getBinaryNodeChildren(pairDeviceNode, 'ref');
+         const noiseKeyB64 = Buffer.from(creds.noiseKey.public).toString('base64');
+         const identityKeyB64 = Buffer.from(creds.signedIdentityKey.public).toString('base64');
+-        const advB64 = creds.advSecretKey;
++        let currentRef;
++        const renderCurrentQr = () => {
++            if (closed || !ws.isOpen || !currentRef) {
++                return;
++            }
++            const qr = buildPairingQRData(currentRef, noiseKeyB64, identityKeyB64, creds.advSecretKey, browser);
++            ev.emit('connection.update', { qr });
++        };
++        refreshPairingQr = renderCurrentQr;
+         let qrMs = qrTimeout || 60000; // time to let a QR live
+         const genPairQR = () => {
+             if (!ws.isOpen) {
+@@ -716,9 +738,8 @@ export const makeSocket = (config) => {
+                 void end(new Boom('QR refs attempts ended', { statusCode: DisconnectReason.timedOut }));
+                 return;
+             }
+-            const ref = refNode.content.toString('utf-8');
+-            const qr = buildPairingQRData(ref, noiseKeyB64, identityKeyB64, advB64, browser);
+-            ev.emit('connection.update', { qr });
++            currentRef = refNode.content.toString('utf-8');
++            renderCurrentQr();
+             qrTimer = setTimeout(genPairQR, qrMs);
+             qrMs = qrTimeout || 20000; // shorter subsequent qrs
+         };

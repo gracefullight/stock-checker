@@ -47,6 +47,7 @@ function safeState(state: WhatsAppSessionState): WhatsAppSessionState {
     case 'linking':
     case 'connected':
     case 'disconnected':
+    case 'pairing-expired':
     case 'logged-out':
       return state;
     default:
@@ -176,18 +177,21 @@ function readJson(request: IncomingMessage, timeoutMs: number): Promise<unknown>
 function connectionPage(state: WhatsAppSessionState, qrAvailable: boolean): string {
   const descriptions: Record<WhatsAppSessionState, string> = {
     unlinked:
-      '연결되지 않았습니다. 게이트웨이를 종료한 뒤 mise run whatsapp:link로 QR 연결을 시작하세요.',
+      '연결되지 않았습니다. 관리 서비스는 mise run whatsapp:service:install -- --link로 QR 연결을 활성화하세요. 터미널에서 직접 실행하려면 관리 서비스를 mise run whatsapp:service:stop으로 중지하고 기존 게이트웨이를 종료한 뒤 mise run whatsapp:link를 실행하세요.',
     linking: '연결 중입니다. 휴대폰 WhatsApp에서 연결된 기기 → 기기 연결을 선택하세요.',
     connected:
       'WhatsApp 연결이 완료됐습니다. 이 페이지는 닫아도 됩니다. 알림을 받으려면 게이트웨이는 계속 실행하세요.',
-    disconnected: '연결이 끊겼습니다. 게이트웨이와 네트워크 상태를 확인하세요.',
+    disconnected:
+      '연결이 끊겼습니다. 네트워크 상태를 확인하고 관리 서비스는 mise run whatsapp:service:restart로 다시 시작하세요. 터미널에서 직접 실행한 게이트웨이는 종료한 뒤 기존 실행 명령으로 다시 시작하세요.',
+    'pairing-expired':
+      '휴대폰 연결 대기 시간이 만료됐습니다. 관리 서비스는 mise run whatsapp:service:restart를 실행해 새 QR로 다시 연결하세요. 터미널에서 직접 실행한 게이트웨이는 종료한 뒤 mise run whatsapp:link를 다시 실행하세요.',
     'logged-out':
-      'WhatsApp에서 로그아웃됐습니다. 게이트웨이를 종료하고 새 비공개 WHATSAPP_AUTH_DIR 경로로 mise run whatsapp:link를 실행하세요. API와 MCP에도 같은 새 경로를 설정하세요.',
+      'WhatsApp에서 로그아웃됐습니다. 관리 서비스는 mise run whatsapp:service:stop으로 중지하세요. 기존 게이트웨이를 종료하고 새 비공개 WHATSAPP_AUTH_DIR 경로로 mise run whatsapp:link를 실행하세요. API와 MCP에도 같은 새 경로를 설정하세요.',
   };
   const qr = qrAvailable
     ? '<img src="/qr" width="320" height="320" alt="WhatsApp 연결 QR 코드">'
     : '<p>QR 코드가 준비되면 자동으로 표시됩니다.</p>';
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="5"><title>Stock Checker WhatsApp 연결</title><style>body{font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 24px;line-height:1.6}img{display:block;max-width:100%;height:auto}h1{font-size:24px}</style></head><body><h1>Stock Checker WhatsApp 연결</h1><p>${descriptions[state]}</p>${state === 'connected' ? '' : qr}<p>이 화면은 5초마다 연결 상태를 갱신합니다.</p></body></html>`;
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="5"><title>Stock Checker WhatsApp 연결</title><style>body{font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 24px;line-height:1.6}img{display:block;max-width:100%;height:auto}h1{font-size:24px}</style></head><body><h1>Stock Checker WhatsApp 연결</h1><p>${descriptions[state]}</p>${state === 'linking' ? qr : ''}<p>이 화면은 5초마다 연결 상태를 갱신합니다.</p></body></html>`;
 }
 
 export function createWhatsAppGateway(options: WhatsAppGatewayOptions) {
@@ -229,6 +233,10 @@ export function createWhatsAppGateway(options: WhatsAppGatewayOptions) {
             margin: 2,
             width: 320,
           });
+          if (safeState(options.session.state) !== 'linking' || options.getQr() !== qr) {
+            json(response, 503, { error: 'qr-unavailable' });
+            return;
+          }
           response.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'image/png' });
           response.end(image);
         } catch {

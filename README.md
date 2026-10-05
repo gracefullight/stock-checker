@@ -305,6 +305,31 @@ startup until you run start or install again. Only one gateway can use an auth d
 stop a manually started gateway before installing the service. A user service
 runs while you are logged in; the computer must be awake and connected to send.
 
+If initial QR pairing expires before the device is linked, the page shows
+`pairing-expired` and asks you to restart the service:
+
+```bash
+mise run whatsapp:service:restart
+```
+
+This restarts an already-running process, preserves its installed pairing
+mode and credentials, and lets the linking process issue new QR codes. Reload
+the page and scan a fresh QR from the phone. The start command leaves a running
+process in place; refreshing the browser does not start a new pairing attempt.
+For a disconnected linked session, the restart command also starts a new
+connection attempt with the saved credentials.
+
+The pinned Baileys `7.0.0-rc14` dependency has a maintained Bun patch for initial
+device registration. It handles registration-secret refresh notifications and
+acknowledges them before the device has an account ID, following upstream
+[PR #2765](https://github.com/WhiskeySockets/Baileys/pull/2765) and
+[PR #2749](https://github.com/WhiskeySockets/Baileys/pull/2749). Bun applies the
+checked-in patch during installation. Remove it only after an official release
+includes both fixes and `mise run whatsapp:test` passes against that release.
+The offline regressions exercise the installed SDK with mocked sockets and
+timers. Connection diagnostics contain event names, a validation flag, and
+numeric disconnect codes; they exclude QR contents, keys, and account IDs.
+
 This service maintains the WhatsApp connection. It does not schedule stock
 analysis or run the API, dashboard, or MCP. OMA schedules invoke agents and
 prompts; repeating a fixed SC command does not need an agent invocation.
@@ -339,8 +364,12 @@ session files and QR codes private. If you choose another auth directory, keep
 it outside tracked files and use the same path in both processes.
 
 If WhatsApp logs the linked device out, stop the gateway, choose a new private
-`WHATSAPP_AUTH_DIR`, and run `mise run whatsapp:link` again. Use that same new
-directory for the CLI, API, and MCP; existing session files are preserved.
+`WHATSAPP_AUTH_DIR`, and start linking again. For a macOS service, save the new
+directory in private mise configuration and use
+`mise run whatsapp:service:install -- --link`, then
+`mise run whatsapp:service:restart`. For a foreground gateway, use
+`mise run whatsapp:link`. Use that same new directory for the CLI, API, and MCP;
+existing session files are preserved.
 
 Credentials and recipient settings stay in the process environment or private
 local client configuration; MCP tool inputs never accept tokens or arbitrary

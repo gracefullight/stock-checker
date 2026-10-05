@@ -40,7 +40,7 @@ export function createManagedSessionWatchdog(
         cancelTimer();
         return;
       }
-      if (state === 'unlinked' || state === 'logged-out') {
+      if (state === 'unlinked' || state === 'logged-out' || state === 'pairing-expired') {
         needsUserAction = true;
         cancelTimer();
         return;

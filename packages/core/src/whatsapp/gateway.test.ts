@@ -1,4 +1,5 @@
 import { type IncomingHttpHeaders, request } from 'node:http';
+import QRCode from 'qrcode';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWhatsAppGateway, isAllowedGatewayRequest } from './gateway.ts';
 import type { WhatsAppSession, WhatsAppSessionState } from './session.ts';
@@ -87,9 +88,71 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await gateway.stop();
+  vi.restoreAllMocks();
 });
 
 describe('local WhatsApp gateway', () => {
+  it('reports expired phone pairing and directs an explicit manual service restart for a fresh QR', async () => {
+    state = 'pairing-expired';
+    qr = 'stale-private-pairing-fixture';
+    expect(JSON.parse((await call('/status')).body.toString())).toEqual({
+      state: 'pairing-expired',
+    });
+    const html = (await call('/')).body.toString();
+    expect(html).toContain('휴대폰 연결 대기 시간이 만료됐습니다');
+    expect(html).toContain('mise run whatsapp:service:restart');
+    expect(html).toContain('새 QR');
+    expect(html).not.toContain('QR 코드가 준비되면 자동으로 표시됩니다');
+    expect(html).not.toContain('src="/qr"');
+    expect(html).not.toContain(qr);
+    expect((await call('/qr')).status).toBe(503);
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it('keeps disconnected guidance about the network and manual restart without promising a new QR', async () => {
+    state = 'disconnected';
+    qr = 'stale-private-pairing-fixture';
+    const html = (await call('/')).body.toString();
+    expect(html).toContain('네트워크');
+    expect(html).toContain('mise run whatsapp:service:restart');
+    expect(html).not.toContain('QR 코드가 준비되면 자동으로 표시됩니다');
+    expect(html).not.toContain('src="/qr"');
+    expect(html).not.toContain('대기 시간이 만료');
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it('guides an unlinked service to explicit pairing and stops it before a foreground gateway', async () => {
+    state = 'unlinked';
+    const html = (await call('/')).body.toString();
+    expect(html).toContain('mise run whatsapp:service:install -- --link');
+    expect(html).toContain('mise run whatsapp:service:stop');
+    expect(html).toContain('mise run whatsapp:link');
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it.each(['unlinked', 'connected', 'disconnected', 'logged-out'] as const)(
+    'does not display a QR image or waiting promise while %s even with a stale QR',
+    async (currentState) => {
+      state = currentState;
+      qr = 'stale-private-pairing-fixture';
+      const html = (await call('/')).body.toString();
+      expect(html).not.toContain('QR 코드가 준비되면 자동으로 표시됩니다');
+      expect(html).not.toContain('src="/qr"');
+      expect(html).not.toContain(qr);
+      expect((await call('/qr')).status).toBe(503);
+      expect(sendText).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps the waiting placeholder only while a linking session has no QR yet', async () => {
+    state = 'linking';
+    const html = (await call('/')).body.toString();
+    expect(html).toContain('QR 코드가 준비되면 자동으로 표시됩니다');
+    expect(html).not.toContain('src="/qr"');
+    expect((await call('/qr')).status).toBe(503);
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
   it('guides logged-out sessions to a new private directory shared with notification callers', async () => {
     state = 'logged-out';
     const html = (await call('/')).body.toString();
@@ -143,6 +206,51 @@ describe('local WhatsApp gateway', () => {
     state = 'connected';
     expect((await call('/qr')).status).toBe(503);
   });
+
+  it('rejects a QR image if its registration secret changed during encoding', async () => {
+    state = 'linking';
+    qr = 'private-retired-pairing-fixture';
+    const encoding = Promise.withResolvers<Buffer>();
+    const started = Promise.withResolvers<void>();
+    vi.spyOn(QRCode, 'toBuffer').mockImplementationOnce(() => {
+      started.resolve();
+      return encoding.promise;
+    });
+    const response = call('/qr');
+    await started.promise;
+    qr = 'private-fresh-pairing-fixture';
+    encoding.resolve(Buffer.from('retired-image-fixture'));
+    const result = await response;
+    expect(result.status).toBe(503);
+    expect(JSON.parse(result.body.toString())).toEqual({ error: 'qr-unavailable' });
+    expect(result.body.toString()).not.toContain('retired-image-fixture');
+    expect(result.body.toString()).not.toContain(qr);
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it.each(['connected', 'pairing-expired'] as const)(
+    'rejects a pending QR image after the session becomes %s',
+    async (nextState) => {
+      state = 'linking';
+      qr = 'private-pairing-fixture';
+      const encoding = Promise.withResolvers<Buffer>();
+      const started = Promise.withResolvers<void>();
+      vi.spyOn(QRCode, 'toBuffer').mockImplementationOnce(() => {
+        started.resolve();
+        return encoding.promise;
+      });
+      const response = call('/qr');
+      await started.promise;
+      state = nextState;
+      encoding.resolve(Buffer.from('obsolete-image-fixture'));
+      const result = await response;
+      expect(result.status).toBe(503);
+      expect(JSON.parse(result.body.toString())).toEqual({ error: 'qr-unavailable' });
+      expect(result.body.toString()).not.toContain('obsolete-image-fixture');
+      expect(result.body.toString()).not.toContain(qr);
+      expect(sendText).not.toHaveBeenCalled();
+    }
+  );
 
   it('keeps an unlinked default page free of pairing or sending side effects', async () => {
     state = 'unlinked';

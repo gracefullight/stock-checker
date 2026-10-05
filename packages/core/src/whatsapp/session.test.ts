@@ -40,20 +40,23 @@ function harness(
   const sockets: {
     socket: Socket;
     events: EventEmitter;
+    ws: EventEmitter;
     configuration: Parameters<SocketFactory>[0];
     sendMessage: ReturnType<typeof vi.fn<Socket['sendMessage']>>;
     end: ReturnType<typeof vi.fn<Socket['end']>>;
   }[] = [];
   const makeSocket = vi.fn<SocketFactory>((configuration) => {
     const events = new EventEmitter();
+    const ws = new EventEmitter();
     const sendMessage = vi.fn<Socket['sendMessage']>().mockResolvedValue(acknowledgment());
     const end = vi.fn<Socket['end']>();
     const socket: Socket = {
       ev: events as unknown as Socket['ev'],
       sendMessage,
       end,
+      ws: ws as unknown as NonNullable<Socket['ws']>,
     };
-    sockets.push({ socket, events, configuration, sendMessage, end });
+    sockets.push({ socket, events, ws, configuration, sendMessage, end });
     return socket;
   });
   const session = createWhatsAppSession(
@@ -69,6 +72,19 @@ async function saveRegisteredCredentials(directory = authDirectory) {
   const creds = initAuthCreds();
   creds.registered = true;
   await writeFile(join(directory, 'creds.json'), JSON.stringify(creds, BufferJSON.replacer));
+}
+
+async function saveQrPairedCredentials() {
+  await mkdir(authDirectory, { recursive: true });
+  const creds = initAuthCreds();
+  creds.me = { id: '15551234567:3@s.whatsapp.net', name: 'Offline fixture' };
+  creds.account = {
+    details: Buffer.from([1, 2, 3]),
+    accountSignatureKey: Buffer.alloc(32, 1),
+    accountSignature: Buffer.alloc(64, 2),
+    deviceSignature: Buffer.alloc(64, 3),
+  };
+  await writeFile(join(authDirectory, 'creds.json'), JSON.stringify(creds, BufferJSON.replacer));
 }
 
 function closeWith(events: EventEmitter, code: DisconnectReason) {
@@ -158,6 +174,290 @@ describe('WhatsApp outbound session', () => {
     expect(sockets[0].end).toHaveBeenCalledTimes(1);
     await session.stop();
     expect(await readdir(authDirectory)).toEqual(['creds.json']);
+  });
+
+  it('reconnects saved QR-paired identity even when the SDK registered flag remains false', async () => {
+    await saveQrPairedCredentials();
+    const onQr = vi.fn();
+    const { session, sockets, makeSocket } = harness({ allowPairing: false, onQr });
+    await session.start();
+    expect(makeSocket).toHaveBeenCalledTimes(1);
+    expect(session.state).toBe('linking');
+    expect(sockets[0].configuration.auth.creds.registered).toBe(false);
+    expect(sockets[0].configuration.auth.creds.me?.id).toBe('15551234567:3@s.whatsapp.net');
+    expect(onQr).not.toHaveBeenCalled();
+    sockets[0].events.emit('connection.update', { connection: 'open' });
+    expect(session.state).toBe('connected');
+    await session.stop();
+    expect(session.state).toBe('disconnected');
+    expect(JSON.parse(await readFile(join(authDirectory, 'creds.json'), 'utf8')).registered).toBe(
+      false
+    );
+  });
+
+  it('keeps a pending pairing-code identity unlinked when no verified account was saved', async () => {
+    await mkdir(authDirectory);
+    const creds = initAuthCreds();
+    creds.me = { id: '15551234567@s.whatsapp.net', name: '~' };
+    creds.pairingCode = 'OFFLINE_FIXTURE';
+    await writeFile(join(authDirectory, 'creds.json'), JSON.stringify(creds, BufferJSON.replacer));
+    const onQr = vi.fn();
+    const { session, makeSocket } = harness({ allowPairing: false, onQr });
+    await session.start();
+    expect(session.state).toBe('unlinked');
+    expect(makeSocket).not.toHaveBeenCalled();
+    expect(onQr).not.toHaveBeenCalled();
+    expect(JSON.parse(await readFile(join(authDirectory, 'creds.json'), 'utf8')).registered).toBe(
+      false
+    );
+  });
+
+  it('ignores pairing refresh diagnostics for QR-paired credentials with registered false', async () => {
+    await saveQrPairedCredentials();
+    const onDiagnostic = vi.fn();
+    const { session, sockets } = harness({ allowPairing: false, onDiagnostic });
+    await session.start();
+    sockets[0].ws.emit('CB:notification,type:companion_reg_refresh', {
+      content: [{ tag: 'companion_reg_refresh' }],
+    });
+    expect(onDiagnostic).not.toHaveBeenCalled();
+    expect(sockets[0].configuration.auth.creds.registered).toBe(false);
+  });
+
+  it('keeps exhausted QR-paired reconnects disconnected rather than expiring a new pairing', async () => {
+    await saveQrPairedCredentials();
+    const { session, sockets, makeSocket } = harness(
+      { allowPairing: true },
+      { reconnectDelayMs: 5, maxReconnectAttempts: 1 }
+    );
+    await session.start();
+    sockets[0].events.emit('connection.update', { qr: 'fixture-private-qr' });
+    vi.useFakeTimers();
+    closeWith(sockets[0].events, DisconnectReason.connectionLost);
+    await vi.advanceTimersByTimeAsync(5);
+    closeWith(sockets[1].events, DisconnectReason.connectionLost);
+    expect(session.state).toBe('disconnected');
+    expect(makeSocket).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    null,
+    'fixture-private-identity',
+    {},
+    { id: 123 },
+    { id: '' },
+    { id: '15551234567:invalid@s.whatsapp.net' },
+    { id: '15551234567@lid' },
+    { id: '15551234567@s.whatsapp.net\n' },
+  ])('rejects malformed saved paired identity without opening a socket: %j', async (me) => {
+    await mkdir(authDirectory);
+    const creds = { ...initAuthCreds(), me };
+    const saved = JSON.stringify(creds, BufferJSON.replacer);
+    await writeFile(join(authDirectory, 'creds.json'), saved);
+    const { session, makeSocket } = harness({ allowPairing: false });
+    await expect(session.start()).rejects.toThrow('WhatsApp session could not be started');
+    expect(makeSocket).not.toHaveBeenCalled();
+    expect(await readFile(join(authDirectory, 'creds.json'), 'utf8')).toBe(saved);
+  });
+
+  it('hides a consumed QR immediately after pairing success before the connection opens', async () => {
+    let currentQr: string | null = null;
+    const onQr = vi.fn((qr: string | null) => {
+      currentQr = qr;
+    });
+    const onState = vi.fn();
+    const { session, sockets, makeSocket } = harness({ onQr, onState });
+    await session.start();
+    sockets[0].events.emit('connection.update', { qr: 'fixture-private-qr' });
+    expect(currentQr).toBe('fixture-private-qr');
+    sockets[0].events.emit('connection.update', { isNewLogin: true, qr: undefined });
+    expect(onQr).toHaveBeenLastCalledWith(null);
+    expect(currentQr).toBeNull();
+    expect(session.state).toBe('linking');
+    expect(onState).not.toHaveBeenCalledWith('connected');
+    expect(makeSocket).toHaveBeenCalledTimes(1);
+    expect(await session.sendText('+821012345678', 'fixture')).toEqual({
+      status: 'failed',
+      reason: 'not-connected',
+    });
+    sockets[0].events.emit('connection.update', { connection: 'open' });
+    expect(session.state).toBe('connected');
+  });
+
+  it('keeps the current QR visible when pairing success comes from an old socket', async () => {
+    let currentQr: string | null = null;
+    const { session, sockets } = harness(
+      {
+        onQr: (qr) => {
+          currentQr = qr;
+        },
+      },
+      { reconnectDelayMs: 5 }
+    );
+    await session.start();
+    sockets[0].events.emit('connection.update', { qr: 'fixture-private-old-qr' });
+    vi.useFakeTimers();
+    closeWith(sockets[0].events, DisconnectReason.connectionLost);
+    await vi.advanceTimersByTimeAsync(5);
+    sockets[1].events.emit('connection.update', { qr: 'fixture-private-current-qr' });
+    sockets[0].events.emit('connection.update', { isNewLogin: true, qr: undefined });
+    expect(currentQr).toBe('fixture-private-current-qr');
+    expect(session.state).toBe('linking');
+    sockets[1].events.emit('connection.update', { isNewLogin: true, qr: undefined });
+    expect(currentQr).toBeNull();
+    expect(session.state).toBe('linking');
+  });
+
+  it.each(['companion_reg_refresh', 'pair-device-rotate-qr'] as const)(
+    'reports only the allowed refresh child validity for %s',
+    async (tag) => {
+      const onDiagnostic = vi.fn();
+      const { session, sockets } = harness({ onDiagnostic });
+      await session.start();
+      sockets[0].ws.emit('CB:notification,type:companion_reg_refresh', {
+        tag: 'notification',
+        attrs: {
+          from: 'fixture-private-phone',
+          id: 'fixture-private-id',
+          token: 'fixture-private-key',
+        },
+        content: [
+          {
+            tag,
+            attrs: { qr: 'fixture-private-qr' },
+            content: Buffer.from('fixture-private-auth'),
+          },
+        ],
+      });
+      expect(onDiagnostic.mock.calls).toEqual([
+        [{ event: 'companion-registration-refresh', validChild: true }],
+      ]);
+      expect(JSON.stringify(onDiagnostic.mock.calls)).not.toMatch(
+        /fixture-private|attrs|content|from|token/
+      );
+      expect(sockets[0].sendMessage).not.toHaveBeenCalled();
+      expect(session.state).toBe('linking');
+      expect(await readdir(authDirectory)).toEqual(['.session-lock']);
+    }
+  );
+
+  it.each([
+    undefined,
+    null,
+    {},
+    { content: Buffer.from('fixture-private-key') },
+    { content: ['pair-device-rotate-qr'] },
+    { content: [{ tag: 'fixture-private-qr' }] },
+  ])('reports malformed or unrelated refresh content only as false: %j', async (node) => {
+    const onDiagnostic = vi.fn();
+    const { session, sockets } = harness({ onDiagnostic });
+    await session.start();
+    sockets[0].ws.emit('CB:notification,type:companion_reg_refresh', node);
+    expect(onDiagnostic.mock.calls).toEqual([
+      [{ event: 'companion-registration-refresh', validChild: false }],
+    ]);
+  });
+
+  it('reports pairing success once and ignores refresh diagnostics after registration', async () => {
+    const onDiagnostic = vi.fn();
+    const { session, sockets } = harness({ onDiagnostic });
+    await session.start();
+    sockets[0].events.emit('creds.update', { registered: true });
+    sockets[0].ws.emit('CB:notification,type:companion_reg_refresh', {
+      content: [{ tag: 'companion_reg_refresh' }],
+    });
+    sockets[0].ws.emit('CB:iq,,pair-success', { attrs: { phone: 'fixture-private-phone' } });
+    sockets[0].ws.emit('CB:iq,,pair-success', { content: Buffer.from('fixture-private-key') });
+    expect(onDiagnostic.mock.calls).toEqual([[{ event: 'pairing-success' }]]);
+    await sockets[0].configuration.auth.keys.get('session', ['fixture']);
+    expect(sockets[0].configuration.auth.creds.registered).toBe(true);
+  });
+
+  it('detaches diagnostic listeners from old sockets and stops reporting after shutdown', async () => {
+    const onDiagnostic = vi.fn();
+    const { session, sockets } = harness({ onDiagnostic }, { reconnectDelayMs: 10 });
+    await session.start();
+    vi.useFakeTimers();
+    closeWith(sockets[0].events, DisconnectReason.connectionLost);
+    expect(onDiagnostic).toHaveBeenLastCalledWith({ event: 'disconnect', statusCode: 408 });
+    expect(sockets[0].ws.eventNames()).toEqual([]);
+    sockets[0].ws.emit('CB:iq,,pair-success');
+    await vi.advanceTimersByTimeAsync(10);
+    sockets[1].ws.emit('CB:iq,,pair-success');
+    expect(onDiagnostic.mock.calls).toEqual([
+      [{ event: 'disconnect', statusCode: 408 }],
+      [{ event: 'pairing-success' }],
+    ]);
+    await session.stop();
+    expect(sockets[1].ws.eventNames()).toEqual([]);
+    sockets[1].ws.emit('CB:notification,type:companion_reg_refresh', {
+      content: [{ tag: 'companion_reg_refresh' }],
+    });
+    sockets[1].ws.emit('CB:iq,,pair-success');
+    expect(onDiagnostic).toHaveBeenCalledTimes(2);
+  });
+
+  it('isolates diagnostic callback errors from credential persistence and connection state', async () => {
+    const onDiagnostic = vi.fn(() => {
+      throw new Error('fixture-private-control-error');
+    });
+    const { session, sockets } = harness({ onDiagnostic }, { maxReconnectAttempts: 0 });
+    await session.start();
+    expect(() =>
+      sockets[0].ws.emit('CB:notification,type:companion_reg_refresh', {
+        content: [{ tag: 'companion_reg_refresh' }],
+      })
+    ).not.toThrow();
+    expect(() => sockets[0].ws.emit('CB:iq,,pair-success')).not.toThrow();
+    sockets[0].events.emit('creds.update', { registered: true, firstUnuploadedPreKeyId: 9 });
+    await sockets[0].configuration.auth.keys.get('session', ['fixture']);
+    expect(() => closeWith(sockets[0].events, DisconnectReason.connectionLost)).not.toThrow();
+    expect(session.state).toBe('disconnected');
+    await session.stop();
+    const creds = JSON.parse(
+      await readFile(join(authDirectory, 'creds.json'), 'utf8'),
+      BufferJSON.reviver
+    );
+    expect(creds.registered).toBe(true);
+    expect(creds.firstUnuploadedPreKeyId).toBe(9);
+    expect(onDiagnostic).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([undefined, '401', Number.NaN, Number.POSITIVE_INFINITY, -401, 99, 1000, 408.5])(
+    'omits invalid disconnect status codes from diagnostics: %s',
+    async (statusCode) => {
+      const onDiagnostic = vi.fn();
+      const { session, sockets } = harness({ onDiagnostic }, { maxReconnectAttempts: 0 });
+      await session.start();
+      sockets[0].events.emit('connection.update', {
+        connection: 'close',
+        lastDisconnect: {
+          error: Object.assign(new Error('fixture-private-error'), {
+            output: { statusCode, message: 'fixture-private-phone' },
+          }),
+          date: new Date(),
+        },
+      });
+      expect(onDiagnostic.mock.calls).toEqual([[{ event: 'disconnect' }]]);
+      expect(session.state).toBe('disconnected');
+    }
+  );
+
+  it('supports minimal mock sockets without a websocket event emitter', async () => {
+    const onDiagnostic = vi.fn();
+    const { session, makeSocket } = harness({ onDiagnostic });
+    const events = new EventEmitter();
+    makeSocket.mockReturnValueOnce({
+      ev: events as unknown as Socket['ev'],
+      sendMessage: vi.fn<Socket['sendMessage']>().mockResolvedValue(acknowledgment()),
+      end: vi.fn<Socket['end']>(),
+    });
+    await session.start();
+    events.emit('connection.update', { connection: 'open' });
+    expect(session.state).toBe('connected');
+    await session.stop();
+    expect(onDiagnostic).not.toHaveBeenCalled();
   });
 
   it('serializes credential and Signal-key updates into private atomic files and restores them', async () => {
@@ -264,6 +564,83 @@ describe('WhatsApp outbound session', () => {
     await session.stop();
     await vi.advanceTimersByTimeAsync(60000);
     expect(makeSocket).toHaveBeenCalledTimes(3);
+  });
+
+  it('reports expired QR pairing after bounded reconnects without reopening a socket', async () => {
+    const onQr = vi.fn();
+    const { session, makeSocket, sockets } = harness(
+      { onQr },
+      { reconnectDelayMs: 10, maxReconnectAttempts: 2 }
+    );
+    await session.start();
+    vi.useFakeTimers();
+    sockets[0].events.emit('connection.update', { qr: 'fixture-private-pairing-qr' });
+    for (let round = 0; round < 3; round++) {
+      closeWith(sockets[round].events, DisconnectReason.timedOut);
+      if (round < 2) {
+        expect(session.state).toBe('disconnected');
+        await vi.advanceTimersByTimeAsync(10 * 2 ** round);
+        expect(session.state).toBe('linking');
+      }
+    }
+    expect(session.state).toBe('pairing-expired');
+    expect(onQr).toHaveBeenLastCalledWith(null);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(makeSocket).toHaveBeenCalledTimes(3);
+    expect(await session.sendText('+821012345678', 'fixture')).toEqual({
+      status: 'failed',
+      reason: 'not-connected',
+    });
+    expect(sockets.every(({ sendMessage }) => sendMessage.mock.calls.length === 0)).toBe(true);
+  });
+
+  it.each([
+    { registered: false, qrIssued: false, allowPairing: true },
+    { registered: true, qrIssued: true, allowPairing: true },
+    { registered: true, qrIssued: false, allowPairing: false },
+  ])(
+    'keeps exhausted network failures distinct from expired pairing: %j',
+    async ({ registered, qrIssued, allowPairing }) => {
+      if (registered) await saveRegisteredCredentials();
+      const { session, makeSocket, sockets } = harness(
+        { allowPairing },
+        { maxReconnectAttempts: 0 }
+      );
+      await session.start();
+      vi.useFakeTimers();
+      if (qrIssued) sockets[0].events.emit('connection.update', { qr: 'fixture-private-qr' });
+      closeWith(sockets[0].events, DisconnectReason.connectionLost);
+      expect(session.state).toBe('disconnected');
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(makeSocket).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('resets QR issuance history only when starting a new session attempt', async () => {
+    const { session, makeSocket, sockets } = harness({}, { maxReconnectAttempts: 0 });
+    await session.start();
+    sockets[0].events.emit('connection.update', { qr: 'fixture-private-qr' });
+    closeWith(sockets[0].events, DisconnectReason.timedOut);
+    expect(session.state).toBe('pairing-expired');
+    await session.stop();
+    await session.start();
+    closeWith(sockets[1].events, DisconnectReason.connectionLost);
+    expect(session.state).toBe('disconnected');
+    expect(makeSocket).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves permanent logout after issuing a QR even when reconnects are exhausted', async () => {
+    const { session, makeSocket, sockets } = harness({}, { maxReconnectAttempts: 0 });
+    await session.start();
+    vi.useFakeTimers();
+    sockets[0].events.emit('connection.update', { qr: 'fixture-private-qr' });
+    closeWith(sockets[0].events, DisconnectReason.badSession);
+    expect(session.state).toBe('logged-out');
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(makeSocket).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('cancels a scheduled reconnect before it can open another socket', async () => {
