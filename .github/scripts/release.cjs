@@ -15,9 +15,17 @@ const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const SHA = /^[a-f0-9]{40}$/;
 
 class ChangedHeadError extends Error {
-  constructor(headSha) {
+  constructor(pr) {
     super('Release pull request head changed');
-    this.headSha = headSha;
+    this.headSha = pr.head.sha;
+    this.pr = pr;
+  }
+}
+
+class StaleBaseError extends Error {
+  constructor(pr) {
+    super('Release pull request base is stale');
+    this.pr = pr;
   }
 }
 
@@ -142,13 +150,55 @@ async function getPullRequest(github, repository, prNumber, expectedBaseSha, exp
   requireCondition(pr.base.ref === 'main' && pr.head.ref === RELEASE_BRANCH, 'Unexpected release pull request branch');
   requireCondition(pr.labels.some((label) => label.name === 'autorelease: pending'), 'Missing pending release label');
   requireSha(pr.head.sha, 'pull request head');
-  requireCondition(pr.base.sha === expectedBaseSha, 'Release pull request base is stale');
-  if (expectedHeadSha !== undefined && pr.head.sha !== expectedHeadSha) throw new ChangedHeadError(pr.head.sha);
+  if (pr.base.sha !== expectedBaseSha) throw new StaleBaseError(pr);
+  if (expectedHeadSha !== undefined && pr.head.sha !== expectedHeadSha) throw new ChangedHeadError(pr);
   const { data: main } = await github.rest.git.getRef({ ...repository, ref: 'heads/main' });
   requireCondition(main.object.sha === expectedBaseSha, 'Main advanced; retry release on the current main commit');
   const { data: head } = await github.rest.git.getRef({ ...repository, ref: `heads/${RELEASE_BRANCH}` });
   requireCondition(head.object.sha === pr.head.sha, 'Release branch changed during validation');
   return pr;
+}
+
+async function getInitialPullRequest(github, repository, prNumber, expectedBaseSha, wait) {
+  requireCondition(Number.isSafeInteger(prNumber) && prNumber > 0, 'Invalid release pull request number');
+  requireSha(expectedBaseSha, 'base');
+  const readReferences = async () => {
+    const { data: main } = await github.rest.git.getRef({ ...repository, ref: 'heads/main' });
+    requireCondition(main.object.sha === expectedBaseSha, 'Main advanced; retry release on the current main commit');
+    const { data: branch } = await github.rest.git.getRef({ ...repository, ref: `heads/${RELEASE_BRANCH}` });
+    requireSha(branch.object.sha, 'release branch');
+    return branch.object.sha;
+  };
+  const headSha = await readReferences();
+  const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+    ...repository,
+    basehead: `${expectedBaseSha}...${headSha}`,
+  });
+  requireCondition(comparison.behind_by === 0 && ['ahead', 'identical'].includes(comparison.status), 'Release branch does not contain the current main commit');
+  const version = requireVersion(JSON.parse((await readFile(github, repository, 'package.json', headSha)).text).version);
+  let staleSnapshot;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    requireCondition(await readReferences() === headSha, 'Release branch changed while waiting for initial pull request');
+    let pr;
+    try {
+      pr = await getPullRequest(github, repository, prNumber, expectedBaseSha, headSha);
+    } catch (error) {
+      if (!(error instanceof StaleBaseError) && !(error instanceof ChangedHeadError)) throw error;
+      pr = error.pr;
+    }
+    const titleVersion = /^chore\(main\): release (\d+\.\d+\.\d+)$/.exec(pr.title || '')?.[1];
+    requireCondition(titleVersion, 'Release pull request title version mismatch');
+    requireVersion(titleVersion);
+    validateReleaseMetadata(pr, titleVersion);
+    if (pr.base.sha === expectedBaseSha && pr.head.sha === headSha && titleVersion === version) return pr;
+    requireCondition(titleVersion === version || isNewerVersion(version, titleVersion), 'Unexpected initial release metadata version');
+    staleSnapshot ??= { headSha: pr.head.sha, baseSha: pr.base.sha, title: pr.title, body: pr.body };
+    requireCondition([headSha, staleSnapshot.headSha].includes(pr.head.sha), 'Release pull request changed while waiting for initial snapshot');
+    requireCondition([expectedBaseSha, staleSnapshot.baseSha].includes(pr.base.sha), 'Release pull request base changed while waiting for initial snapshot');
+    requireCondition(titleVersion === version || (pr.title === staleSnapshot.title && pr.body === staleSnapshot.body), 'Release metadata changed while waiting for initial snapshot');
+    if (attempt === 5) throw new Error('Timed out waiting for initial release pull request snapshot');
+    await wait(1000);
+  }
 }
 
 async function waitForLockCommit(github, repository, prNumber, expectedBaseSha, previousHeadSha, expectedHeadSha, version, wait) {
@@ -226,7 +276,7 @@ async function validateReleaseFiles(github, repository, pr, expectedBaseSha) {
 
 async function prepareRelease({ github, context, core, prNumber, expectedBaseSha, wait = waitFor }) {
   const repository = repoParameters(context);
-  let pr = await getPullRequest(github, repository, prNumber, expectedBaseSha);
+  let pr = await getInitialPullRequest(github, repository, prNumber, expectedBaseSha, wait);
   const release = await validateReleaseFiles(github, repository, pr, expectedBaseSha);
   pr = await getPullRequest(github, repository, prNumber, expectedBaseSha, pr.head.sha);
   validateReleaseMetadata(pr, release.version);

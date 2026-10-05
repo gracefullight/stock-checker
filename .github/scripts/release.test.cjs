@@ -124,6 +124,10 @@ function apiFixture({ synchronized = false } = {}) {
         getRef: async ({ ref }) => ({ data: { object: { sha: ref === 'heads/main' ? state.mainSha : state.branchSha } } }),
       },
       repos: {
+        compareCommitsWithBasehead: async ({ basehead }) => {
+          state.comparisonBasehead = basehead;
+          return { data: state.comparison || { status: 'ahead', behind_by: 0 } };
+        },
         getContent: async ({ path, ref }) => {
           const files = ref === BASE_SHA ? state.baseFiles : state.headFiles;
           assert.ok(ref === BASE_SHA || ref === state.pr.head.sha, `Unexpected content ref: ${ref}`);
@@ -241,7 +245,6 @@ for (const [name, change] of [
   ['draft', (state) => { state.pr.draft = true; }],
   ['closed pull request', (state) => { state.pr.state = 'closed'; }],
   ['missing pending label', (state) => { state.pr.labels = []; }],
-  ['stale pull request base', (state) => { state.pr.base.sha = MERGE_SHA; }],
   ['advanced main', (state) => { state.mainSha = MERGE_SHA; }],
   ['changed branch ref', (state) => { state.branchSha = MERGE_SHA; }],
   ['unexpected file', (state) => { state.files.push({ filename: '.github/workflows/release.yml', status: 'modified' }); }],
@@ -278,6 +281,133 @@ test('prepare detects branch races before writing the lockfile', async () => {
   };
   await assert.rejects(prepareRelease(prepareOptions(fixture)), /head changed/);
   assert.equal(fixture.state.writes.length, 0);
+});
+
+test('prepare waits for the initial PR base and head snapshot to catch up to pinned refs', async () => {
+  const fixture = apiFixture();
+  const waits = [];
+  let staleReads = 2;
+  fixture.state.transformPullResponse = (snapshot) => {
+    if (staleReads > 0) {
+      staleReads -= 1;
+      snapshot.base.sha = 'e'.repeat(40);
+      snapshot.head.sha = MERGE_SHA;
+    }
+    return snapshot;
+  };
+  const result = await prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } });
+  assert.equal(result.headSha, LOCK_SHA);
+  assert.equal(fixture.state.comparisonBasehead, `${BASE_SHA}...${HEAD_SHA}`);
+  assert.deepEqual(waits, [1000, 1000]);
+});
+
+test('prepare bounds the wait for an initial stale PR snapshot', async () => {
+  const fixture = apiFixture();
+  const waits = [];
+  fixture.state.transformPullResponse = (snapshot) => {
+    snapshot.base.sha = 'e'.repeat(40);
+    return snapshot;
+  };
+  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /Timed out waiting for initial/);
+  assert.deepEqual(waits, [1000, 1000, 1000, 1000, 1000]);
+  assert.equal(fixture.state.pullReads, 6);
+  assert.equal(fixture.state.writes.length, 0);
+});
+
+test('prepare permits only the pinned internally consistent old metadata until catchup', async () => {
+  const fixture = apiFixture();
+  let staleReads = 2;
+  fixture.state.transformPullResponse = (snapshot) => {
+    if (staleReads > 0) {
+      staleReads -= 1;
+      snapshot.title = 'chore(main): release 0.0.1';
+      snapshot.body = snapshot.body.replace('## 0.1.0', '## 0.0.1');
+    }
+    return snapshot;
+  };
+  const waits = [];
+  const result = await prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } });
+  assert.equal(result.version, '0.1.0');
+  assert.deepEqual(waits, [1000, 1000]);
+});
+
+test('prepare rejects a third old metadata snapshot during initial propagation', async () => {
+  const fixture = apiFixture();
+  fixture.state.transformPullResponse = (snapshot) => {
+    const version = fixture.state.pullReads === 1 ? '0.0.1' : '0.0.2';
+    snapshot.title = `chore(main): release ${version}`;
+    snapshot.body = snapshot.body.replace('## 0.1.0', `## ${version}`);
+    return snapshot;
+  };
+  const waits = [];
+  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /metadata changed while waiting/);
+  assert.deepEqual(waits, [1000]);
+  assert.equal(fixture.state.writes.length, 0);
+});
+
+test('prepare rejects main or branch changes during initial snapshot propagation', async () => {
+  for (const reference of ['main', 'branch']) {
+    const fixture = apiFixture();
+    fixture.state.transformPullResponse = (snapshot) => {
+      snapshot.base.sha = 'e'.repeat(40);
+      return snapshot;
+    };
+    const waits = [];
+    await assert.rejects(prepareRelease({
+      ...prepareOptions(fixture),
+      wait: async (delay) => {
+        waits.push(delay);
+        if (reference === 'main') fixture.state.mainSha = MERGE_SHA;
+        else fixture.state.branchSha = MERGE_SHA;
+      },
+    }), /Main advanced|branch changed while waiting/);
+    assert.deepEqual(waits, [1000]);
+    assert.equal(fixture.state.pullReads, 1);
+    assert.equal(fixture.state.writes.length, 0);
+  }
+});
+
+test('prepare rejects a third head or base snapshot during initial propagation', async () => {
+  for (const field of ['head', 'base']) {
+    const fixture = apiFixture();
+    fixture.state.transformPullResponse = (snapshot) => {
+      snapshot.base.sha = 'e'.repeat(40);
+      snapshot.head.sha = MERGE_SHA;
+      if (fixture.state.pullReads > 1) snapshot[field].sha = 'f'.repeat(40);
+      return snapshot;
+    };
+    const waits = [];
+    await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /changed while waiting for initial/);
+    assert.deepEqual(waits, [1000]);
+    assert.equal(fixture.state.writes.length, 0);
+  }
+});
+
+test('prepare requires the pinned release branch to contain current main', async () => {
+  const fixture = apiFixture();
+  fixture.state.comparison = { status: 'diverged', behind_by: 1 };
+  await assert.rejects(prepareRelease(prepareOptions(fixture)), /does not contain/);
+  assert.equal(fixture.state.pullReads, 0);
+  assert.equal(fixture.state.writes.length, 0);
+});
+
+test('prepare preserves provenance and metadata guards for an initial stale snapshot', async () => {
+  for (const field of ['author', 'fork', 'label', 'title', 'body']) {
+    const fixture = apiFixture();
+    fixture.state.transformPullResponse = (snapshot) => {
+      snapshot.base.sha = 'e'.repeat(40);
+      if (field === 'author') snapshot.user.login = 'attacker';
+      if (field === 'fork') snapshot.head.repo = { id: 2, full_name: 'attacker/stock-checker' };
+      if (field === 'label') snapshot.labels = [];
+      if (field === 'title') snapshot.title = 'chore(main): release 9.9.9';
+      if (field === 'body') snapshot.body = snapshot.body.replace('## 0.1.0', '## 9.9.9');
+      return snapshot;
+    };
+    const waits = [];
+    await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }));
+    assert.deepEqual(waits, []);
+    assert.equal(fixture.state.writes.length, 0);
+  }
 });
 
 test('prepare detects branch races during the GitHub content update', async () => {
