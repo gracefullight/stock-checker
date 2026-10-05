@@ -211,6 +211,9 @@ or updates a release PR, synchronizes the root and four workspace versions plus
 commit. Passing release PRs are squash-merged automatically; the same workflow
 then creates the `vX.Y.Z` tag and GitHub Release. No additional token or secret is
 required. MCP server discovery reads its version from its package manifest.
+The daily stock-data workflow explicitly starts Release Please after committing
+changed CSVs, so its GitHub-token push also reaches the versioning flow. Weekly
+optimization uploads artifacts and does not commit to `main`.
 
 Use Conventional Commits: `feat:` increments the minor version, `fix:` increments
 the patch version, and `!` or a `BREAKING CHANGE:` footer increments the major
