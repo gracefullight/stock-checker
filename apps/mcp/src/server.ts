@@ -11,6 +11,7 @@ import { type MarketScreenService, registerMarketScreenTools } from '@mcp/market
 import { McpServer } from '@modelcontextprotocol/server';
 import type { generateStockAnalystReport } from '@stock-checker/core/src/reports/stock-analyst.ts';
 import type { generateStockScreen } from '@stock-checker/core/src/reports/stock-screen.ts';
+import type { buildStockScreenReportNotification } from '@stock-checker/core/src/utils/stock-screen-alerts.ts';
 import type {
   sendWhatsAppNotification,
   WhatsAppNotificationResult,
@@ -23,6 +24,7 @@ export type DashboardLauncher = typeof openStockDashboard;
 export type DashboardGenerator = typeof generateStockDashboard;
 export type ScreenGenerator = typeof generateStockScreen;
 export type WhatsAppNotifier = typeof sendWhatsAppNotification;
+export type ScreenNotificationBuilder = typeof buildStockScreenReportNotification;
 
 export const SERVER_INSTRUCTIONS =
   'Analyze one ticker using completed market sessions. Buy/sell scores and score weights describe signals, not success probabilities. Historical rates describe observed backtest outcomes with sample counts and execution assumptions; they do not predict future returns. Optional fundamentals, earnings, analyst targets, valuation, and market sources may be unavailable. Valuation reports trailing PER and PSR, with forward PER shown separately. Industry comparisons use a bounded sample of Yahoo peers in the same industry, with separate sample counts for each median; they do not represent the entire industry. A lower multiple alone does not imply BUY. Read report warnings and availability before drawing conclusions. Reports provide analysis, not orders or guaranteed investment advice. When the user asks for a dashboard in chat, use show_stock_dashboard. MCP Apps clients can render its interactive chart and report without a separate web server; other clients receive a text report and dashboard link. Use open_stock_dashboard only when the user asks to launch a browser. It checks the web listener and does not start servers. analyze_stock and show_stock_dashboard never launch a browser. When the user asks to find BUY candidates across tickers using Stock Checker criteria, use screen_stocks. It filters the core engine final decision after quality gates, defaults to the existing 20-symbol web universe, and does not search the entire market. Distinguish no matching candidates from unavailable or partially missing analyses. When opening a candidate detail report, pass screen.criteria.lookbackDays to analyze_stock or show_stock_dashboard so decisions use the same history window. For market-wide candidate discovery, use prepare_finviz_screen, collect the displayed Finviz candidate symbols with an available browser MCP such as Aside or an authorized CSV export, then call create_market_screen. The stock-checker server does not fetch or crawl Finviz. Preserve the actual filters, capture time, displayed filtered total, and partial collection status; never treat a missing page or security check as complete coverage. Use get_market_screen for progress and paginated final decisions, and control_market_screen to pause or resume. A completed job covers the supplied candidate manifest, not all global stocks, and its per-ticker session dates may differ. Finviz prefilters select candidates; only the core final decision qualifies a BUY. Pass the job lookbackDays to detailed reports. Use get_market_screen_performance to read saved forward paper observations without market-data requests or scan resumption. Use refresh_market_screen_performance only for an explicit bounded refresh of at most 50 recommendations. Performance describes observed paper outcomes over five sessions after recommendations, not actual fills or a calibrated win probability. Keep closed sample counts separate from pending and unavailable observations; an empty closed sample has no percentage.';
@@ -103,9 +105,21 @@ async function notifyWhatsApp(...args: Parameters<WhatsAppNotifier>): ReturnType
   return core.sendWhatsAppNotification(...args);
 }
 
+async function buildScreenNotification(
+  ...args: Parameters<ScreenNotificationBuilder>
+): ReturnType<ScreenNotificationBuilder> {
+  const core = await import('@stock-checker/core/src/utils/stock-screen-alerts.ts');
+  return core.buildStockScreenReportNotification(...args);
+}
+
+async function isNotificationConfigured(): Promise<boolean> {
+  const core = await import('@stock-checker/core/src/utils/whatsapp.ts');
+  return core.isWhatsAppNotificationConfigured();
+}
+
 function renderWhatsAppNotification(result: WhatsAppNotificationResult): string {
   if (result.status === 'accepted') {
-    return 'WhatsApp notification: API accepted the request; delivery is not confirmed.';
+    return 'WhatsApp notification: local gateway accepted the request; delivery is not confirmed.';
   }
   if (result.status === 'disabled') {
     return result.reason === 'not-configured'
@@ -121,7 +135,9 @@ export function createStockAnalystServer(
   dashboardGenerator: DashboardGenerator = generateDashboard,
   screenGenerator: ScreenGenerator = generateScreen,
   marketScreenService?: MarketScreenService,
-  whatsappNotifier: WhatsAppNotifier = notifyWhatsApp
+  whatsappNotifier: WhatsAppNotifier = notifyWhatsApp,
+  screenNotificationBuilder: ScreenNotificationBuilder = buildScreenNotification,
+  notificationConfigured: () => Promise<boolean> = isNotificationConfigured
 ): McpServer {
   const server = new McpServer(
     { name: 'stock-checker', version: packageMetadata.version },
@@ -291,10 +307,12 @@ export function createStockAnalystServer(
         let notification: WhatsAppNotificationResult | undefined;
         if (notifyWhatsApp) {
           try {
-            const { buildStockScreenWhatsAppNotification } = await import(
-              '@stock-checker/core/src/utils/stock-screen-alerts.ts'
-            );
-            notification = await whatsappNotifier(buildStockScreenWhatsAppNotification(screen));
+            const message = (await notificationConfigured())
+              ? await screenNotificationBuilder(screen)
+              : (
+                  await import('@stock-checker/core/src/utils/stock-screen-alerts.ts')
+                ).buildStockScreenWhatsAppNotification(screen);
+            notification = await whatsappNotifier(message);
           } catch {
             notification = { status: 'failed', reason: 'network-error' };
           }

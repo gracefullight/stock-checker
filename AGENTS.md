@@ -31,6 +31,7 @@
 - `mise run whatsapp:test`: Verify the pinned Baileys registration patch against mocked SDK sockets and timers without network access.
 - `mise run whatsapp:service:restart`: Restart the owned macOS service, preserving credentials and its QR/gateway mode; renew an expired initial QR attempt.
 - WhatsApp alerts: set `WHATSAPP_TO` in E.164 format and keep the local gateway running. CLI BUY/SELL batches, saved market-screen completion summaries, and MCP `screen_stocks` with `notifyWhatsApp: true` send bounded plain-text summaries. MCP notification defaults to `false`; see README for setup.
+- WhatsApp details: preserve the original SC decision, model settings, reasons, and reference date; include historical BUY win rates with sample counts and dates plus available analyst targets. Limit enrichment to three candidates and 30 seconds, skip it when notifications are disabled, and label unavailable data explicitly. Historical rates and ATR touch rates are not future execution probabilities.
 
 ## Coding Style & Naming Conventions
 - Language: TypeScript with `strict: true`, `esModuleInterop: true`.

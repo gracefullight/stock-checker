@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sendWhatsAppNotification, type WhatsAppNotification } from '@/utils/whatsapp';
+import {
+  isWhatsAppNotificationConfigured,
+  sendWhatsAppNotification,
+  type WhatsAppNotification,
+} from '@/utils/whatsapp';
 
 const notification: WhatsAppNotification = {
   title: 'Stock Checker: OII BUY',
@@ -30,6 +34,32 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+});
+
+describe('isWhatsAppNotificationConfigured', () => {
+  it('checks existing private configuration without creating credentials', async () => {
+    const readToken = vi.fn().mockResolvedValue(environment.WHATSAPP_GATEWAY_TOKEN);
+    expect(await isWhatsAppNotificationConfigured({ environment, readToken })).toBe(true);
+    expect(readToken).toHaveBeenCalledOnce();
+  });
+
+  it('skips credential access when no receiver is configured', async () => {
+    const readToken = vi.fn();
+    expect(await isWhatsAppNotificationConfigured({ environment: {}, readToken })).toBe(false);
+    expect(readToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects external endpoints and private credential errors', async () => {
+    const readToken = vi.fn().mockRejectedValue(new Error('private credential path and token'));
+    expect(
+      await isWhatsAppNotificationConfigured({
+        environment: { ...environment, WHATSAPP_GATEWAY_URL: 'http://example.invalid' },
+        readToken,
+      })
+    ).toBe(false);
+    expect(readToken).not.toHaveBeenCalled();
+    expect(await isWhatsAppNotificationConfigured({ environment, readToken })).toBe(false);
+  });
 });
 
 describe('sendWhatsAppNotification through WhatsApp Web', () => {
@@ -177,22 +207,52 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
     expect(sentPayload(fetch)).toMatchObject({
       title: 'OII BUY',
       asOf: '2026-10-05',
-      summary: '근거: 추세 전환 확인',
+      summary: '근거:\n추세 전환 확인',
     });
   });
 
   it('bounds UTF-16 lengths without splitting supplementary characters', async () => {
     const fetch = mockFetch();
     await sendWhatsAppNotification(
-      { title: `A${'😀'.repeat(100)}`, asOf: '日'.repeat(100), summary: '한국어😀'.repeat(500) },
+      { title: `A${'😀'.repeat(100)}`, asOf: '日'.repeat(100), summary: '한국어😀'.repeat(1_000) },
       { environment, fetch }
     );
     const payload = sentPayload(fetch);
     expect(payload.title.length).toBeLessThanOrEqual(80);
     expect(payload.asOf.length).toBeLessThanOrEqual(60);
-    expect(payload.summary.length).toBeLessThanOrEqual(700);
+    expect(payload.summary.length).toBe(3_000);
     expect(payload.title).toBe(payload.title.toWellFormed());
     expect(payload.summary).toBe(payload.summary.toWellFormed());
+  });
+
+  it('preserves a detailed report and its historical and analyst sections in one send', async () => {
+    const fetch = mockFetch();
+    const summary = [
+      '과거 관측값이며 미래 승률이 아닙니다.',
+      `근거: ${'추세 확인 '.repeat(150).trim()}`,
+      '',
+      '과거 BUY 5세션: 승률 60.0%, 30건, 비용 10bps',
+      '애널리스트 목표가: USD 42.00, 8명, 조회 2026-10-05',
+    ].join('\n');
+    expect(summary.length).toBeGreaterThan(700);
+    await sendWhatsAppNotification({ ...notification, summary }, { environment, fetch });
+    expect(sentPayload(fetch).summary).toBe(summary);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(new TextEncoder().encode(String(fetch.mock.calls[0]?.[1]?.body)).length).toBeLessThan(
+      16_384
+    );
+  });
+
+  it('normalizes line endings, blank lines and controls while preserving report paragraphs', async () => {
+    const fetch = mockFetch();
+    await sendWhatsAppNotification(
+      {
+        ...notification,
+        summary: '  OII\r\n \t근거\0 확인  \r\n\r\n\r\n승률\u200b 표본 30\r목표가\u2028확인 ',
+      },
+      { environment, fetch }
+    );
+    expect(sentPayload(fetch).summary).toBe('OII\n근거 확인\n\n승률 표본 30\n목표가 확인');
   });
 
   it('uses a readable placeholder for empty notification fields', async () => {

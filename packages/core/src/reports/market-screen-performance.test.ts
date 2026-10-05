@@ -22,6 +22,7 @@ import {
 } from '@/reports/market-screen-store';
 
 vi.mock('@/utils/whatsapp', () => ({
+  isWhatsAppNotificationConfigured: vi.fn().mockResolvedValue(false),
   sendWhatsAppNotification: vi
     .fn()
     .mockResolvedValue({ status: 'disabled', reason: 'not-configured' }),

@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { StockScreenMatch, StockScreenResult } from '@/reports/stock-screen';
-import { buildStockScreenWhatsAppNotification } from '@/utils/stock-screen-alerts';
+import type { StockReportAlertGenerator } from '@/utils/stock-report-alerts';
+import {
+  buildStockScreenReportNotification,
+  buildStockScreenWhatsAppNotification,
+} from '@/utils/stock-screen-alerts';
 
 function candidate(ticker: string, overrides: Partial<StockScreenMatch> = {}): StockScreenMatch {
   return {
@@ -71,6 +75,47 @@ function fixture(overrides: Partial<StockScreenResult> = {}): StockScreenResult 
 }
 
 describe('buildStockScreenWhatsAppNotification', () => {
+  it('enriches the original snapshot with the screening history window and preserved reasons', async () => {
+    const screen = fixture({ criteria: { ...fixture().criteria, lookbackDays: 2920 } });
+    const original = structuredClone(screen);
+    const generateReport = vi.fn<StockReportAlertGenerator>(async (ticker, options) => ({
+      ticker,
+      lookbackDays: options.lookbackDays,
+      dataAsOf: '2026-10-05',
+      decision: 'SELL',
+      gateReasons: ['New unrelated decision'],
+      historical: null,
+      analystTargets: null,
+    }));
+    const message = await buildStockScreenReportNotification(screen, { generateReport });
+
+    expect(generateReport).toHaveBeenCalledExactlyOnceWith('AAPL', { lookbackDays: 2920 });
+    expect(message.summary).toContain('AAPL BUY');
+    expect(message.summary).toContain('2026-10-02');
+    expect(message.summary).toContain('Fixture gates passed');
+    expect(message.summary).not.toContain('New unrelated decision');
+    expect(screen).toEqual(original);
+  });
+
+  it('does not start report data requests while timed-out screen providers can remain in progress', async () => {
+    const screen = fixture({
+      status: 'partial',
+      unavailable: [
+        {
+          ticker: 'SLOW',
+          reason: 'Screen time budget exhausted while ticker analysis was in progress.',
+        },
+      ],
+    });
+    const generateReport = vi.fn<StockReportAlertGenerator>(async () => {
+      throw new Error('Overlapping provider requests are forbidden');
+    });
+    const message = await buildStockScreenReportNotification(screen, { generateReport });
+    expect(generateReport).not.toHaveBeenCalled();
+    expect(message.summary).toContain('AAPL BUY');
+    expect(message.summary).toContain('Fixture gates passed');
+  });
+
   it('distinguishes scan completion from per-ticker completed bars and reference prices', () => {
     const first = candidate('AAPL');
     const second = candidate('OII', { dataAsOf: '2026-10-01' });

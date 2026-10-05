@@ -2,12 +2,14 @@ import { describe, expect, mock, test } from 'bun:test';
 import {
   createStockAnalystServer,
   type ScreenGenerator,
+  type ScreenNotificationBuilder,
   SERVER_INSTRUCTIONS,
   type WhatsAppNotifier,
 } from '@mcp/server.ts';
 import { fixtureScreen, fixtureScreenMatch } from '@mcp/test-fixtures/screen.ts';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
+import { buildStockScreenWhatsAppNotification } from '@stock-checker/core/src/utils/stock-screen-alerts.ts';
 
 async function withScreenClient(
   generator: ScreenGenerator,
@@ -15,7 +17,11 @@ async function withScreenClient(
   notifier: WhatsAppNotifier = mock<WhatsAppNotifier>(async () => ({
     status: 'disabled',
     reason: 'not-configured',
-  }))
+  })),
+  builder: ScreenNotificationBuilder = mock(async (screen) =>
+    buildStockScreenWhatsAppNotification(screen)
+  ),
+  configured: () => Promise<boolean> = async () => true
 ): Promise<void> {
   const server = createStockAnalystServer(
     undefined,
@@ -23,7 +29,9 @@ async function withScreenClient(
     undefined,
     generator,
     undefined,
-    notifier
+    notifier,
+    builder,
+    configured
   );
   const client = new Client({ name: 'stock-screen-test', version: '1.0.0' });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -211,6 +219,9 @@ describe('screen_stocks MCP tool', () => {
       const notifier = mock<WhatsAppNotifier>(async () => {
         throw new Error('Notification was not authorized');
       });
+      const builder = mock<ScreenNotificationBuilder>(async () => {
+        throw new Error('Report enrichment was not authorized');
+      });
       await withScreenClient(
         async () => ({ screen, markdown: '# Screen without notification' }),
         async (client) => {
@@ -220,8 +231,10 @@ describe('screen_stocks MCP tool', () => {
             structuredContent: { screen },
           });
           expect(notifier).not.toHaveBeenCalled();
+          expect(builder).not.toHaveBeenCalled();
         },
-        notifier
+        notifier,
+        builder
       );
     }
   );
@@ -260,7 +273,7 @@ describe('screen_stocks MCP tool', () => {
           expect(result.content).toEqual([
             {
               type: 'text',
-              text: '# Screen remains available\n\nWhatsApp notification: API accepted the request; delivery is not confirmed.',
+              text: '# Screen remains available\n\nWhatsApp notification: local gateway accepted the request; delivery is not confirmed.',
             },
           ]);
           expect(notifier).toHaveBeenCalledTimes(1);
@@ -282,6 +295,70 @@ describe('screen_stocks MCP tool', () => {
       );
     }
   );
+
+  test('awaits one enriched report before sending and keeps the original screen snapshot', async () => {
+    const screen = fixtureScreen({ criteria: { ...fixtureScreen().criteria, lookbackDays: 2920 } });
+    const original = structuredClone(screen);
+    const payload = {
+      title: 'Enriched stock screen',
+      asOf: screen.generatedAt,
+      summary: 'Observed win rate 60% (6/10); reasons and analyst targets.',
+    };
+    const builder = mock<ScreenNotificationBuilder>(async (received) => {
+      expect(received).toEqual(original);
+      return payload;
+    });
+    const notifier = mock<WhatsAppNotifier>(async (received) => {
+      expect(builder).toHaveBeenCalledTimes(1);
+      expect(received).toEqual(payload);
+      return { status: 'accepted', messageId: 'fixture' };
+    });
+    await withScreenClient(
+      async () => ({ screen, markdown: '# Saved screen' }),
+      async (client) => {
+        const result = await client.callTool({
+          name: 'screen_stocks',
+          arguments: { notifyWhatsApp: true },
+        });
+        expect(result).toMatchObject({ structuredContent: { screen: original }, isError: false });
+        expect(notifier).toHaveBeenCalledTimes(1);
+        expect(screen).toEqual(original);
+      },
+      notifier,
+      builder
+    );
+  });
+
+  test('does not request report data when an explicit notification has no configured sender', async () => {
+    const screen = fixtureScreen();
+    const builder = mock<ScreenNotificationBuilder>(async () => {
+      throw new Error('No report data should be fetched');
+    });
+    const notifier = mock<WhatsAppNotifier>(async () => ({
+      status: 'disabled',
+      reason: 'not-configured',
+    }));
+    await withScreenClient(
+      async () => ({ screen, markdown: '# Screen' }),
+      async (client) => {
+        const result = await client.callTool({
+          name: 'screen_stocks',
+          arguments: { notifyWhatsApp: true },
+        });
+        expect(result).toMatchObject({
+          structuredContent: {
+            screen,
+            notification: { status: 'disabled', reason: 'not-configured' },
+          },
+        });
+        expect(builder).not.toHaveBeenCalled();
+        expect(notifier).toHaveBeenCalledTimes(1);
+      },
+      notifier,
+      builder,
+      async () => false
+    );
+  });
 
   test.each([
     { status: 'disabled' as const, reason: 'not-configured' as const },

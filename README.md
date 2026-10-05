@@ -381,7 +381,7 @@ new environment. Changing the recipient does not require linking WhatsApp again.
 
 The CLI sends one summary per successful `predict` run containing BUY or SELL
 results, after saving its CSV/JSON and prediction history. It includes signal
-counts, up to five ticker details, completed-close BUY stop/target references,
+counts, up to three ticker details, completed-close BUY stop/target references,
 and SELL exit warnings. HOLD-only runs send nothing. Repeating a CLI run can
 produce another notification.
 
@@ -395,9 +395,28 @@ attempt is not automatically retried, so a process crash can lose that alert.
 Notification failures do not discard analysis or change a completed job to paused.
 
 Messages contain an event title, as-of timestamp/date, and a bounded summary as
-plain text. An `accepted` result includes a message ID and does not prove
-recipient delivery. Prices are analysis references; signal scores are not win
-probabilities, and these alerts do not place trades.
+plain text with paragraphs, up to 3,000 UTF-16 code units in the summary.
+The detailed candidates include the original SC decision and reasons, historical
+BUY win rates with sample counts and observation dates, and analyst targets when
+available. Historical wins measure net returns from the next session's open
+through the fifth session's close, with a 10 bps round-trip cost. SELL and HOLD
+alerts still label this as a historical BUY sample; it is not a SELL or short
+win rate. ATR stop/target touch rates are separate observations, not execution
+probabilities. Missing data and zero samples are shown explicitly.
+
+Target information distinguishes Yahoo's consensus mean, range, currency,
+analyst count, retrieval time, and source from the most recent dated individual
+update in the returned data. A retrieval date is not the target's publication
+date; missing publication dates, currencies, and target horizons remain unknown.
+The CLI uses its actual optimized analysis settings for historical calculations.
+Saved screening results keep their original decision, date, reasons, and price
+references when enrichment is unavailable or newer analysis differs.
+
+Enrichment is limited to three candidates and a 30-second total budget. Disabled
+notifications skip this extra work, and a failed or timed-out lookup preserves
+the available summary. An `accepted` result includes a message ID and does not
+prove recipient delivery. Prices are analysis references; historical rates and
+signal scores are not future win probabilities, and these alerts do not place trades.
 
 For a bounded MCP `screen_stocks` summary, explicitly pass `notifyWhatsApp: true`:
 

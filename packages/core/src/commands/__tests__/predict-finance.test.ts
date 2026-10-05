@@ -9,7 +9,8 @@ import { evaluateSignal } from '@/services/pipeline';
 import type { IndicatorValues, PipelineResult } from '@/types';
 import { loadOptimizedConfig } from '@/utils/config-loader';
 import { writeToCsv } from '@/utils/csv-writer';
-import { sendWhatsAppNotification } from '@/utils/whatsapp';
+import { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alerts';
+import { isWhatsAppNotificationConfigured, sendWhatsAppNotification } from '@/utils/whatsapp';
 
 vi.mock('@/services/data-fetcher', () => ({
   getHistoricalPrices: vi.fn(),
@@ -29,7 +30,11 @@ vi.mock('@/services/pipeline', () => ({ evaluateSignal: vi.fn() }));
 vi.mock('@/utils/config-loader', () => ({ loadOptimizedConfig: vi.fn() }));
 vi.mock('@/utils/csv-writer', () => ({ writeToCsv: vi.fn() }));
 vi.mock('@/ui/summary', () => ({ printSummaryTable: vi.fn() }));
-vi.mock('@/utils/whatsapp', () => ({ sendWhatsAppNotification: vi.fn() }));
+vi.mock('@/utils/whatsapp', () => ({
+  sendWhatsAppNotification: vi.fn(),
+  isWhatsAppNotificationConfigured: vi.fn(),
+}));
+vi.mock('@/utils/stock-report-alerts', () => ({ buildStockReportWhatsAppNotification: vi.fn() }));
 vi.mock('node:fs', () => ({
   existsSync: vi.fn().mockReturnValue(true),
   mkdirSync: vi.fn(),
@@ -116,6 +121,12 @@ const earnings: EarningsData = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(isWhatsAppNotificationConfigured).mockResolvedValue(true);
+  vi.mocked(buildStockReportWhatsAppNotification).mockImplementation(async (input) => ({
+    title: input.title,
+    asOf: input.asOf,
+    summary: input.coverageSummary,
+  }));
   vi.mocked(sendWhatsAppNotification).mockResolvedValue({
     status: 'disabled',
     reason: 'not-configured',
@@ -153,10 +164,72 @@ describe('equity prediction finance inputs', () => {
     vi.mocked(evaluateSignal).mockReturnValue({ ...pipelineResult, finalDecision: 'HOLD' });
     await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
     expect(sendWhatsAppNotification).not.toHaveBeenCalled();
+    expect(buildStockReportWhatsAppNotification).not.toHaveBeenCalled();
 
     vi.mocked(calculateAllIndicators).mockReturnValue({ ...indicators, atr: 0 });
     await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
     expect(sendWhatsAppNotification).not.toHaveBeenCalled();
+  });
+
+  it('enriches from the saved decision and actual optimized pipeline context after persistence', async () => {
+    const thresholds = { ...DEFAULT_PIPELINE_CONFIG.thresholds, buy: 432, sell: 198 };
+    vi.mocked(loadOptimizedConfig).mockResolvedValue({
+      weights: DEFAULT_PIPELINE_CONFIG.indicatorWeights,
+      thresholds,
+      patternWeights: DEFAULT_PIPELINE_CONFIG.patternWeights,
+      calibration: DEFAULT_PIPELINE_CONFIG.calibration,
+    });
+    await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
+
+    expect(buildStockReportWhatsAppNotification).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        lookbackDays: 730,
+        candidates: [
+          expect.objectContaining({
+            ticker: 'TEST',
+            decision: 'SELL',
+            dataAsOf: '2026-10-01',
+            reference: { price: 100, stopLoss: 97, takeProfit: 106, atr: 2 },
+            gateReasons: expect.arrayContaining([
+              expect.stringContaining('threshold 432'),
+              expect.stringContaining('threshold 198'),
+            ]),
+            context: expect.objectContaining({
+              dailyPrices: [bar],
+              pipelineResult,
+              config: expect.objectContaining({ thresholds }),
+              result: expect.objectContaining({ opinion: 'SELL', date: '2026-10-01' }),
+            }),
+          }),
+        ],
+      }),
+      undefined
+    );
+    const enrichmentOrder = vi.mocked(buildStockReportWhatsAppNotification).mock
+      .invocationCallOrder[0];
+    expect(vi.mocked(fs.writeFileSync).mock.invocationCallOrder[0]).toBeLessThan(enrichmentOrder);
+    expect(writeToCsv).toHaveBeenCalledWith([
+      expect.not.objectContaining({ context: expect.anything(), gateReasons: expect.anything() }),
+    ]);
+  });
+
+  it('preserves saved output when report enrichment unexpectedly fails', async () => {
+    vi.mocked(buildStockReportWhatsAppNotification).mockRejectedValueOnce(
+      new Error('report unavailable')
+    );
+    await expect(
+      predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' })
+    ).resolves.toBeUndefined();
+    expect(writeToCsv).toHaveBeenCalledOnce();
+    expect(fs.writeFileSync).toHaveBeenCalledOnce();
+    expect(sendWhatsAppNotification).not.toHaveBeenCalled();
+  });
+
+  it('skips report data requests when the local sender is not configured', async () => {
+    vi.mocked(isWhatsAppNotificationConfigured).mockResolvedValue(false);
+    await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
+    expect(buildStockReportWhatsAppNotification).not.toHaveBeenCalled();
+    expect(sendWhatsAppNotification).toHaveBeenCalledOnce();
   });
 
   it('keeps saved results when WhatsApp rejects the request or throws unexpectedly', async () => {

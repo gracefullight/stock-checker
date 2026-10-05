@@ -17,7 +17,8 @@ import {
 } from '@/reports/market-screen-store';
 import { projectMatch, type StockScreenMatch } from '@/reports/stock-screen';
 import type { analyzeTickerContext } from '@/services/ticker-analysis';
-import { sendWhatsAppNotification } from '@/utils/whatsapp';
+import { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alerts';
+import { isWhatsAppNotificationConfigured, sendWhatsAppNotification } from '@/utils/whatsapp';
 
 export {
   getMarketScreenPerformance,
@@ -60,6 +61,9 @@ export interface MarketScreenDependencies {
   minIntervalMs?: number;
   /** Test-only sender injection; public inputs never accept messaging credentials. */
   sendWhatsAppNotification?: typeof sendWhatsAppNotification;
+  /** Offline report-builder injection; never exposed as a public MCP input. */
+  buildStockReportWhatsAppNotification?: typeof buildStockReportWhatsAppNotification;
+  isWhatsAppNotificationConfigured?: typeof isWhatsAppNotificationConfigured;
 }
 
 export interface MarketScreenPageOptions {
@@ -518,18 +522,19 @@ async function notifyCompletion(
     );
     const candidates = rows.slice(0, 3).map(({ item }) => {
       const match = item as StockScreenMatch;
-      const reference = match.execution.reference?.price.toFixed(2) ?? 'unavailable';
-      return `${match.decision} ${match.ticker}: reference ${reference}, ${metric === 'sellScore' ? 'SELL' : 'BUY'} score ${match[metric].toFixed(1)}, session ${match.dataAsOf ?? 'unavailable'}`;
+      return {
+        ticker: match.ticker,
+        decision: match.decision,
+        dataAsOf: match.dataAsOf,
+        gateReasons: match.gateReasons,
+        reference: match.execution.reference,
+      };
     });
     const { progress, universe } = runtime.job;
-    const summary = [
+    const coverageSummary = [
       `Filter ${runtime.job.criteria.decision}. Matched ${progress.matched}; analyzed ${progress.analyzed}/${progress.total}; excluded ${progress.excluded}; unavailable ${progress.unavailable}.`,
       `Finviz collection ${universe.collectedCount}/${universe.sourceTotal} (${universe.completeness}).`,
-      'Scores are signal strengths, not win probabilities. References are completed closes, not entry fills.',
-      ...(candidates.length ? ['Top matches:', ...candidates] : ['No matching candidates.']),
-    ]
-      .join('\n')
-      .slice(0, 700);
+    ].join('\n');
     const attempt: NotificationAttempt = {
       schemaVersion: 1,
       jobStatus: runtime.job.status,
@@ -542,11 +547,43 @@ async function notifyCompletion(
     await writeMarketScreenJson(file, attempt);
     let result: NonNullable<NotificationAttempt['result']>;
     try {
-      result = await (dependencies.sendWhatsAppNotification ?? sendWhatsAppNotification)({
+      const input = {
         title: `Stock Checker screen ${runtime.jobId.slice(0, 8)}: ${runtime.job.status}`,
         asOf: runtime.job.finishedAt ?? runtime.job.updatedAt,
-        summary,
-      });
+        coverageSummary,
+        lookbackDays: runtime.job.criteria.lookbackDays,
+        candidates,
+      };
+      const configured = await (
+        dependencies.isWhatsAppNotificationConfigured ?? isWhatsAppNotificationConfigured
+      )();
+      const notification = configured
+        ? await (
+            dependencies.buildStockReportWhatsAppNotification ??
+            buildStockReportWhatsAppNotification
+          )(input)
+        : {
+            title: input.title,
+            asOf: input.asOf,
+            summary: [
+              coverageSummary,
+              'Scores are signal strengths, not win probabilities. References are completed closes, not entry fills.',
+              ...(rows.length
+                ? [
+                    'Top matches:',
+                    ...rows.slice(0, 3).map(({ item }) => {
+                      const match = item as StockScreenMatch;
+                      return `${match.decision} ${match.ticker}: reference ${match.execution.reference?.price.toFixed(2) ?? 'unavailable'}, ${metric === 'sellScore' ? 'SELL' : 'BUY'} score ${match[metric].toFixed(1)}, session ${match.dataAsOf ?? 'unavailable'}`;
+                    }),
+                  ]
+                : ['No matching candidates.']),
+            ]
+              .join('\n')
+              .slice(0, 700),
+          };
+      result = await (dependencies.sendWhatsAppNotification ?? sendWhatsAppNotification)(
+        notification
+      );
     } catch {
       result = { status: 'failed', reason: 'network-error' };
     }

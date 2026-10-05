@@ -1,4 +1,9 @@
 import type { StockScreenResult } from '@/reports/stock-screen';
+import {
+  buildStockReportWhatsAppNotification,
+  formatStockReportWhatsAppNotification,
+  type StockReportAlertInput,
+} from '@/utils/stock-report-alerts';
 import type { WhatsAppNotification } from '@/utils/whatsapp';
 
 function oneLine(value: string, maximumLength: number): string {
@@ -9,6 +14,38 @@ function oneLine(value: string, maximumLength: number): string {
     .slice(0, maximumLength)
     .toWellFormed()
     .trimEnd();
+}
+
+/** Keep the original screening decisions and session dates while adding bounded report details. */
+export async function buildStockScreenReportNotification(
+  screen: StockScreenResult,
+  dependencies?: Parameters<typeof buildStockReportWhatsAppNotification>[1]
+): Promise<WhatsAppNotification> {
+  const { coverage, criteria } = screen;
+  const input: StockReportAlertInput = {
+    title: `Stock Checker screen: ${criteria.decision} ${screen.status}`,
+    asOf: `Scan completed ${screen.generatedAt}`,
+    coverageSummary: `Status ${screen.status}; filter ${criteria.decision}; analyzed ${coverage.analyzed}/${coverage.requested}; matched ${coverage.matched}; unavailable ${coverage.unavailable}. Report returned ${coverage.returned}/${coverage.matched} matches, limit ${criteria.limit}, ${coverage.truncated ? 'truncated' : 'not truncated'}; alert shows ${Math.min(3, screen.matches.length)}/${coverage.returned} returned.`,
+    lookbackDays: criteria.lookbackDays,
+    candidates: screen.matches.map((candidate) => ({
+      ticker: candidate.ticker,
+      decision: candidate.decision,
+      dataAsOf: candidate.dataAsOf,
+      gateReasons: candidate.gateReasons,
+      reference: candidate.execution.reference,
+    })),
+  };
+  // A timed-out scan can still have two provider requests in progress. Do not
+  // start another data load until those calls finish; keep its saved snapshot.
+  if (
+    screen.unavailable.some(
+      (item) =>
+        item.reason === 'Screen time budget exhausted while ticker analysis was in progress.'
+    )
+  ) {
+    return formatStockReportWhatsAppNotification(input, []);
+  }
+  return buildStockReportWhatsAppNotification(input, dependencies);
 }
 
 /** A scan completion timestamp is separate from each candidate's completed bar date. */

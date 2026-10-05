@@ -27,6 +27,7 @@ import { readMarketScreenLease, writeMarketScreenJson } from '@/reports/market-s
 import { projectMatch } from '@/reports/stock-screen';
 import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/ticker-analysis';
 import type { PipelineResult } from '@/types';
+import type { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alerts';
 import type { sendWhatsAppNotification } from '@/utils/whatsapp';
 
 const storeHooks = vi.hoisted(() => ({
@@ -152,6 +153,7 @@ describe('durable Finviz candidate jobs', () => {
     analyzeTickerContext: analyze,
     minIntervalMs: 0,
     sendWhatsAppNotification: notify,
+    isWhatsAppNotificationConfigured: async () => false,
   });
 
   async function create(options = input()) {
@@ -880,6 +882,90 @@ describe('durable Finviz candidate jobs', () => {
 
   describe('terminal WhatsApp summaries', () => {
     const notificationFile = (id: string) => path.join(root, id, 'notification.json');
+
+    it('skips report-provider work for an unconfigured completion sender', async () => {
+      const builder = vi.fn<typeof buildStockReportWhatsAppNotification>(async () => {
+        throw new Error('No report data should be requested');
+      });
+      const created = await createMarketScreenJob(input(['ONE'], { autoStart: false }), deps());
+      ids.push(created.job.id);
+      await runMarketScreenJob(created.job.id, {
+        ...deps(),
+        buildStockReportWhatsAppNotification: builder,
+      });
+      await settled(created.job.id);
+      expect(builder).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledOnce();
+    });
+
+    it('enriches saved ranked rows only after the durable attempt using the job history window', async () => {
+      const builder = vi.fn<typeof buildStockReportWhatsAppNotification>(async (input) => {
+        const id = ids[0];
+        expect(JSON.parse(await readFile(notificationFile(id), 'utf8'))).toMatchObject({
+          result: null,
+          finishedAt: null,
+        });
+        expect(await readMarketScreenLease(root)).toMatchObject({ jobId: id });
+        expect(input.lookbackDays).toBe(2920);
+        expect(input.candidates).toEqual([
+          expect.objectContaining({
+            ticker: 'ONE',
+            decision: 'BUY',
+            dataAsOf: '2026-01-02',
+            gateReasons: expect.any(Array),
+            reference: expect.objectContaining({
+              price: expect.any(Number),
+              stopLoss: expect.any(Number),
+            }),
+          }),
+        ]);
+        return {
+          title: input.title,
+          asOf: input.asOf,
+          summary: 'Observed wins 6/10; reasons; analyst targets',
+        };
+      });
+      const created = await createMarketScreenJob(
+        input(['ONE'], { lookbackDays: 2920, autoStart: false }),
+        deps()
+      );
+      ids.push(created.job.id);
+      await runMarketScreenJob(created.job.id, {
+        ...deps(),
+        isWhatsAppNotificationConfigured: async () => true,
+        buildStockReportWhatsAppNotification: builder,
+      });
+      await settled(created.job.id);
+      expect(builder).toHaveBeenCalledOnce();
+      expect(notify).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ summary: 'Observed wins 6/10; reasons; analyst targets' })
+      );
+    });
+
+    it('keeps a terminal job and durable no-retry attempt when report enrichment fails', async () => {
+      const builder = vi
+        .fn<typeof buildStockReportWhatsAppNotification>()
+        .mockRejectedValue(new Error('report source unavailable'));
+      const created = await createMarketScreenJob(input(['ONE'], { autoStart: false }), deps());
+      ids.push(created.job.id);
+      await runMarketScreenJob(created.job.id, {
+        ...deps(),
+        isWhatsAppNotificationConfigured: async () => true,
+        buildStockReportWhatsAppNotification: builder,
+      });
+      const complete = await settled(created.job.id);
+      expect(complete.job.status).toBe('completed');
+      expect(notify).not.toHaveBeenCalled();
+      expect(JSON.parse(await readFile(notificationFile(created.job.id), 'utf8'))).toMatchObject({
+        result: { status: 'failed', reason: 'network-error' },
+      });
+      await runMarketScreenJob(created.job.id, {
+        ...deps(),
+        isWhatsAppNotificationConfigured: async () => true,
+        buildStockReportWhatsAppNotification: builder,
+      });
+      expect(builder).toHaveBeenCalledOnce();
+    });
 
     it('sends one bounded ranked summary after results, terminal state and attempt are durable', async () => {
       analyze.mockImplementation(async (ticker) => {

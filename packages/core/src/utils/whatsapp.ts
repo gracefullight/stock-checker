@@ -72,12 +72,36 @@ async function configuration(
   }
 }
 
-function notificationText(value: string, maximumLength: number): string {
-  const normalized = value
-    .toWellFormed()
-    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim();
+/** Checks local configuration without contacting the gateway or creating credentials. */
+export async function isWhatsAppNotificationConfigured(
+  dependencies: Pick<WhatsAppDependencies, 'environment' | 'readToken'> = {}
+): Promise<boolean> {
+  const configured = await configuration(
+    dependencies.environment ?? process.env,
+    dependencies.readToken ?? readGatewayToken
+  );
+  return !('status' in configured);
+}
+
+function notificationText(value: string, maximumLength: number, multiline = false): string {
+  const text = value.toWellFormed();
+  const normalized = multiline
+    ? text
+        .replace(/\r\n?/gu, '\n')
+        .split('\n')
+        .map((line) =>
+          line
+            .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ')
+            .replace(/\s+/gu, ' ')
+            .trim()
+        )
+        .join('\n')
+        .replace(/\n{3,}/gu, '\n\n')
+        .trim()
+    : text
+        .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ')
+        .replace(/\s+/gu, ' ')
+        .trim();
   let result = '';
   for (const character of normalized) {
     if (result.length + character.length > maximumLength) break;
@@ -114,7 +138,7 @@ export async function sendWhatsAppNotification(
       to: configured.to,
       title: notificationText(notification.title, 80),
       asOf: notificationText(notification.asOf, 60),
-      summary: notificationText(notification.summary, 700),
+      summary: notificationText(notification.summary, 3_000, true),
     });
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
