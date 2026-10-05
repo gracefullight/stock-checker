@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
@@ -13,8 +14,52 @@ import {
 const fixturePath = fileURLToPath(new URL('./test-fixtures/stdio-server.ts', import.meta.url));
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const PERFORMANCE_JOB_ID = 'bd6128e1-d410-4a61-a90e-dfbd6a86167e';
+const configuration = JSON.parse(
+  await readFile(new URL('../../../.mcp.json', import.meta.url), 'utf8')
+) as {
+  mcpServers: { stock_checker: { command: string; args: string[] } };
+};
+const configuredServer = configuration.mcpServers.stock_checker;
+const configuredCommand = Bun.which(configuredServer.command);
 
 describe('MCP stdio', () => {
+  (configuredCommand ? test : test.skip)(
+    'initializes and discovers tools through the configured mise task without analysis or sending',
+    async () => {
+      const client = new Client({ name: 'configured-mise-stdio-test', version: '1.0.0' });
+      const transport = new StdioClientTransport({
+        command: configuredCommand ?? configuredServer.command,
+        args: configuredServer.args,
+        cwd: repositoryRoot,
+        stderr: 'pipe',
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined
+            )
+          ),
+          MISE_TASK_RUN_AUTO_INSTALL: 'false',
+        },
+      });
+      // Discard provider/private configuration diagnostics instead of exposing them in test output.
+      transport.stderr?.on('data', () => {});
+      try {
+        await client.connect(transport);
+        expect(client.getServerVersion()?.name).toBe('stock-checker');
+        const { tools } = await client.listTools();
+        expect(tools).toHaveLength(10);
+        expect(tools.find((tool) => tool.name === 'screen_stocks')).toMatchObject({
+          inputSchema: { properties: { notifyWhatsApp: { type: 'boolean', default: false } } },
+        });
+      } catch {
+        throw new Error('Configured mise MCP stdio did not initialize and discover tools.');
+      } finally {
+        await client.close();
+      }
+    },
+    15000
+  );
+
   test('SDK client discovers and calls the tool while console logs stay on stderr', async () => {
     const client = new Client({ name: 'stdio-test', version: '1.0.0' });
     const transport = new StdioClientTransport({

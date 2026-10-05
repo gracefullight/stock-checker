@@ -271,6 +271,10 @@ Credentials and recipient settings stay on the server; MCP inputs never accept
 tokens or arbitrary recipient numbers. With no configuration, notifications
 are disabled. Incomplete or invalid configuration also prevents sending.
 
+Set `WHATSAPP_TO` to change the recipient. Supply it through the process
+environment or `env.WHATSAPP_TO` in a private MCP configuration, then restart the
+process or reconnect MCP.
+
 The CLI sends one summary per successful `predict` run containing BUY or SELL
 results, after saving its CSV/JSON and prediction history. It includes signal
 counts, up to five ticker details, completed-close BUY stop/target references,

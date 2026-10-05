@@ -87,6 +87,7 @@ run = "uv run --project tools/finance --locked --python 3.14 pytest tools/financ
 # ── Dev Servers ──────────────────────────────────────────────
 [tasks.mcp]
 description = "Run the local Stock Checker MCP server over stdio"
+raw = true
 run = "bun apps/mcp/src/index.ts"
 
 [tasks."dev:api"]
