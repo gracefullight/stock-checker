@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/gracefullight/stock-checker/compare/v0.4.1...v0.5.0) (2026-10-05)
+
+
+### Features
+
+* **whatsapp:** include historical rates and analyst targets ([d41e5f0](https://github.com/gracefullight/stock-checker/commit/d41e5f04a00148e7726487b594e8e7b7f928860d))
+
+
+### Bug Fixes
+
+* **whatsapp:** load report providers only during enrichment ([f1142a6](https://github.com/gracefullight/stock-checker/commit/f1142a6621191abec964194116aa4f8b8ae35da5))
+
 ## [0.4.1](https://github.com/gracefullight/stock-checker/compare/v0.4.0...v0.4.1) (2026-10-05)
 
 
