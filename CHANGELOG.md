@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/gracefullight/stock-checker/compare/v0.3.0...v0.4.0) (2026-10-05)
+
+
+### Features
+
+* **whatsapp:** run the gateway as a macos user service ([998f7e2](https://github.com/gracefullight/stock-checker/commit/998f7e26fbc2aaa0f1ce935a1b63a6e409a2035b))
+
 ## [0.3.0](https://github.com/gracefullight/stock-checker/compare/v0.2.2...v0.3.0) (2026-10-05)
 
 
