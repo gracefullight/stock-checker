@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/gracefullight/stock-checker/compare/v0.4.0...v0.4.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **whatsapp:** repair initial companion registration ([e26dfb8](https://github.com/gracefullight/stock-checker/commit/e26dfb8e3a37ed4bf6a3a355e691c8f5bf5c21e5))
+
 ## [0.4.0](https://github.com/gracefullight/stock-checker/compare/v0.3.0...v0.4.0) (2026-10-05)
 
 
