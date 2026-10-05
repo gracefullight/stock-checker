@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/gracefullight/stock-checker/compare/v0.2.1...v0.2.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* **mcp:** preserve stdio input through mise ([d3f6c87](https://github.com/gracefullight/stock-checker/commit/d3f6c87ed013a9aed5d571e2428ebf8505358d19))
+
 ## [0.2.1](https://github.com/gracefullight/stock-checker/compare/v0.2.0...v0.2.1) (2026-10-05)
 
 
