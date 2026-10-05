@@ -245,12 +245,11 @@ set them in the launching process's environment or a private client configuratio
 |---|---|
 | `TIINGO_API_KEY` | Enables the [Tiingo](https://www.tiingo.com) daily-OHLCV fallback when Yahoo fails. Without it, unavailable OHLCV is returned as empty data. Provider quotas depend on the configured plan. |
 | `SLACK_WEBHOOK_URL` | Slack notification for BUY/SELL opinions from `predict`. |
-| `WHATSAPP_ACCESS_TOKEN` | Optional Meta Cloud API token with WhatsApp messaging permission. |
-| `WHATSAPP_PHONE_NUMBER_ID` | Registered Meta WhatsApp sender phone-number ID. |
-| `WHATSAPP_TO` | Recipient number in international format, including country code. |
-| `WHATSAPP_TEMPLATE_NAME` | Approved WhatsApp template with three positional body text variables. |
-| `WHATSAPP_TEMPLATE_LANGUAGE` | Exact approved template locale; defaults to `en_US`. |
-| `WHATSAPP_GRAPH_API_VERSION` | Explicit supported Graph API version from the Meta app, in `vN.N` format. |
+| `WHATSAPP_TO` | Recipient number in E.164 format, with `+` and country code. Set it in the CLI/API/MCP environment. |
+| `WHATSAPP_GATEWAY_URL` | Local WhatsApp Web gateway; defaults to `http://127.0.0.1:5102`. Only loopback addresses are supported. |
+| `WHATSAPP_GATEWAY_TOKEN` | Optional explicit local gateway token. Otherwise the sender reads the private `gateway-token` file in the auth directory. |
+| `WHATSAPP_AUTH_DIR` | Linked-device session and gateway-token directory; defaults to repository-root `data/whatsapp/`. Relative paths resolve from the repository root, independent of the launching directory. |
+| `WHATSAPP_GATEWAY_PORT` | Gateway listening port; defaults to `5102`. Used by the gateway only; update `WHATSAPP_GATEWAY_URL` when changing it. |
 | `FMP_API_KEY` | Optional [FMP](https://site.financialmodelingprep.com/developer/docs) fallback for recent individual analyst price-target updates. Yahoo consensus and available Yahoo target updates work without it. |
 | `STOCK_CHECKER_DASHBOARD_URL` | Base URL for the local MCP browser dashboard tool; defaults to `http://localhost:5100`. Accepts HTTP/HTTPS without credentials, query parameters, or fragments. |
 | `API_URL` | Server-side web-to-API base URL; defaults through `NEXT_PUBLIC_API_URL` to `http://localhost:5101`. |
@@ -265,15 +264,50 @@ no Finviz API key; Elite API/export access is a separate service.
 
 ## WhatsApp notifications
 
-Export the `WHATSAPP_*` variables in the process running the CLI, API, or MCP.
-The API example file is [apps/api/.env.example](apps/api/.env.example).
-Credentials and recipient settings stay on the server; MCP inputs never accept
-tokens or arbitrary recipient numbers. With no configuration, notifications
-are disabled. Incomplete or invalid configuration also prevents sending.
+Notifications use a local Baileys gateway linked to WhatsApp Web. A personal
+WhatsApp account can send to another recipient or to its own number for a
+self-chat. This integration needs no Meta business app, Graph API token,
+approved template, or Cloud API billing setup. It does not incur Cloud API
+message fees; running or hosting the process has separate costs.
 
-Set `WHATSAPP_TO` to change the recipient. Supply it through the process
-environment or `env.WHATSAPP_TO` in a private MCP configuration, then restart the
-process or reconnect MCP.
+From the repository, set your recipient in E.164 format and link the sender:
+
+```bash
+export WHATSAPP_TO='YOUR_NUMBER_IN_E164_FORMAT'
+mise run whatsapp:link
+```
+
+Replace the placeholder with the full number, including `+` and country code.
+Open `http://127.0.0.1:5102/` on the computer to see the QR code. Scan it from
+WhatsApp on your phone: **Settings → Linked devices → Link a device**. The linked
+account is the sender; `WHATSAPP_TO` is the recipient. The linking process keeps
+the gateway running after connection. Either leave it running or press **Ctrl+C**
+and start the gateway in a separate terminal:
+
+```bash
+mise run whatsapp:gateway
+```
+
+Launch the CLI, API, or MCP with the recipient and the same auth-directory settings.
+The API example file is [apps/api/.env.example](apps/api/.env.example). The
+gateway defaults to `http://127.0.0.1:5102`; remote hosting is not supported.
+It stores the linked session and a private gateway token in ignored
+`data/whatsapp/`. The sender reads that token locally unless
+`WHATSAPP_GATEWAY_TOKEN` is explicitly set. Token files use mode `0600`; keep
+session files and QR codes private. If you choose another auth directory, keep
+it outside tracked files and use the same path in both processes.
+
+If WhatsApp logs the linked device out, stop the gateway, choose a new private
+`WHATSAPP_AUTH_DIR`, and run `mise run whatsapp:link` again. Use that same new
+directory for the CLI, API, and MCP; existing session files are preserved.
+
+Credentials and recipient settings stay in the process environment or private
+local client configuration; MCP tool inputs never accept tokens or arbitrary
+recipient numbers. With no recipient configured, notifications are disabled.
+Invalid configuration prevents sending, and an unavailable gateway reports a
+failure without discarding results. To change the recipient, update
+`WHATSAPP_TO` before the next CLI run, or restart the API/reconnect MCP with the
+new environment. Changing the recipient does not require linking WhatsApp again.
 
 The CLI sends one summary per successful `predict` run containing BUY or SELL
 results, after saving its CSV/JSON and prediction history. It includes signal
@@ -290,29 +324,10 @@ resume does not repeat an attempted notification. An interrupted or failed
 attempt is not automatically retried, so a process crash can lose that alert.
 Notification failures do not discard analysis or change a completed job to paused.
 
-In Meta WhatsApp Manager, approve a template with exactly three positional body
-text variables in this order: event title, as-of timestamp/date, summary. For
-example, create `stock_checker_alert` with locale `en_US` and this body:
-
-```text
-Stock Checker {{1}}
-As of: {{2}}
-Results: {{3}}
-Signal scores are not win probabilities.
-```
-
-Use representative samples such as `Stock signals`, `2026-10-01`, and
-`BUY 1; AAPL BUY close 100.00, ATR stop 97.00, target 106.00` during template
-approval. Variables are normalized to single lines and bounded before sending.
-The API accepting a message does not prove recipient delivery; delivery webhooks
-are not implemented. Prices are analysis references, and these alerts do not
-provide a calibrated win rate or place trades.
-
-Scheduled messages use approved templates because they may occur outside the
-24-hour customer-service window. The recipient must consent to these alerts;
-account eligibility, template approval, and applicable messaging charges are
-managed by Meta. See the [WhatsApp Business Messaging Policy](https://whatsappbusiness.com/policy/)
-and [Meta Cloud API template request](https://www.postman.com/meta/whatsapp-business-platform/request/lwtlz1k/send-message-template-interactive).
+Messages contain an event title, as-of timestamp/date, and a bounded summary as
+plain text. An `accepted` result includes a message ID and does not prove
+recipient delivery. Prices are analysis references; signal scores are not win
+probabilities, and these alerts do not place trades.
 
 For a bounded MCP `screen_stocks` summary, explicitly pass `notifyWhatsApp: true`:
 
@@ -325,11 +340,11 @@ notification includes scan status, coverage, and up to three returned matches.
 The tool retains its analysis even when sending fails and reports the notification
 status separately. Repeating a flagged scan can produce another notification.
 
-For nightly CLI alerts, set `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
-and `WHATSAPP_TO` as GitHub repository **Secrets**. Set `WHATSAPP_TEMPLATE_NAME`,
-`WHATSAPP_TEMPLATE_LANGUAGE`, and `WHATSAPP_GRAPH_API_VERSION` as repository
-**Variables**. The existing schedule keeps working when all of them are absent.
-It predicts the workflow's configured ticker list; it does not collect Finviz
+The GitHub-hosted nightly workflow has no access to your local linked session or
+token file, so it runs without WhatsApp notifications or required WhatsApp
+secrets. For scheduled alerts, run the CLI from a local scheduler or an execution
+environment sharing the linked session and local gateway. The checked-in nightly
+workflow predicts its configured ticker list; it does not collect Finviz
 candidates or schedule a market-screen job.
 
 ## Local MCP (Codex and Claude Code)
@@ -402,8 +417,8 @@ the technical BUY/SELL decision. Valuation results are cached for 15 minutes.
 
 Yahoo requires no API key. Codex forwards `FMP_API_KEY`, `TIINGO_API_KEY`, and
 the WhatsApp settings through `env_vars`; Claude's shared MCP configuration
-expands those environment variables with empty defaults and an `en_US` template
-locale. An explicit key can also be supplied through
+expands those environment variables with empty defaults and the local gateway
+defaults. An explicit key can also be supplied through
 `env` in a private user/local MCP configuration. For example, set
 `env.FMP_API_KEY` in that private configuration. Without a key, Yahoo remains
 the data source.

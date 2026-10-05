@@ -32,6 +32,9 @@ packages/core/data/config/
 packages/core/data/feedback/
 data/market-scans/
 
+# WhatsApp Web linked-device session and local gateway token
+data/whatsapp/
+
 # Backtest / prediction output
 packages/core/backtest-results-*.txt
 

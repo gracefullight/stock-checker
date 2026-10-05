@@ -1,3 +1,5 @@
+import { readGatewayToken, resolveWhatsAppAuthDir } from '@/whatsapp/config';
+
 export interface WhatsAppNotification {
   title: string;
   asOf: string;
@@ -16,66 +18,66 @@ export type WhatsAppNotificationResult =
 interface WhatsAppDependencies {
   environment?: NodeJS.ProcessEnv;
   fetch?: typeof globalThis.fetch;
+  readToken?: typeof readGatewayToken;
 }
 
 interface WhatsAppConfiguration {
-  accessToken: string;
-  phoneNumberId: string;
+  token: string;
+  endpoint: string;
   to: string;
-  templateName: string;
-  language: string;
-  version: string;
 }
 
-const ENVIRONMENT_KEYS = [
-  'WHATSAPP_ACCESS_TOKEN',
-  'WHATSAPP_PHONE_NUMBER_ID',
-  'WHATSAPP_TO',
-  'WHATSAPP_TEMPLATE_NAME',
-  'WHATSAPP_GRAPH_API_VERSION',
-] as const;
 const REQUEST_TIMEOUT_MS = 10_000;
 
-function configuration(
-  environment: NodeJS.ProcessEnv
-): WhatsAppConfiguration | Extract<WhatsAppNotificationResult, { status: 'disabled' }> {
-  if (ENVIRONMENT_KEYS.every((key) => !environment[key])) {
-    // TODO(oma-deferred): provision Meta credentials to enable this deployment.
+async function configuration(
+  environment: NodeJS.ProcessEnv,
+  readToken: typeof readGatewayToken
+): Promise<WhatsAppConfiguration | Extract<WhatsAppNotificationResult, { status: 'disabled' }>> {
+  const recipient = environment.WHATSAPP_TO?.trim() ?? '';
+  if (!recipient) {
+    // TODO(oma-deferred): configure a recipient and link the local WhatsApp Web session.
     return { status: 'disabled', reason: 'not-configured' };
   }
-  const accessToken = environment.WHATSAPP_ACCESS_TOKEN?.trim() ?? '';
-  const phoneNumberId = environment.WHATSAPP_PHONE_NUMBER_ID?.trim() ?? '';
-  const recipient = environment.WHATSAPP_TO?.trim() ?? '';
-  const templateName = environment.WHATSAPP_TEMPLATE_NAME?.trim() ?? '';
-  const language = environment.WHATSAPP_TEMPLATE_LANGUAGE?.trim() || 'en_US';
-  const version = environment.WHATSAPP_GRAPH_API_VERSION?.trim() ?? '';
-  if (
-    !/^[\x21-\x7e]+$/.test(accessToken) ||
-    !/^\d+$/.test(phoneNumberId) ||
-    !/^\+?[1-9]\d{1,14}$/.test(recipient) ||
-    !/^[a-z0-9_]{1,512}$/.test(templateName) ||
-    !/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(language) ||
-    !/^v[1-9]\d*\.(?:0|[1-9]\d*)$/.test(version)
-  ) {
+  if (!/^\+?[1-9]\d{7,14}$/.test(recipient)) {
     return { status: 'disabled', reason: 'invalid-configuration' };
   }
-  return {
-    accessToken,
-    phoneNumberId,
-    to: recipient.replace(/^\+/, ''),
-    templateName,
-    language,
-    version,
-  };
+  try {
+    const url = new URL(environment.WHATSAPP_GATEWAY_URL?.trim() || 'http://127.0.0.1:5102');
+    if (
+      url.protocol !== 'http:' ||
+      !['127.0.0.1', 'localhost'].includes(url.hostname) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      url.pathname !== '/'
+    ) {
+      return { status: 'disabled', reason: 'invalid-configuration' };
+    }
+    const token = await readToken(
+      resolveWhatsAppAuthDir(environment),
+      environment.WHATSAPP_GATEWAY_TOKEN ?? ''
+    );
+    if (!token) return { status: 'disabled', reason: 'not-configured' };
+    if (token.length < 32 || token.length > 512 || !/^[\x21-\x7e]+$/.test(token)) {
+      return { status: 'disabled', reason: 'invalid-configuration' };
+    }
+    return {
+      token,
+      endpoint: new URL('/notifications', url).href,
+      to: `+${recipient.replace(/^\+/, '')}`,
+    };
+  } catch {
+    return { status: 'disabled', reason: 'invalid-configuration' };
+  }
 }
 
-function templateText(value: string, maximumLength: number): string {
+function notificationText(value: string, maximumLength: number): string {
   const normalized = value
     .toWellFormed()
     .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim();
-  // Bound UTF-16 length without splitting a supplementary Unicode character.
   let result = '';
   for (const character of normalized) {
     if (result.length + character.length > maximumLength) break;
@@ -84,46 +86,35 @@ function templateText(value: string, maximumLength: number): string {
   return result.trimEnd() || 'N/A';
 }
 
-function messageId(response: unknown): string | null {
-  if (!response || typeof response !== 'object' || !('messages' in response)) return null;
-  const messages = response.messages;
-  if (!Array.isArray(messages) || messages.length !== 1) return null;
-  const id: unknown = messages[0]?.id;
-  return typeof id === 'string' && id.length <= 512 && /^wamid\.[A-Za-z0-9+/_-]+={0,2}$/.test(id)
+function messageId(response: unknown, token: string): string | null {
+  if (!response || typeof response !== 'object' || !('messageId' in response)) return null;
+  const id: unknown = response.messageId;
+  return typeof id === 'string' &&
+    /^[A-Fa-f0-9]{16,64}$/.test(id) &&
+    id.toLowerCase() !== token.toLowerCase()
     ? id
     : null;
 }
 
-/** An accepted result acknowledges the API request; it does not confirm delivery. */
+/** An accepted result acknowledges the linked session's send; it does not confirm delivery. */
 export async function sendWhatsAppNotification(
   notification: WhatsAppNotification,
   dependencies: WhatsAppDependencies = {}
 ): Promise<WhatsAppNotificationResult> {
-  const configured = configuration(dependencies.environment ?? process.env);
+  const configured = await configuration(
+    dependencies.environment ?? process.env,
+    dependencies.readToken ?? readGatewayToken
+  );
   if ('status' in configured) return configured;
 
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const body = JSON.stringify({
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
       to: configured.to,
-      type: 'template',
-      template: {
-        name: configured.templateName,
-        language: { code: configured.language },
-        components: [
-          {
-            type: 'body',
-            parameters: [
-              { type: 'text', text: templateText(notification.title, 80) },
-              { type: 'text', text: templateText(notification.asOf, 60) },
-              { type: 'text', text: templateText(notification.summary, 700) },
-            ],
-          },
-        ],
-      },
+      title: notificationText(notification.title, 80),
+      asOf: notificationText(notification.asOf, 60),
+      summary: notificationText(notification.summary, 700),
     });
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
@@ -133,19 +124,16 @@ export async function sendWhatsAppNotification(
       timer.unref?.();
     });
     const request = async (): Promise<WhatsAppNotificationResult> => {
-      const response = await (dependencies.fetch ?? globalThis.fetch)(
-        `https://graph.facebook.com/${configured.version}/${configured.phoneNumberId}/messages`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${configured.accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body,
-          signal: controller.signal,
-          redirect: 'error',
-        }
-      );
+      const response = await (dependencies.fetch ?? globalThis.fetch)(configured.endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${configured.token}`,
+          'Content-Type': 'application/json',
+        },
+        body,
+        signal: controller.signal,
+        redirect: 'error',
+      });
       if (!response.ok) {
         void response.body?.cancel().catch(() => undefined);
         return { status: 'failed', reason: 'http-error', httpStatus: response.status };
@@ -156,7 +144,7 @@ export async function sendWhatsAppNotification(
       } catch {
         return { status: 'failed', reason: 'invalid-response' };
       }
-      const id = messageId(data);
+      const id = messageId(data, configured.token);
       return id
         ? { status: 'accepted', messageId: id }
         : { status: 'failed', reason: 'invalid-response' };

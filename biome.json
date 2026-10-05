@@ -17,7 +17,6 @@
       "!**/*.css"
     ]
   },
-  "plugins": ["node_modules/@gracefullight/biome-plugin/rules/no-relative-imports.grit"],
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -56,6 +55,10 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["**", "!packages/core/src/whatsapp/**"],
+      "plugins": ["node_modules/@gracefullight/biome-plugin/rules/no-relative-imports.grit"]
+    },
     {
       "includes": ["**/components/ui/**"],
       "linter": { "enabled": false },

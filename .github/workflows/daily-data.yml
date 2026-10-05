@@ -27,13 +27,8 @@ jobs:
         env:
           # OHLCV fallback when Yahoo is rate-limited (see services/tiingo.ts)
           TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
-          # Optional; no WhatsApp configuration keeps the existing scheduled run working.
-          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
-          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
-          WHATSAPP_TO: ${{ secrets.WHATSAPP_TO }}
-          WHATSAPP_TEMPLATE_NAME: ${{ vars.WHATSAPP_TEMPLATE_NAME }}
-          WHATSAPP_TEMPLATE_LANGUAGE: ${{ vars.WHATSAPP_TEMPLATE_LANGUAGE }}
-          WHATSAPP_GRAPH_API_VERSION: ${{ vars.WHATSAPP_GRAPH_API_VERSION }}
+          # Hosted runners have no local linked WhatsApp session or gateway token.
+          # Scheduled WhatsApp alerts require a local scheduler with the gateway running.
       - name: Pull latest changes before commit
         # --autostash: the predict step leaves updated CSVs unstaged, which a
         # plain pull --rebase refuses to run on.

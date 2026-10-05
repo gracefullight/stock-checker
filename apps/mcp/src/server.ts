@@ -77,7 +77,7 @@ export const screenStocksInput = z.strictObject({
     .boolean()
     .default(false)
     .describe(
-      'Send one WhatsApp template summary to the fixed environment-configured recipient only when true; default false. Phone numbers and credentials cannot be supplied here.'
+      'Send one WhatsApp Web summary through the local gateway to the environment-configured recipient only when true; default false. Phone numbers and credentials cannot be supplied here.'
     ),
 });
 

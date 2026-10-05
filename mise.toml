@@ -90,6 +90,16 @@ description = "Run the local Stock Checker MCP server over stdio"
 raw = true
 run = "bun apps/mcp/src/index.ts"
 
+[tasks."whatsapp:link"]
+description = "Link WhatsApp Web by scanning the local gateway QR code"
+raw = true
+run = "node packages/core/src/whatsapp/index.ts --link"
+
+[tasks."whatsapp:gateway"]
+description = "Run the local WhatsApp Web notification gateway"
+raw = true
+run = "node packages/core/src/whatsapp/index.ts"
+
 [tasks."dev:api"]
 description = "Start Fastify API server (port 5101)"
 dir = "apps/api"

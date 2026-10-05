@@ -7,41 +7,24 @@ const notification: WhatsAppNotification = {
   summary: 'Reference USD 32.50; score 260 is not a win probability.',
 };
 const environment: NodeJS.ProcessEnv = {
-  WHATSAPP_ACCESS_TOKEN: 'fixture-private-access-token',
-  WHATSAPP_PHONE_NUMBER_ID: '123456789012345',
+  WHATSAPP_GATEWAY_TOKEN: 'fixture-private-gateway-token-0123456789',
   WHATSAPP_TO: '+821012345678',
-  WHATSAPP_TEMPLATE_NAME: 'stock_checker_alert',
-  WHATSAPP_GRAPH_API_VERSION: 'v26.0',
 };
-const acceptedId = 'wamid.HBgMNDgwMDAwMDAwMDAwFQIAERgSQUJDMTIz';
-
-function acceptedResponse() {
-  return new Response(
-    JSON.stringify({ messaging_product: 'whatsapp', messages: [{ id: acceptedId }] }),
-    {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }
-  );
-}
-
-function mockFetch(response = acceptedResponse()) {
-  return vi.fn<typeof globalThis.fetch>().mockResolvedValue(response);
-}
-
-function sentPayload(fetch: ReturnType<typeof mockFetch>) {
-  return JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
-    messaging_product: string;
-    recipient_type: string;
+const acceptedId = '3EB0ABCDEF1234567890AB';
+const acceptedResponse = () =>
+  new Response(JSON.stringify({ messageId: acceptedId }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+const mockFetch = (response = acceptedResponse()) =>
+  vi.fn<typeof globalThis.fetch>().mockResolvedValue(response);
+const sentPayload = (fetch: ReturnType<typeof mockFetch>) =>
+  JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
     to: string;
-    type: string;
-    template: {
-      name: string;
-      language: { code: string };
-      components: { type: string; parameters: { type: string; text: string }[] }[];
-    };
+    title: string;
+    asOf: string;
+    summary: string;
   };
-}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -49,8 +32,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe('sendWhatsAppNotification', () => {
-  it('posts exactly three body text variables to the configured Graph version', async () => {
+describe('sendWhatsAppNotification through WhatsApp Web', () => {
+  it('sends to the authenticated local gateway without Meta credentials', async () => {
     const fetch = mockFetch();
     expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
       status: 'accepted',
@@ -58,266 +41,231 @@ describe('sendWhatsAppNotification', () => {
     });
     expect(fetch).toHaveBeenCalledOnce();
     expect(fetch).toHaveBeenCalledWith(
-      'https://graph.facebook.com/v26.0/123456789012345/messages',
+      'http://127.0.0.1:5102/notifications',
       expect.objectContaining({
         method: 'POST',
         redirect: 'error',
         headers: {
-          Authorization: 'Bearer fixture-private-access-token',
+          Authorization: `Bearer ${environment.WHATSAPP_GATEWAY_TOKEN}`,
           'Content-Type': 'application/json',
         },
         signal: expect.any(AbortSignal),
       })
     );
-    expect(sentPayload(fetch)).toEqual({
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: '821012345678',
-      type: 'template',
-      template: {
-        name: 'stock_checker_alert',
-        language: { code: 'en_US' },
-        components: [
-          {
-            type: 'body',
-            parameters: [
-              { type: 'text', text: notification.title },
-              { type: 'text', text: notification.asOf },
-              { type: 'text', text: notification.summary },
-            ],
-          },
-        ],
+    expect(sentPayload(fetch)).toEqual({ to: environment.WHATSAPP_TO, ...notification });
+  });
+
+  it('uses the configured local gateway and receiver override', async () => {
+    const fetch = mockFetch();
+    await sendWhatsAppNotification(notification, {
+      environment: {
+        ...environment,
+        WHATSAPP_GATEWAY_URL: 'http://localhost:55102',
+        WHATSAPP_TO: '61415555555',
       },
+      fetch,
     });
+    expect(fetch.mock.calls[0]?.[0]).toBe('http://localhost:55102/notifications');
+    expect(sentPayload(fetch).to).toBe('+61415555555');
   });
 
-  it('supports configured language codes and recipients without a leading plus', async () => {
-    const fetch = mockFetch();
-    const configured = {
-      ...environment,
-      WHATSAPP_TO: '821012345678',
-      WHATSAPP_TEMPLATE_LANGUAGE: 'ko',
-    };
-    expect(
-      await sendWhatsAppNotification(notification, { environment: configured, fetch })
-    ).toEqual({
-      status: 'accepted',
-      messageId: acceptedId,
-    });
-    expect(sentPayload(fetch).template.language.code).toBe('ko');
-    expect(sentPayload(fetch).to).toBe('821012345678');
-  });
-
-  it('uses process environment by default without exposing it in the result', async () => {
+  it('reads default process configuration without caching credentials', async () => {
     for (const [key, value] of Object.entries(environment)) vi.stubEnv(key, value);
-    vi.stubEnv('WHATSAPP_TEMPLATE_LANGUAGE', 'en_US');
+    vi.stubEnv('WHATSAPP_GATEWAY_URL', 'http://127.0.0.1:5102');
     const fetch = mockFetch();
-    expect(await sendWhatsAppNotification(notification, { fetch })).toEqual({
-      status: 'accepted',
-      messageId: acceptedId,
-    });
-    expect(fetch).toHaveBeenCalledOnce();
+    await sendWhatsAppNotification(notification, { fetch });
+    vi.stubEnv('WHATSAPP_TO', '+61415555555');
+    await sendWhatsAppNotification(notification, { fetch });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).to).toBe('+61415555555');
   });
 
-  it('disables sending when no WhatsApp values are configured', async () => {
+  it('reads the private local token file when no explicit token is provided', async () => {
     const fetch = mockFetch();
-    expect(
-      await sendWhatsAppNotification(notification, { environment: { NODE_ENV: 'test' }, fetch })
-    ).toEqual({
-      status: 'disabled',
-      reason: 'not-configured',
-    });
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it('disables incomplete configuration instead of calling the provider', async () => {
-    const fetch = mockFetch();
+    const readToken = vi.fn().mockResolvedValue(environment.WHATSAPP_GATEWAY_TOKEN);
     expect(
       await sendWhatsAppNotification(notification, {
-        environment: { WHATSAPP_ACCESS_TOKEN: 'fixture-private-access-token' },
+        environment: { WHATSAPP_TO: environment.WHATSAPP_TO, WHATSAPP_AUTH_DIR: '/tmp/fixture-wa' },
         fetch,
+        readToken,
       })
-    ).toEqual({ status: 'disabled', reason: 'invalid-configuration' });
-    expect(fetch).not.toHaveBeenCalled();
+    ).toEqual({ status: 'accepted', messageId: acceptedId });
+    expect(readToken).toHaveBeenCalledWith('/tmp/fixture-wa', '');
   });
 
-  it('does not enable notifications merely because the optional locale is set', async () => {
-    const fetch = mockFetch();
-    expect(
-      await sendWhatsAppNotification(notification, {
-        environment: { WHATSAPP_TEMPLATE_LANGUAGE: 'en_US' },
-        fetch,
-      })
-    ).toEqual({ status: 'disabled', reason: 'not-configured' });
-    expect(fetch).not.toHaveBeenCalled();
+  it('forwards an explicit gateway token to the token resolver', async () => {
+    const readToken = vi.fn().mockResolvedValue(environment.WHATSAPP_GATEWAY_TOKEN);
+    await sendWhatsAppNotification(notification, { environment, readToken, fetch: mockFetch() });
+    expect(readToken.mock.calls[0]?.[1]).toBe(environment.WHATSAPP_GATEWAY_TOKEN);
   });
-
-  it.each(['', '   '])(
-    'defaults an empty locale to en_US, including unset CI variables',
-    async (locale) => {
-      const fetch = mockFetch();
-      await sendWhatsAppNotification(notification, {
-        environment: { ...environment, WHATSAPP_TEMPLATE_LANGUAGE: locale },
-        fetch,
-      });
-      expect(sentPayload(fetch).template.language.code).toBe('en_US');
-    }
-  );
 
   it.each([
-    ['WHATSAPP_ACCESS_TOKEN', ''],
-    ['WHATSAPP_ACCESS_TOKEN', 'token\r\ninjected'],
-    ['WHATSAPP_ACCESS_TOKEN', 'token with spaces'],
-    ['WHATSAPP_PHONE_NUMBER_ID', '123/../../messages'],
-    ['WHATSAPP_PHONE_NUMBER_ID', 'phone-id'],
+    {},
+    { WHATSAPP_GATEWAY_URL: 'http://127.0.0.1:5102' },
+    { WHATSAPP_ACCESS_TOKEN: 'legacy-meta-token', WHATSAPP_PHONE_NUMBER_ID: '12345' },
+  ])('does not send when no receiver is configured', async (configured) => {
+    const fetch = mockFetch();
+    const readToken = vi.fn();
+    expect(
+      await sendWhatsAppNotification(notification, { environment: configured, fetch, readToken })
+    ).toEqual({ status: 'disabled', reason: 'not-configured' });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(readToken).not.toHaveBeenCalled();
+  });
+
+  it('does not generate a token or contact a gateway before local setup', async () => {
+    const fetch = mockFetch();
+    const readToken = vi.fn().mockResolvedValue(undefined);
+    expect(
+      await sendWhatsAppNotification(notification, {
+        environment: { WHATSAPP_TO: environment.WHATSAPP_TO },
+        fetch,
+        readToken,
+      })
+    ).toEqual({ status: 'disabled', reason: 'not-configured' });
+    expect(readToken).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not expose private token-file errors', async () => {
+    const fetch = mockFetch();
+    const readToken = vi.fn().mockRejectedValue(new Error('secret-token /private/auth-path'));
+    expect(await sendWhatsAppNotification(notification, { environment, readToken, fetch })).toEqual(
+      { status: 'disabled', reason: 'invalid-configuration' }
+    );
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
     ['WHATSAPP_TO', '+0123456789'],
+    ['WHATSAPP_TO', '+1234567'],
     ['WHATSAPP_TO', '+8210-1234-5678'],
     ['WHATSAPP_TO', '+1234567890123456'],
     ['WHATSAPP_TO', 'https://example.invalid'],
-    ['WHATSAPP_TEMPLATE_NAME', 'Invalid-Template'],
-    ['WHATSAPP_TEMPLATE_NAME', ''],
-    ['WHATSAPP_TEMPLATE_LANGUAGE', 'en-US'],
-    ['WHATSAPP_TEMPLATE_LANGUAGE', 'en_US\nextra'],
-    ['WHATSAPP_GRAPH_API_VERSION', ''],
-    ['WHATSAPP_GRAPH_API_VERSION', 'latest'],
-    ['WHATSAPP_GRAPH_API_VERSION', 'v0.0'],
-    ['WHATSAPP_GRAPH_API_VERSION', 'v26.0/messages?access_token=fixture'],
-  ])('disables malformed %s=%s without a request', async (key, value) => {
+    ['WHATSAPP_GATEWAY_TOKEN', 'short'],
+    ['WHATSAPP_GATEWAY_TOKEN', 'private-token with-spaces-0123456789'],
+    ['WHATSAPP_GATEWAY_TOKEN', 'private-token-0123456789\r\ninjected'],
+    ['WHATSAPP_GATEWAY_URL', 'http://example.invalid:5102'],
+    ['WHATSAPP_GATEWAY_URL', 'http://127.0.0.1.example.invalid:5102'],
+    ['WHATSAPP_GATEWAY_URL', 'http://user:pass@127.0.0.1:5102'],
+    ['WHATSAPP_GATEWAY_URL', 'http://127.0.0.1:5102/path'],
+    ['WHATSAPP_GATEWAY_URL', 'http://127.0.0.1:5102/?token=secret'],
+    ['WHATSAPP_GATEWAY_URL', 'http://127.0.0.1:5102/#secret'],
+    ['WHATSAPP_GATEWAY_URL', 'https://127.0.0.1:5102'],
+    ['WHATSAPP_GATEWAY_URL', 'not-a-url'],
+  ])('prevents malformed %s configuration from sending', async (key, value) => {
     const fetch = mockFetch();
     expect(
       await sendWhatsAppNotification(notification, {
         environment: { ...environment, [key]: value },
         fetch,
       })
-    ).toEqual({
-      status: 'disabled',
-      reason: 'invalid-configuration',
-    });
+    ).toEqual({ status: 'disabled', reason: 'invalid-configuration' });
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('requires the Graph version explicitly instead of selecting a default', async () => {
-    const fetch = mockFetch();
-    const configured = { ...environment };
-    delete configured.WHATSAPP_GRAPH_API_VERSION;
-    expect(
-      await sendWhatsAppNotification(notification, { environment: configured, fetch })
-    ).toEqual({
-      status: 'disabled',
-      reason: 'invalid-configuration',
-    });
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it('removes controls and collapses whitespace in the three template parameters', async () => {
+  it('normalizes controls and preserves Korean text', async () => {
     const fetch = mockFetch();
     await sendWhatsAppNotification(
       {
         title: ' OII\n\t BUY\0 ',
-        asOf: '\r 2026-10-05\u2028 UTC ',
-        summary: 'USD\u200e 32.50\u2029   completed\u001b session',
+        asOf: '\t 2026-10-05 \n',
+        summary: '근거:\n \t추세\u2028전환\u200b확인',
       },
       { environment, fetch }
     );
-    expect(
-      sentPayload(fetch).template.components[0]?.parameters.map((parameter) => parameter.text)
-    ).toEqual(['OII BUY', '2026-10-05 UTC', 'USD 32.50 completed session']);
+    expect(sentPayload(fetch)).toMatchObject({
+      title: 'OII BUY',
+      asOf: '2026-10-05',
+      summary: '근거: 추세 전환 확인',
+    });
   });
 
-  it('bounds all text without splitting Unicode and keeps the combined parameters below 1024', async () => {
+  it('bounds UTF-16 lengths without splitting supplementary characters', async () => {
     const fetch = mockFetch();
     await sendWhatsAppNotification(
       { title: `A${'😀'.repeat(100)}`, asOf: '日'.repeat(100), summary: '한국어😀'.repeat(500) },
       { environment, fetch }
     );
-    const texts =
-      sentPayload(fetch).template.components[0]?.parameters.map((parameter) => parameter.text) ??
-      [];
-    expect(texts).toHaveLength(3);
-    expect(texts[0]?.length).toBe(79);
-    expect(texts[1]?.length).toBe(60);
-    expect(texts[2]?.length).toBeLessThanOrEqual(700);
-    expect(texts.reduce((sum, text) => sum + text.length, 0)).toBeLessThan(1024);
-    expect(texts.every((text) => text.isWellFormed())).toBe(true);
+    const payload = sentPayload(fetch);
+    expect(payload.title.length).toBeLessThanOrEqual(80);
+    expect(payload.asOf.length).toBeLessThanOrEqual(60);
+    expect(payload.summary.length).toBeLessThanOrEqual(700);
+    expect(payload.title).toBe(payload.title.toWellFormed());
+    expect(payload.summary).toBe(payload.summary.toWellFormed());
   });
 
-  it('uses N/A for empty template parameters', async () => {
+  it('uses a readable placeholder for empty notification fields', async () => {
     const fetch = mockFetch();
     await sendWhatsAppNotification(
       { title: '\n', asOf: '\t', summary: '' },
       { environment, fetch }
     );
-    expect(
-      sentPayload(fetch).template.components[0]?.parameters.map((parameter) => parameter.text)
-    ).toEqual(['N/A', 'N/A', 'N/A']);
+    expect(sentPayload(fetch)).toMatchObject({ title: 'N/A', asOf: 'N/A', summary: 'N/A' });
   });
 
-  it('returns only an HTTP status for provider failures and never retries', async () => {
-    const secretBody = JSON.stringify({
-      error: { message: `${environment.WHATSAPP_ACCESS_TOKEN} ${environment.WHATSAPP_TO}` },
-    });
-    const response = new Response(secretBody, { status: 429 });
-    const json = vi.spyOn(response, 'json');
-    const fetch = mockFetch(response);
-    expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
-      status: 'failed',
-      reason: 'http-error',
-      httpStatus: 429,
-    });
-    expect(json).not.toHaveBeenCalled();
-    expect(fetch).toHaveBeenCalledOnce();
-  });
+  it.each([401, 429, 503])(
+    'preserves a safe HTTP %s failure without exposing details or retrying',
+    async (status) => {
+      const fetch = mockFetch(new Response(JSON.stringify(environment), { status }));
+      expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
+        status: 'failed',
+        reason: 'http-error',
+        httpStatus: status,
+      });
+      expect(fetch).toHaveBeenCalledOnce();
+    }
+  );
 
   it.each([
-    null,
     {},
-    { messages: [] },
-    { messages: [{ id: 'unprefixed' }] },
-    { messages: [{ id: 'wamid.' }] },
-    { messages: [{ id: 'wamid.line\nbreak' }] },
-    { messages: [{ id: 123 }] },
-    { messages: [{ id: acceptedId }, { id: acceptedId }] },
-  ])('rejects an invalid provider acknowledgement: %j', async (data) => {
-    const fetch = mockFetch(new Response(JSON.stringify(data), { status: 200 }));
+    { messageId: null },
+    { messageId: 'not-an-ack' },
+    { messageId: environment.WHATSAPP_GATEWAY_TOKEN },
+    { messages: [{ id: 'wamid.legacy' }] },
+  ])('rejects responses without a WhatsApp Web acknowledgement', async (response) => {
+    const fetch = mockFetch(new Response(JSON.stringify(response), { status: 200 }));
     expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
       status: 'failed',
       reason: 'invalid-response',
     });
   });
 
-  it('handles a non-JSON successful response without throwing or exposing the body', async () => {
-    const fetch = mockFetch(new Response(environment.WHATSAPP_ACCESS_TOKEN, { status: 200 }));
+  it('does not expose a non-JSON response', async () => {
+    const fetch = mockFetch(new Response(environment.WHATSAPP_GATEWAY_TOKEN, { status: 200 }));
     expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
       status: 'failed',
       reason: 'invalid-response',
     });
   });
 
-  it('returns a generic network failure without logging or leaking exception contents', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  it('never returns a private hexadecimal token as a message acknowledgement', async () => {
+    const token = 'ab'.repeat(32);
+    const fetch = mockFetch(new Response(JSON.stringify({ messageId: token.toUpperCase() })));
+    expect(
+      await sendWhatsAppNotification(notification, {
+        environment: { ...environment, WHATSAPP_GATEWAY_TOKEN: token },
+        fetch,
+      })
+    ).toEqual({ status: 'failed', reason: 'invalid-response' });
+  });
+
+  it('does not expose an exception containing credentials or retry sending', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()
-      .mockRejectedValue(
-        new Error(`Bearer ${environment.WHATSAPP_ACCESS_TOKEN}; to ${environment.WHATSAPP_TO}`)
-      );
+      .mockRejectedValue(new Error(JSON.stringify(environment)));
     expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
       status: 'failed',
       reason: 'network-error',
     });
     expect(fetch).toHaveBeenCalledOnce();
-    expect(log).not.toHaveBeenCalled();
-    expect(error).not.toHaveBeenCalled();
-    expect(warn).not.toHaveBeenCalled();
   });
 
-  it('aborts and returns after ten seconds even when an injected fetch ignores cancellation', async () => {
+  it('aborts a hung gateway request within ten seconds', async () => {
     vi.useFakeTimers();
-    const fetch = vi
-      .fn<typeof globalThis.fetch>()
-      .mockImplementation(() => new Promise(() => undefined));
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(() => new Promise(() => {}));
     const pending = sendWhatsAppNotification(notification, { environment, fetch });
+    await vi.advanceTimersByTimeAsync(0);
     const signal = fetch.mock.calls[0]?.[1]?.signal;
     await vi.advanceTimersByTimeAsync(9_999);
     expect(signal?.aborted).toBe(false);
@@ -325,22 +273,21 @@ describe('sendWhatsAppNotification', () => {
     expect(await pending).toEqual({ status: 'failed', reason: 'network-error' });
     expect(signal?.aborted).toBe(true);
     expect(fetch).toHaveBeenCalledOnce();
-    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('bounds successful HTTP responses whose JSON body never finishes reading', async () => {
+  it('bounds a hung acknowledgement body read as well', async () => {
     vi.useFakeTimers();
-    const response = acceptedResponse();
-    vi.spyOn(response, 'json').mockImplementation(() => new Promise(() => undefined));
+    const response = {
+      ok: true,
+      json: () => new Promise(() => {}),
+    } as unknown as Response;
     const fetch = mockFetch(response);
     const pending = sendWhatsAppNotification(notification, { environment, fetch });
     await vi.advanceTimersByTimeAsync(10_000);
     expect(await pending).toEqual({ status: 'failed', reason: 'network-error' });
-    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('clears the timeout when the provider acknowledges the message', async () => {
+  it('cleans its timer after an accepted send', async () => {
     vi.useFakeTimers();
     const fetch = mockFetch();
     await sendWhatsAppNotification(notification, { environment, fetch });

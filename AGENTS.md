@@ -24,7 +24,9 @@
 - `mise run typecheck:mcp`, `mise run test:mcp`: Check the MCP integration.
 - `mise run release:test`: Check release PR validation, Bun version synchronization, and merge guards.
 - Slack alerts: `SLACK_WEBHOOK_URL=... mise run predict -- --ticker=AAPL` or `--slack-webhook=...`.
-- WhatsApp alerts: optional Meta Cloud API `WHATSAPP_*` environment settings; CLI BUY/SELL batches, saved market-screen completion summaries, and MCP `screen_stocks` with `notifyWhatsApp: true` use an approved three-variable template. See README for setup.
+- `mise run whatsapp:link`: Open the local QR page and link a WhatsApp Web sender from the phone's Linked devices screen.
+- `mise run whatsapp:gateway`: Run the linked local gateway on loopback port 5102.
+- WhatsApp alerts: set `WHATSAPP_TO` in E.164 format and keep the local gateway running. CLI BUY/SELL batches, saved market-screen completion summaries, and MCP `screen_stocks` with `notifyWhatsApp: true` send bounded plain-text summaries. MCP notification defaults to `false`; see README for setup.
 
 ## Coding Style & Naming Conventions
 - Language: TypeScript with `strict: true`, `esModuleInterop: true`.
@@ -48,7 +50,8 @@
 
 ## Security & Configuration Tips
 - Do not commit secrets. Pass Slack webhooks via env vars or GitHub Secrets.
-- Keep WhatsApp tokens and recipient settings in environment variables; notification failures must preserve saved screening and prediction results.
+- Keep WhatsApp recipient settings and optional gateway tokens in environment variables. Linked sessions and the default `0600` gateway-token file live in ignored `data/whatsapp/`; do not commit them or QR codes. Notification failures must preserve saved screening and prediction results.
+- WhatsApp Web notifications require a running local gateway; GitHub-hosted nightly runs have no linked session and keep notifications disabled without new required secrets.
 - Network calls: Uses public Yahoo Finance API and alternative.me FGI; handle failures gracefully (already logged) and avoid adding rate-limited loops.
 
 <!-- OMA:START — managed by oh-my-agent. Do not edit this block manually. -->
