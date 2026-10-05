@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/gracefullight/stock-checker/compare/v0.2.0...v0.2.1) (2026-10-05)
+
+
+### Tests
+
+* verify market-screen pacing within each worker ([d0dfc02](https://github.com/gracefullight/stock-checker/commit/d0dfc02b78c853c430ab9362ab3aabc59e090a70))
+
 ## [0.2.0](https://github.com/gracefullight/stock-checker/compare/v0.1.1...v0.2.0) (2026-10-05)
 
 
