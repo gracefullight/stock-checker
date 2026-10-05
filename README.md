@@ -38,6 +38,7 @@ the web market-screen menu require `mise run dev`.
 | Screen a selected list of up to 50 tickers | [Selected-ticker screening](#selected-ticker-screening) |
 | Collect US-market candidates and run resumable SC analysis | [Finviz candidate screening](#finviz-candidate-screening) |
 | Run predictions or evaluate a strategy | [CLI](#cli-packagescore) |
+| Receive stock signal and screening summaries | [WhatsApp notifications](#whatsapp-notifications) |
 | Check dependencies, Python tools, or repository quality | [Development](#development) |
 
 ## Web dashboard
@@ -244,6 +245,12 @@ set them in the launching process's environment or a private client configuratio
 |---|---|
 | `TIINGO_API_KEY` | Enables the [Tiingo](https://www.tiingo.com) daily-OHLCV fallback when Yahoo fails. Without it, unavailable OHLCV is returned as empty data. Provider quotas depend on the configured plan. |
 | `SLACK_WEBHOOK_URL` | Slack notification for BUY/SELL opinions from `predict`. |
+| `WHATSAPP_ACCESS_TOKEN` | Optional Meta Cloud API token with WhatsApp messaging permission. |
+| `WHATSAPP_PHONE_NUMBER_ID` | Registered Meta WhatsApp sender phone-number ID. |
+| `WHATSAPP_TO` | Recipient number in international format, including country code. |
+| `WHATSAPP_TEMPLATE_NAME` | Approved WhatsApp template with three positional body text variables. |
+| `WHATSAPP_TEMPLATE_LANGUAGE` | Exact approved template locale; defaults to `en_US`. |
+| `WHATSAPP_GRAPH_API_VERSION` | Explicit supported Graph API version from the Meta app, in `vN.N` format. |
 | `FMP_API_KEY` | Optional [FMP](https://site.financialmodelingprep.com/developer/docs) fallback for recent individual analyst price-target updates. Yahoo consensus and available Yahoo target updates work without it. |
 | `STOCK_CHECKER_DASHBOARD_URL` | Base URL for the local MCP browser dashboard tool; defaults to `http://localhost:5100`. Accepts HTTP/HTTPS without credentials, query parameters, or fragments. |
 | `API_URL` | Server-side web-to-API base URL; defaults through `NEXT_PUBLIC_API_URL` to `http://localhost:5101`. |
@@ -255,6 +262,71 @@ Restart the relevant process or MCP connection after changing its configuration.
 `STOCK_CHECKER_DASHBOARD_URL` changes MCP browser links; it does not configure the
 web application's API address. The public Finviz browser collection flow needs
 no Finviz API key; Elite API/export access is a separate service.
+
+## WhatsApp notifications
+
+Export the `WHATSAPP_*` variables in the process running the CLI, API, or MCP.
+The API example file is [apps/api/.env.example](apps/api/.env.example).
+Credentials and recipient settings stay on the server; MCP inputs never accept
+tokens or arbitrary recipient numbers. With no configuration, notifications
+are disabled. Incomplete or invalid configuration also prevents sending.
+
+The CLI sends one summary per successful `predict` run containing BUY or SELL
+results, after saving its CSV/JSON and prediction history. It includes signal
+counts, up to five ticker details, completed-close BUY stop/target references,
+and SELL exit warnings. HOLD-only runs send nothing. Repeating a CLI run can
+produce another notification.
+
+Finviz market-screen jobs send one completion summary after their final results
+are saved. The summary includes completion/partial/unavailable status, analyzed
+coverage, matching and unavailable counts, and up to three saved candidates.
+An empty matching set still produces a result summary. Paused jobs and status
+reads send nothing. The per-job notification record is saved before the request;
+resume does not repeat an attempted notification. An interrupted or failed
+attempt is not automatically retried, so a process crash can lose that alert.
+Notification failures do not discard analysis or change a completed job to paused.
+
+In Meta WhatsApp Manager, approve a template with exactly three positional body
+text variables in this order: event title, as-of timestamp/date, summary. For
+example, create `stock_checker_alert` with locale `en_US` and this body:
+
+```text
+Stock Checker {{1}}
+As of: {{2}}
+Results: {{3}}
+Signal scores are not win probabilities.
+```
+
+Use representative samples such as `Stock signals`, `2026-10-01`, and
+`BUY 1; AAPL BUY close 100.00, ATR stop 97.00, target 106.00` during template
+approval. Variables are normalized to single lines and bounded before sending.
+The API accepting a message does not prove recipient delivery; delivery webhooks
+are not implemented. Prices are analysis references, and these alerts do not
+provide a calibrated win rate or place trades.
+
+Scheduled messages use approved templates because they may occur outside the
+24-hour customer-service window. The recipient must consent to these alerts;
+account eligibility, template approval, and applicable messaging charges are
+managed by Meta. See the [WhatsApp Business Messaging Policy](https://whatsappbusiness.com/policy/)
+and [Meta Cloud API template request](https://www.postman.com/meta/whatsapp-business-platform/request/lwtlz1k/send-message-template-interactive).
+
+For a bounded MCP `screen_stocks` summary, explicitly pass `notifyWhatsApp: true`:
+
+```json
+{"tickers":["AAPL","TSLA","OII"],"decision":"BUY","notifyWhatsApp":true}
+```
+
+The flag defaults to `false`; ordinary screen reads send nothing. An explicit
+notification includes scan status, coverage, and up to three returned matches.
+The tool retains its analysis even when sending fails and reports the notification
+status separately. Repeating a flagged scan can produce another notification.
+
+For nightly CLI alerts, set `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
+and `WHATSAPP_TO` as GitHub repository **Secrets**. Set `WHATSAPP_TEMPLATE_NAME`,
+`WHATSAPP_TEMPLATE_LANGUAGE`, and `WHATSAPP_GRAPH_API_VERSION` as repository
+**Variables**. The existing schedule keeps working when all of them are absent.
+It predicts the workflow's configured ticker list; it does not collect Finviz
+candidates or schedule a market-screen job.
 
 ## Local MCP (Codex and Claude Code)
 
@@ -324,9 +396,10 @@ retrieval times. These are selected peer medians, not whole-industry averages.
 Financial reporting periods may differ, and lower multiples alone do not change
 the technical BUY/SELL decision. Valuation results are cached for 15 minutes.
 
-Yahoo requires no API key. Codex forwards `FMP_API_KEY` and `TIINGO_API_KEY`
-through `env_vars`; Claude's shared MCP configuration expands those environment
-variables with an empty default. An explicit key can also be supplied through
+Yahoo requires no API key. Codex forwards `FMP_API_KEY`, `TIINGO_API_KEY`, and
+the WhatsApp settings through `env_vars`; Claude's shared MCP configuration
+expands those environment variables with empty defaults and an `en_US` template
+locale. An explicit key can also be supplied through
 `env` in a private user/local MCP configuration. For example, set
 `env.FMP_API_KEY` in that private configuration. Without a key, Yahoo remains
 the data source.
@@ -357,6 +430,9 @@ defaults to 20. Results sort by BUY score descending, or SELL score for SELL
 screening, with ticker order breaking ties. Coverage includes the total matches
 before truncation, other decisions, and unavailable symbols. A completed scan
 with no matching BUY is a normal result.
+
+Set `notifyWhatsApp: true` to send this completed result to the configured
+recipient. The default is `false`; see [WhatsApp notifications](#whatsapp-notifications).
 
 At most two ticker analyses run concurrently. The scan has a 45-second time
 budget; unfinished symbols are reported as unavailable and already completed

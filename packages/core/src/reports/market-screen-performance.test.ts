@@ -21,6 +21,12 @@ import {
   writeMarketScreenJson,
 } from '@/reports/market-screen-store';
 
+vi.mock('@/utils/whatsapp', () => ({
+  sendWhatsAppNotification: vi
+    .fn()
+    .mockResolvedValue({ status: 'disabled', reason: 'not-configured' }),
+}));
+
 const SIGNAL = '2026-09-25';
 const PUBLICATION = '2026-09-26T12:00:00.000Z';
 const SESSIONS = ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02'];

@@ -27,6 +27,7 @@ import { readMarketScreenLease, writeMarketScreenJson } from '@/reports/market-s
 import { projectMatch } from '@/reports/stock-screen';
 import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/ticker-analysis';
 import type { PipelineResult } from '@/types';
+import type { sendWhatsAppNotification } from '@/utils/whatsapp';
 
 const storeHooks = vi.hoisted(() => ({
   beforeRead: undefined as undefined | ((file: string) => Promise<void>),
@@ -143,9 +144,15 @@ async function waitUntil(check: () => Promise<boolean> | boolean): Promise<void>
 describe('durable Finviz candidate jobs', () => {
   let root: string;
   let analyze: ReturnType<typeof vi.fn<typeof analyzeTickerContext>>;
+  let notify: ReturnType<typeof vi.fn<typeof sendWhatsAppNotification>>;
   let ids: string[];
   let releases: Array<() => void>;
-  const deps = () => ({ rootDirectory: root, analyzeTickerContext: analyze, minIntervalMs: 0 });
+  const deps = () => ({
+    rootDirectory: root,
+    analyzeTickerContext: analyze,
+    minIntervalMs: 0,
+    sendWhatsAppNotification: notify,
+  });
 
   async function create(options = input()) {
     const result = await createMarketScreenJob(options, deps());
@@ -185,6 +192,9 @@ describe('durable Finviz candidate jobs', () => {
     analyze = vi
       .fn<typeof analyzeTickerContext>()
       .mockImplementation(async (ticker) => context(ticker));
+    notify = vi
+      .fn<typeof sendWhatsAppNotification>()
+      .mockResolvedValue({ status: 'disabled', reason: 'not-configured' });
   });
 
   it('atomically publishes a frozen forward policy only alongside matched final BUY rows', async () => {
@@ -805,6 +815,255 @@ describe('durable Finviz candidate jobs', () => {
     await expect(getMarketScreenJob(created.job.id, { offset: -1 }, deps())).rejects.toThrow(
       TypeError
     );
+  });
+
+  describe('terminal WhatsApp summaries', () => {
+    const notificationFile = (id: string) => path.join(root, id, 'notification.json');
+
+    it('sends one bounded ranked summary after results, terminal state and attempt are durable', async () => {
+      analyze.mockImplementation(async (ticker) => {
+        if (ticker === 'ERROR') return null;
+        if (ticker === 'BLOCKED') return context(ticker, 'HOLD', 399);
+        const index = Number(ticker.slice(1));
+        const value = context(ticker, 'BUY', 250 + index * 10);
+        value.result.close = 100 + index;
+        return value;
+      });
+      notify.mockImplementation(async (message) => {
+        const directories = await readdir(root);
+        const id = directories.find((entry) => /^[a-f0-9-]{36}$/.test(entry));
+        if (!id) throw new Error('Missing test job');
+        const state = JSON.parse(await readFile(path.join(root, id, 'state.json'), 'utf8'));
+        const attempt = JSON.parse(await readFile(notificationFile(id), 'utf8'));
+        expect(state).toMatchObject({ status: 'partial', progress: { pending: 0, inFlight: 0 } });
+        expect(message.asOf).toBe(state.finishedAt);
+        expect(attempt).toMatchObject({ schemaVersion: 1, jobStatus: 'partial', result: null });
+        expect(attempt.finishedAt).toBeNull();
+        expect(await readMarketScreenLease(root)).toMatchObject({ jobId: id });
+        const rowCount = (
+          await Promise.all(
+            ['matches', 'excluded', 'unavailable'].map((kind) =>
+              readdir(path.join(root, id, 'results', kind))
+            )
+          )
+        ).flat().length;
+        expect(rowCount).toBe(8);
+        return { status: 'accepted', messageId: 'wamid.fixture' };
+      });
+      const started = await create(input(['P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'BLOCKED', 'ERROR']));
+      await settled(started.job.id);
+
+      expect(notify).toHaveBeenCalledOnce();
+      const message = notify.mock.calls[0][0];
+      expect(message.title).toContain('partial');
+      expect(message.summary).toContain('Matched 6; analyzed 7/8; excluded 1; unavailable 1');
+      expect(message.summary).toContain('Scores are signal strengths, not win probabilities');
+      expect(message.summary).toContain('References are completed closes, not entry fills');
+      expect(message.summary).toContain('BUY P5: reference 105.00, BUY score 300.0');
+      expect(message.summary.indexOf('BUY P5:')).toBeLessThan(message.summary.indexOf('BUY P4:'));
+      expect(message.summary.indexOf('BUY P4:')).toBeLessThan(message.summary.indexOf('BUY P3:'));
+      expect(message.summary).not.toContain('BUY P2:');
+      expect(message.summary).not.toContain('BLOCKED');
+      expect(message.summary.length).toBeLessThanOrEqual(700);
+      expect(JSON.parse(await readFile(notificationFile(started.job.id), 'utf8'))).toMatchObject({
+        jobStatus: 'partial',
+        result: { status: 'accepted', messageId: 'wamid.fixture' },
+        finishedAt: expect.any(String),
+      });
+      expect(analyze).toHaveBeenCalledTimes(8);
+    });
+
+    it('uses final SELL decisions and SELL ranking with unavailable reference prices preserved', async () => {
+      const scores: Record<string, number> = { LOW: 10, BEST: 300, MID: 200 };
+      analyze.mockImplementation(async (ticker) => {
+        const value = context(ticker, 'SELL', 500 - scores[ticker], scores[ticker]);
+        if (ticker === 'BEST') value.result.atr = Number.NaN;
+        return value;
+      });
+      const started = await create(input(['LOW', 'BEST', 'MID'], { decision: 'SELL' }));
+      await settled(started.job.id);
+
+      expect(notify).toHaveBeenCalledOnce();
+      const summary = notify.mock.calls[0][0].summary;
+      expect(summary).toContain('SELL BEST: reference unavailable, SELL score 300.0');
+      expect(summary.indexOf('SELL BEST:')).toBeLessThan(summary.indexOf('SELL MID:'));
+      expect(summary.indexOf('SELL MID:')).toBeLessThan(summary.indexOf('SELL LOW:'));
+    });
+
+    it('sends a completed zero-match summary and distinguishes excluded HOLDs from failures', async () => {
+      analyze.mockImplementation(async (ticker) => context(ticker, 'HOLD'));
+      const started = await create();
+      await settled(started.job.id);
+
+      expect(notify).toHaveBeenCalledOnce();
+      const message = notify.mock.calls[0][0];
+      expect(message.title).toContain('completed');
+      expect(message.summary).toContain('Matched 0; analyzed 2/2; excluded 2; unavailable 0');
+      expect(message.summary).toContain('No matching candidates');
+    });
+
+    it('explicitly identifies unavailable runs and partial Finviz collection', async () => {
+      analyze.mockResolvedValue(null);
+      const unavailable = await create();
+      await settled(unavailable.job.id);
+      expect(notify.mock.calls[0][0].title).toContain('unavailable');
+      expect(notify.mock.calls[0][0].summary).toContain(
+        'Matched 0; analyzed 0/2; excluded 0; unavailable 2'
+      );
+
+      analyze.mockImplementation(async (ticker) => context(ticker));
+      const options = input();
+      options.provenance = { ...options.provenance, sourceTotal: 1669, completeness: 'partial' };
+      const partial = await create(options);
+      await settled(partial.job.id);
+      expect(notify.mock.calls[1][0].title).toContain('partial');
+      expect(notify.mock.calls[1][0].summary).toContain('Finviz collection 2/1669 (partial)');
+    });
+
+    it.each([
+      { status: 'accepted', messageId: 'wamid.fixture' },
+      { status: 'disabled', reason: 'not-configured' },
+      { status: 'disabled', reason: 'invalid-configuration' },
+      { status: 'failed', reason: 'http-error', httpStatus: 503 },
+      { status: 'failed', reason: 'network-error' },
+    ] as const)(
+      'records %j without changing completion or resending on reads and resume',
+      async (outcome) => {
+        notify.mockResolvedValue(outcome);
+        const started = await create(input(['ONE']));
+        const complete = await settled(started.job.id);
+        expect(complete.job.status).toBe('completed');
+        expect(JSON.parse(await readFile(notificationFile(started.job.id), 'utf8')).result).toEqual(
+          outcome
+        );
+        await Promise.all([
+          runMarketScreenJob(started.job.id, deps()),
+          pauseMarketScreenJob(started.job.id, deps()),
+          getMarketScreenJob(started.job.id, {}, deps()),
+          listMarketScreenJobs({}, deps()),
+        ]);
+        expect(notify).toHaveBeenCalledOnce();
+        expect(analyze).toHaveBeenCalledOnce();
+      }
+    );
+
+    it('sanitizes a thrown timeout or sender error without pausing the saved completion', async () => {
+      notify.mockRejectedValue(new Error('AbortError private-token private-phone'));
+      const started = await create(input(['ONE']));
+      const complete = await settled(started.job.id);
+      const artifact = await readFile(notificationFile(started.job.id), 'utf8');
+
+      expect(complete.job.status).toBe('completed');
+      expect(JSON.parse(artifact).result).toEqual({ status: 'failed', reason: 'network-error' });
+      expect(artifact).not.toContain('private-token');
+      expect(artifact).not.toContain('private-phone');
+      await runMarketScreenJob(started.job.id, deps());
+      expect(notify).toHaveBeenCalledOnce();
+    });
+
+    it('does not send if its durable attempt cannot be saved', async () => {
+      storeHooks.beforeWrite = async (file) => {
+        if (file.endsWith('/notification.json'))
+          throw new Error('Notification storage unavailable');
+      };
+      const started = await create(input(['ONE']));
+      const complete = await settled(started.job.id);
+
+      expect(complete.job.status).toBe('completed');
+      expect(notify).not.toHaveBeenCalled();
+      await runMarketScreenJob(started.job.id, deps());
+      expect(notify).not.toHaveBeenCalled();
+    });
+
+    it('retains the attempt when saving the sender result fails without retrying', async () => {
+      storeHooks.beforeWrite = async (file, value) => {
+        if (file.endsWith('/notification.json') && (value as { finishedAt: unknown }).finishedAt)
+          throw new Error('Notification outcome storage unavailable');
+      };
+      notify.mockResolvedValue({ status: 'accepted', messageId: 'wamid.fixture' });
+      const started = await create(input(['ONE']));
+      const complete = await settled(started.job.id);
+
+      expect(complete.job.status).toBe('completed');
+      expect(JSON.parse(await readFile(notificationFile(started.job.id), 'utf8'))).toMatchObject({
+        finishedAt: null,
+        result: null,
+      });
+      await runMarketScreenJob(started.job.id, deps());
+      expect(notify).toHaveBeenCalledOnce();
+    });
+
+    it('does not send before a terminal checkpoint is successfully saved', async () => {
+      storeHooks.beforeWrite = async (file, value) => {
+        if (file.endsWith('/state.json') && (value as { status: string }).status === 'completed')
+          throw new Error('Final checkpoint unavailable');
+      };
+      const started = await create(input(['ONE']));
+      await waitUntil(async () => (await readMarketScreenLease(root)) === null);
+
+      expect((await getMarketScreenJob(started.job.id, {}, deps())).job.status).toBe('paused');
+      expect(notify).not.toHaveBeenCalled();
+      expect(await readdir(path.join(root, started.job.id))).not.toContain('notification.json');
+    });
+
+    it('suppresses a persisted attempt recovered before final completion', async () => {
+      const started = await create(input(['ONE'], { autoStart: false }));
+      await writeMarketScreenJson(notificationFile(started.job.id), {
+        schemaVersion: 1,
+        jobStatus: 'completed',
+        attemptedAt: new Date().toISOString(),
+        finishedAt: null,
+        result: null,
+      });
+      await runMarketScreenJob(started.job.id, deps());
+      expect((await settled(started.job.id)).job.status).toBe('completed');
+      expect(notify).not.toHaveBeenCalled();
+    });
+
+    it('never sends while paused or pending and sends once after resume completes', async () => {
+      const block = blocked();
+      analyze.mockImplementation(async (ticker) => {
+        await block.gate;
+        return context(ticker);
+      });
+      const started = await create(input(['ONE', 'TWO', 'THREE', 'FOUR']));
+      await waitUntil(() => analyze.mock.calls.length === 2);
+      expect(notify).not.toHaveBeenCalled();
+      await pauseMarketScreenJob(started.job.id, deps());
+      block.release();
+      await waitUntil(async () => (await readMarketScreenLease(root)) === null);
+      const paused = await getMarketScreenJob(started.job.id, {}, deps());
+      expect(paused.job.status).toBe('paused');
+      expect(paused.job.progress.pending).toBe(2);
+      expect(notify).not.toHaveBeenCalled();
+
+      await runMarketScreenJob(started.job.id, deps());
+      await settled(started.job.id);
+      expect(notify).toHaveBeenCalledOnce();
+    });
+
+    it('holds the job lease through the notification while terminal reads and resumes stay read-only', async () => {
+      const block = blocked();
+      notify.mockImplementationOnce(async () => {
+        await block.gate;
+        return { status: 'accepted', messageId: 'wamid.fixture' };
+      });
+      const started = await create(input(['ONE']));
+      await waitUntil(() => notify.mock.calls.length === 1);
+      expect((await getMarketScreenJob(started.job.id, {}, deps())).job.status).toBe('completed');
+      expect(await readMarketScreenLease(root)).toMatchObject({ jobId: started.job.id });
+      await runMarketScreenJob(started.job.id, deps());
+      const other = await create(input(['OTHER']));
+      expect(other.job.status).toBe('paused');
+      expect(analyze).toHaveBeenCalledOnce();
+      expect(notify).toHaveBeenCalledOnce();
+
+      block.release();
+      await settled(started.job.id);
+      await runMarketScreenJob(other.job.id, deps());
+      await settled(other.job.id);
+      expect(notify).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('read-only job listing', () => {

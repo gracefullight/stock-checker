@@ -38,6 +38,8 @@ import { loadOptimizedConfig } from '@/utils/config-loader';
 import { writeToCsv } from '@/utils/csv-writer';
 import { exportToJson } from '@/utils/json-exporter';
 import { sendSlackNotification } from '@/utils/slack';
+import { buildStockSignalNotification } from '@/utils/stock-alerts';
+import { sendWhatsAppNotification } from '@/utils/whatsapp';
 
 const logger = pino({
   level: 'debug',
@@ -342,4 +344,21 @@ export async function predict(options: CliOptions): Promise<void> {
   }
 
   await savePredictions(ordered);
+
+  const notification = buildStockSignalNotification(ordered);
+  if (notification) {
+    try {
+      const result = await sendWhatsAppNotification(notification);
+      if (result.status === 'accepted') {
+        logger.info('WhatsApp signal notification accepted by Meta');
+      } else if (result.status === 'failed' || result.reason === 'invalid-configuration') {
+        logger.warn(
+          { status: result.status, reason: result.reason },
+          'WhatsApp signal notification was not accepted'
+        );
+      }
+    } catch {
+      logger.warn('WhatsApp signal notification failed; prediction results are saved');
+    }
+  }
 }

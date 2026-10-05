@@ -17,6 +17,7 @@ import {
 } from '@/reports/market-screen-store';
 import { projectMatch, type StockScreenMatch } from '@/reports/stock-screen';
 import type { analyzeTickerContext } from '@/services/ticker-analysis';
+import { sendWhatsAppNotification } from '@/utils/whatsapp';
 
 export {
   getMarketScreenPerformance,
@@ -57,6 +58,8 @@ export interface MarketScreenDependencies {
   rootDirectory?: string;
   analyzeTickerContext?: typeof analyzeTickerContext;
   minIntervalMs?: number;
+  /** Test-only sender injection; public inputs never accept messaging credentials. */
+  sendWhatsAppNotification?: typeof sendWhatsAppNotification;
 }
 
 export interface MarketScreenPageOptions {
@@ -166,6 +169,13 @@ interface Runtime {
   manifest: Manifest;
   done: Promise<void>;
   writes: Promise<void>;
+}
+interface NotificationAttempt {
+  schemaVersion: 1;
+  jobStatus: JobStatus;
+  attemptedAt: string;
+  finishedAt: string | null;
+  result: Awaited<ReturnType<typeof sendWhatsAppNotification>> | null;
 }
 
 const DEFAULT_ROOT = fileURLToPath(new URL('../../../../data/market-scans/', import.meta.url));
@@ -486,6 +496,66 @@ async function checkpoint(runtime: Runtime): Promise<void> {
   await runtime.writes;
 }
 
+async function notifyCompletion(
+  runtime: Runtime,
+  dependencies: MarketScreenDependencies
+): Promise<void> {
+  if (!terminal(runtime.job.status)) return;
+  try {
+    const file = jobFile(runtime.root, runtime.jobId, 'notification.json');
+    try {
+      await readMarketScreenJson(file);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return;
+    }
+    const rows = await results(runtime.root, runtime.jobId, 'matches');
+    const metric = runtime.job.criteria.decision === 'SELL' ? 'sellScore' : 'buyScore';
+    rows.sort(
+      (left, right) =>
+        (right.item as StockScreenMatch)[metric] - (left.item as StockScreenMatch)[metric] ||
+        left.item.ticker.localeCompare(right.item.ticker)
+    );
+    const candidates = rows.slice(0, 3).map(({ item }) => {
+      const match = item as StockScreenMatch;
+      const reference = match.execution.reference?.price.toFixed(2) ?? 'unavailable';
+      return `${match.decision} ${match.ticker}: reference ${reference}, ${metric === 'sellScore' ? 'SELL' : 'BUY'} score ${match[metric].toFixed(1)}, session ${match.dataAsOf ?? 'unavailable'}`;
+    });
+    const { progress, universe } = runtime.job;
+    const summary = [
+      `Filter ${runtime.job.criteria.decision}. Matched ${progress.matched}; analyzed ${progress.analyzed}/${progress.total}; excluded ${progress.excluded}; unavailable ${progress.unavailable}.`,
+      `Finviz collection ${universe.collectedCount}/${universe.sourceTotal} (${universe.completeness}).`,
+      'Scores are signal strengths, not win probabilities. References are completed closes, not entry fills.',
+      ...(candidates.length ? ['Top matches:', ...candidates] : ['No matching candidates.']),
+    ]
+      .join('\n')
+      .slice(0, 700);
+    const attempt: NotificationAttempt = {
+      schemaVersion: 1,
+      jobStatus: runtime.job.status,
+      attemptedAt: timestamp(),
+      finishedAt: null,
+      result: null,
+    };
+    // The job lease remains held. A durable attempt precedes every outbound call;
+    // crashes, failures and disabled senders never trigger automatic retries.
+    await writeMarketScreenJson(file, attempt);
+    let result: NonNullable<NotificationAttempt['result']>;
+    try {
+      result = await (dependencies.sendWhatsAppNotification ?? sendWhatsAppNotification)({
+        title: `Stock Checker screen ${runtime.jobId.slice(0, 8)}: ${runtime.job.status}`,
+        asOf: runtime.job.finishedAt ?? runtime.job.updatedAt,
+        summary,
+      });
+    } catch {
+      result = { status: 'failed', reason: 'network-error' };
+    }
+    await writeMarketScreenJson(file, { ...attempt, finishedAt: timestamp(), result });
+  } catch {
+    // Messaging and its private artifact cannot invalidate a saved terminal job.
+  }
+}
+
 function rateLimited(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const value = error as {
@@ -671,6 +741,7 @@ async function execute(
         control.reason ?? 'The scan is paused; resume to evaluate remaining candidates.';
     }
     await checkpoint(runtime);
+    await notifyCompletion(runtime, dependencies);
   } catch {
     runtime.job.status = 'paused';
     runtime.job.pauseReason =

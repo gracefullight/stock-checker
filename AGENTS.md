@@ -24,6 +24,7 @@
 - `mise run typecheck:mcp`, `mise run test:mcp`: Check the MCP integration.
 - `mise run release:test`: Check release PR validation, Bun version synchronization, and merge guards.
 - Slack alerts: `SLACK_WEBHOOK_URL=... mise run predict -- --ticker=AAPL` or `--slack-webhook=...`.
+- WhatsApp alerts: optional Meta Cloud API `WHATSAPP_*` environment settings; CLI BUY/SELL batches, saved market-screen completion summaries, and MCP `screen_stocks` with `notifyWhatsApp: true` use an approved three-variable template. See README for setup.
 
 ## Coding Style & Naming Conventions
 - Language: TypeScript with `strict: true`, `esModuleInterop: true`.
@@ -47,6 +48,7 @@
 
 ## Security & Configuration Tips
 - Do not commit secrets. Pass Slack webhooks via env vars or GitHub Secrets.
+- Keep WhatsApp tokens and recipient settings in environment variables; notification failures must preserve saved screening and prediction results.
 - Network calls: Uses public Yahoo Finance API and alternative.me FGI; handle failures gracefully (already logged) and avoid adding rate-limited loops.
 
 <!-- OMA:START — managed by oh-my-agent. Do not edit this block manually. -->

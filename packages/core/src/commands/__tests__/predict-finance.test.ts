@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { predict } from '@/commands/predict';
 import { DEFAULT_PIPELINE_CONFIG } from '@/constants';
@@ -8,6 +9,7 @@ import { evaluateSignal } from '@/services/pipeline';
 import type { IndicatorValues, PipelineResult } from '@/types';
 import { loadOptimizedConfig } from '@/utils/config-loader';
 import { writeToCsv } from '@/utils/csv-writer';
+import { sendWhatsAppNotification } from '@/utils/whatsapp';
 
 vi.mock('@/services/data-fetcher', () => ({
   getHistoricalPrices: vi.fn(),
@@ -27,6 +29,7 @@ vi.mock('@/services/pipeline', () => ({ evaluateSignal: vi.fn() }));
 vi.mock('@/utils/config-loader', () => ({ loadOptimizedConfig: vi.fn() }));
 vi.mock('@/utils/csv-writer', () => ({ writeToCsv: vi.fn() }));
 vi.mock('@/ui/summary', () => ({ printSummaryTable: vi.fn() }));
+vi.mock('@/utils/whatsapp', () => ({ sendWhatsAppNotification: vi.fn() }));
 vi.mock('node:fs', () => ({
   existsSync: vi.fn().mockReturnValue(true),
   mkdirSync: vi.fn(),
@@ -113,6 +116,10 @@ const earnings: EarningsData = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(sendWhatsAppNotification).mockResolvedValue({
+    status: 'disabled',
+    reason: 'not-configured',
+  });
   vi.mocked(getHistoricalPrices).mockResolvedValue([bar]);
   vi.mocked(fetchBenchmarkPrices).mockResolvedValue([]);
   vi.mocked(calculateAllIndicators).mockReturnValue(indicators);
@@ -127,6 +134,57 @@ beforeEach(() => {
 });
 
 describe('equity prediction finance inputs', () => {
+  it('sends one WhatsApp summary after both CSV and prediction persistence', async () => {
+    await predict({ tickers: ['TEST', 'OII'], sort: 'asc', format: 'csv' });
+
+    expect(sendWhatsAppNotification).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        title: 'Stock signals',
+        asOf: '2026-10-01',
+        summary: expect.stringContaining('SELL 2'),
+      })
+    );
+    const notificationOrder = vi.mocked(sendWhatsAppNotification).mock.invocationCallOrder[0];
+    expect(vi.mocked(writeToCsv).mock.invocationCallOrder[0]).toBeLessThan(notificationOrder);
+    expect(vi.mocked(fs.writeFileSync).mock.invocationCallOrder[0]).toBeLessThan(notificationOrder);
+  });
+
+  it('does not alert on HOLD-only runs or runs without a usable analysis', async () => {
+    vi.mocked(evaluateSignal).mockReturnValue({ ...pipelineResult, finalDecision: 'HOLD' });
+    await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
+    expect(sendWhatsAppNotification).not.toHaveBeenCalled();
+
+    vi.mocked(calculateAllIndicators).mockReturnValue({ ...indicators, atr: 0 });
+    await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
+    expect(sendWhatsAppNotification).not.toHaveBeenCalled();
+  });
+
+  it('keeps saved results when WhatsApp rejects the request or throws unexpectedly', async () => {
+    vi.mocked(sendWhatsAppNotification).mockResolvedValue({
+      status: 'failed',
+      reason: 'http-error',
+      httpStatus: 401,
+    });
+    await expect(
+      predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' })
+    ).resolves.toBeUndefined();
+    expect(fs.writeFileSync).toHaveBeenCalledOnce();
+
+    vi.mocked(sendWhatsAppNotification).mockRejectedValue(new Error('provider unavailable'));
+    await expect(
+      predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' })
+    ).resolves.toBeUndefined();
+    expect(fs.writeFileSync).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not send a notification if CSV persistence fails', async () => {
+    vi.mocked(writeToCsv).mockRejectedValueOnce(new Error('disk unavailable'));
+    await expect(predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' })).rejects.toThrow(
+      'disk unavailable'
+    );
+    expect(sendWhatsAppNotification).not.toHaveBeenCalled();
+  });
+
   it('keeps Bitcoin sentiment in the output but excludes it from equity decisions', async () => {
     await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
 

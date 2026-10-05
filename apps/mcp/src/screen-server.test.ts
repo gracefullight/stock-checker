@@ -3,6 +3,7 @@ import {
   createStockAnalystServer,
   type ScreenGenerator,
   SERVER_INSTRUCTIONS,
+  type WhatsAppNotifier,
 } from '@mcp/server.ts';
 import { fixtureScreen, fixtureScreenMatch } from '@mcp/test-fixtures/screen.ts';
 import { Client } from '@modelcontextprotocol/client';
@@ -10,9 +11,20 @@ import { InMemoryTransport } from '@modelcontextprotocol/server';
 
 async function withScreenClient(
   generator: ScreenGenerator,
-  check: (client: Client) => Promise<void>
+  check: (client: Client) => Promise<void>,
+  notifier: WhatsAppNotifier = mock<WhatsAppNotifier>(async () => ({
+    status: 'disabled',
+    reason: 'not-configured',
+  }))
 ): Promise<void> {
-  const server = createStockAnalystServer(undefined, undefined, undefined, generator);
+  const server = createStockAnalystServer(
+    undefined,
+    undefined,
+    undefined,
+    generator,
+    undefined,
+    notifier
+  );
   const client = new Client({ name: 'stock-screen-test', version: '1.0.0' });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   try {
@@ -150,7 +162,7 @@ describe('screen_stocks MCP tool', () => {
     );
   });
 
-  test('discovers a bounded, read-only core-decision screen with BUY defaults', async () => {
+  test('discovers a bounded core-decision screen with explicit optional notification', async () => {
     const generator = mock(async () => {
       throw new Error('Discovery must not analyze tickers');
     });
@@ -160,9 +172,9 @@ describe('screen_stocks MCP tool', () => {
       const tool = tools.find((item) => item.name === 'screen_stocks');
       expect(tool).toMatchObject({
         annotations: {
-          readOnlyHint: true,
+          readOnlyHint: false,
           destructiveHint: false,
-          idempotentHint: true,
+          idempotentHint: false,
           openWorldHint: true,
         },
         inputSchema: {
@@ -178,15 +190,173 @@ describe('screen_stocks MCP tool', () => {
             decision: { enum: ['BUY', 'SELL', 'HOLD', 'ALL'], default: 'BUY' },
             lookbackDays: { type: 'integer', minimum: 730, maximum: 3650, default: 730 },
             limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+            notifyWhatsApp: { type: 'boolean', default: false },
           },
         },
       });
       expect(tool?.description).toContain('after quality gates');
       expect(tool?.description).toContain('20-symbol universe');
       expect(tool?.description).toContain('scores are not win probabilities');
+      expect(tool?.description).toContain('fixed environment-configured WhatsApp recipient');
+      expect(tool?.description).toContain('default false');
       expect(SERVER_INSTRUCTIONS).toContain('does not search the entire market');
       expect(generator).not.toHaveBeenCalled();
     });
+  });
+
+  test.each([{}, { notifyWhatsApp: false }])(
+    'does not send an optional notification unless explicitly enabled: %j',
+    async (arguments_) => {
+      const screen = fixtureScreen();
+      const notifier = mock<WhatsAppNotifier>(async () => {
+        throw new Error('Notification was not authorized');
+      });
+      await withScreenClient(
+        async () => ({ screen, markdown: '# Screen without notification' }),
+        async (client) => {
+          expect(await client.callTool({ name: 'screen_stocks', arguments: arguments_ })).toEqual({
+            isError: false,
+            content: [{ type: 'text', text: '# Screen without notification' }],
+            structuredContent: { screen },
+          });
+          expect(notifier).not.toHaveBeenCalled();
+        },
+        notifier
+      );
+    }
+  );
+
+  test.each(['available', 'partial', 'unavailable', 'zero matches'] as const)(
+    'sends exactly one requested summary and preserves screen status: %s',
+    async (status) => {
+      const noMatches = status === 'unavailable' || status === 'zero matches';
+      const unavailable = status === 'partial' || status === 'unavailable' ? 1 : 0;
+      const screen = fixtureScreen({
+        status: status === 'zero matches' ? 'available' : status,
+        coverage: {
+          requested: status === 'partial' ? 2 : 1,
+          analyzed: status === 'unavailable' ? 0 : 1,
+          unavailable,
+          matched: noMatches ? 0 : 1,
+          returned: noMatches ? 0 : 1,
+          truncated: false,
+        },
+        matches: noMatches ? [] : [fixtureScreenMatch('AAPL')],
+        unavailable: unavailable ? [{ ticker: 'BAD', reason: 'Fixture missing data' }] : [],
+      });
+      const notification = { status: 'accepted' as const, messageId: 'wamid.fixture' };
+      const notifier = mock<WhatsAppNotifier>(async () => notification);
+      await withScreenClient(
+        async () => ({ screen, markdown: '# Screen remains available' }),
+        async (client) => {
+          const result = await client.callTool({
+            name: 'screen_stocks',
+            arguments: { notifyWhatsApp: true },
+          });
+          expect(result).toMatchObject({
+            isError: screen.status === 'unavailable',
+            structuredContent: { screen, notification },
+          });
+          expect(result.content).toEqual([
+            {
+              type: 'text',
+              text: '# Screen remains available\n\nWhatsApp notification: API accepted the request; delivery is not confirmed.',
+            },
+          ]);
+          expect(notifier).toHaveBeenCalledTimes(1);
+          expect(notifier).toHaveBeenCalledWith({
+            title: `Stock Checker screen: BUY ${screen.status}`,
+            asOf: `Scan completed ${screen.generatedAt}`,
+            summary: expect.stringContaining(
+              `analyzed ${screen.coverage.analyzed}/${screen.coverage.requested}; matched ${screen.coverage.matched}; unavailable ${unavailable}`
+            ),
+          });
+          const payload = notifier.mock.calls[0]?.[0];
+          expect(payload?.summary).toContain('Scores are not probabilities of profit');
+          expect(payload?.summary).toContain(
+            noMatches ? 'Candidates: none.' : 'AAPL BUY bar 2026-10-02 reference 100.00'
+          );
+          expect(payload?.summary.length).toBeLessThanOrEqual(700);
+        },
+        notifier
+      );
+    }
+  );
+
+  test.each([
+    { status: 'disabled' as const, reason: 'not-configured' as const },
+    { status: 'disabled' as const, reason: 'invalid-configuration' as const },
+    { status: 'failed' as const, reason: 'http-error' as const, httpStatus: 401 },
+  ])('keeps successful screening when notification is unavailable: %j', async (notification) => {
+    const screen = fixtureScreen({ status: 'partial' });
+    const notifier = mock<WhatsAppNotifier>(async () => notification);
+    await withScreenClient(
+      async () => ({ screen, markdown: '# Partial result' }),
+      async (client) => {
+        const result = await client.callTool({
+          name: 'screen_stocks',
+          arguments: { notifyWhatsApp: true },
+        });
+        expect(result).toMatchObject({
+          isError: false,
+          structuredContent: { screen, notification },
+        });
+        expect(JSON.stringify(result)).toContain('# Partial result');
+        expect(notifier).toHaveBeenCalledTimes(1);
+      },
+      notifier
+    );
+  });
+
+  test('sanitizes an unexpected notification rejection without discarding the screen', async () => {
+    const screen = fixtureScreen();
+    const notifier = mock<WhatsAppNotifier>(async () => {
+      throw new Error(
+        'https://graph.facebook.com?access_token=private-fixture recipient=821012345678'
+      );
+    });
+    await withScreenClient(
+      async () => ({ screen, markdown: '# Successful screen' }),
+      async (client) => {
+        const result = await client.callTool({
+          name: 'screen_stocks',
+          arguments: { notifyWhatsApp: true },
+        });
+        expect(result).toMatchObject({
+          isError: false,
+          structuredContent: {
+            screen,
+            notification: { status: 'failed', reason: 'network-error' },
+          },
+        });
+        expect(JSON.stringify(result)).toContain('The screening result is preserved');
+        expect(JSON.stringify(result)).not.toMatch(/private-fixture|821012345678|graph\.facebook/);
+        expect(notifier).toHaveBeenCalledTimes(1);
+      },
+      notifier
+    );
+  });
+
+  test('does not send a notification if screen generation fails', async () => {
+    const notifier = mock<WhatsAppNotifier>(async () => ({
+      status: 'accepted',
+      messageId: 'wamid.fixture',
+    }));
+    await withScreenClient(
+      async () => {
+        throw new Error('Fixture generation error');
+      },
+      async (client) => {
+        expect(
+          await client.callTool({
+            name: 'screen_stocks',
+            arguments: { notifyWhatsApp: true },
+          })
+        ).toMatchObject({ isError: true });
+        expect(notifier).not.toHaveBeenCalled();
+      },
+      notifier
+    );
   });
 
   test('applies optional defaults and sanitizes provider errors', async () => {
@@ -254,17 +424,31 @@ describe('screen_stocks MCP tool', () => {
     { limit: 1.5 },
     { limit: '20' },
     { requestUrl: 'https://example.com' },
+    { notifyWhatsApp: 'true' },
+    { notifyWhatsApp: null },
+    { notifyWhatsApp: true, recipient: '+821012345678' },
+    { notifyWhatsApp: true, phoneNumber: '+821012345678' },
+    { notifyWhatsApp: true, accessToken: 'private-fixture' },
+    { notifyWhatsApp: true, WHATSAPP_ACCESS_TOKEN: 'private-fixture' },
   ])('rejects invalid screen input before market-data work: %j', async (arguments_) => {
     const generator = mock(async () => {
       throw new Error('Invalid input must not reach the screen generator');
     });
-    await withScreenClient(generator, async (client) => {
-      expect(await client.callTool({ name: 'screen_stocks', arguments: arguments_ })).toMatchObject(
-        {
-          isError: true,
-        }
-      );
-      expect(generator).not.toHaveBeenCalled();
+    const notifier = mock<WhatsAppNotifier>(async () => {
+      throw new Error('Invalid input must not notify');
     });
+    await withScreenClient(
+      generator,
+      async (client) => {
+        expect(
+          await client.callTool({ name: 'screen_stocks', arguments: arguments_ })
+        ).toMatchObject({
+          isError: true,
+        });
+        expect(generator).not.toHaveBeenCalled();
+        expect(notifier).not.toHaveBeenCalled();
+      },
+      notifier
+    );
   });
 });
