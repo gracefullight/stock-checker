@@ -110,7 +110,8 @@ function apiFixture({ synchronized = false } = {}) {
         get: async () => {
           state.pullReads += 1;
           state.beforePullRead?.(state);
-          return { data: structuredClone(state.pr) };
+          const snapshot = structuredClone(state.pr);
+          return { data: state.transformPullResponse?.(snapshot) || snapshot };
         },
         listFiles: () => {},
         merge: async (parameters) => {
@@ -284,6 +285,81 @@ test('prepare detects branch races during the GitHub content update', async () =
   fixture.state.writeParent = MERGE_SHA;
   await assert.rejects(prepareRelease(prepareOptions(fixture)), /changed while updating lockfile/);
   assert.equal(fixture.state.merges.length, 0);
+});
+
+test('prepare waits only for its own lockfile commit to propagate to the PR API', async () => {
+  const fixture = apiFixture();
+  let staleReads = 2;
+  const waits = [];
+  fixture.state.transformPullResponse = (snapshot) => {
+    if (fixture.state.writes.length && staleReads > 0) {
+      staleReads -= 1;
+      snapshot.head.sha = HEAD_SHA;
+    }
+    return snapshot;
+  };
+  const result = await prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } });
+  assert.equal(result.headSha, LOCK_SHA);
+  assert.deepEqual(waits, [1000, 1000]);
+  assert.equal(fixture.state.writes.length, 1);
+});
+
+test('prepare bounds the wait for a permanently stale PR API snapshot', async () => {
+  const fixture = apiFixture();
+  const waits = [];
+  fixture.state.transformPullResponse = (snapshot) => {
+    if (fixture.state.writes.length) snapshot.head.sha = HEAD_SHA;
+    return snapshot;
+  };
+  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /Timed out waiting/);
+  assert.deepEqual(waits, [1000, 1000, 1000, 1000, 1000]);
+  assert.equal(fixture.state.pullReads, 8);
+  assert.equal(fixture.state.merges.length, 0);
+});
+
+test('prepare rejects a third PR head while waiting for its own lockfile commit', async () => {
+  const fixture = apiFixture();
+  const waits = [];
+  fixture.state.transformPullResponse = (snapshot) => {
+    if (fixture.state.writes.length) snapshot.head.sha = MERGE_SHA;
+    return snapshot;
+  };
+  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /head changed/);
+  assert.deepEqual(waits, []);
+  assert.equal(fixture.state.merges.length, 0);
+});
+
+test('prepare rejects a changed branch ref before polling the PR API', async () => {
+  const fixture = apiFixture();
+  const waits = [];
+  const update = fixture.github.rest.repos.createOrUpdateFileContents;
+  fixture.github.rest.repos.createOrUpdateFileContents = async (parameters) => {
+    const result = await update(parameters);
+    fixture.state.branchSha = MERGE_SHA;
+    return result;
+  };
+  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /branch changed while waiting/);
+  assert.deepEqual(waits, []);
+  assert.equal(fixture.state.pullReads, 2);
+  assert.equal(fixture.state.merges.length, 0);
+});
+
+test('prepare preserves base and metadata guards while a lockfile commit propagates', async () => {
+  for (const change of ['base', 'author', 'title', 'body']) {
+    const fixture = apiFixture();
+    const waits = [];
+    fixture.state.beforePullRead = (state) => {
+      if (state.writes.length) {
+        if (change === 'base') state.pr.base.sha = MERGE_SHA;
+        if (change === 'author') state.pr.user.login = 'attacker';
+        if (change === 'title') state.pr.title = 'chore(main): release 9.9.9';
+        if (change === 'body') state.pr.body = state.pr.body.replace('## 0.1.0', '## 9.9.9');
+      }
+    };
+    await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }));
+    assert.deepEqual(waits, []);
+    assert.equal(fixture.state.merges.length, 0);
+  }
 });
 
 test('merge uses the validated SHA and squash method with a literal commit message', async () => {

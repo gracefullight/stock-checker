@@ -1,4 +1,5 @@
 const { isDeepStrictEqual } = require('node:util');
+const { setTimeout: waitFor } = require('node:timers/promises');
 
 const RELEASE_BRANCH = 'release-please--branches--main--components--stock-checker';
 const MANIFEST_PATH = '.release-please-manifest.json';
@@ -12,6 +13,13 @@ const PACKAGE_PATHS = ['package.json', ...Object.keys(WORKSPACE_NAMES).map((path
 const RELEASE_FILES = new Set(['CHANGELOG.md', MANIFEST_PATH, ...PACKAGE_PATHS]);
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const SHA = /^[a-f0-9]{40}$/;
+
+class ChangedHeadError extends Error {
+  constructor(headSha) {
+    super('Release pull request head changed');
+    this.headSha = headSha;
+  }
+}
 
 function requireCondition(condition, message) {
   if (!condition) throw new Error(message);
@@ -135,12 +143,30 @@ async function getPullRequest(github, repository, prNumber, expectedBaseSha, exp
   requireCondition(pr.labels.some((label) => label.name === 'autorelease: pending'), 'Missing pending release label');
   requireSha(pr.head.sha, 'pull request head');
   requireCondition(pr.base.sha === expectedBaseSha, 'Release pull request base is stale');
-  if (expectedHeadSha !== undefined) requireCondition(pr.head.sha === expectedHeadSha, 'Release pull request head changed');
+  if (expectedHeadSha !== undefined && pr.head.sha !== expectedHeadSha) throw new ChangedHeadError(pr.head.sha);
   const { data: main } = await github.rest.git.getRef({ ...repository, ref: 'heads/main' });
   requireCondition(main.object.sha === expectedBaseSha, 'Main advanced; retry release on the current main commit');
   const { data: head } = await github.rest.git.getRef({ ...repository, ref: `heads/${RELEASE_BRANCH}` });
   requireCondition(head.object.sha === pr.head.sha, 'Release branch changed during validation');
   return pr;
+}
+
+async function waitForLockCommit(github, repository, prNumber, expectedBaseSha, previousHeadSha, expectedHeadSha, version, wait) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const { data: branch } = await github.rest.git.getRef({ ...repository, ref: `heads/${RELEASE_BRANCH}` });
+    requireCondition(branch.object.sha === expectedHeadSha, 'Release branch changed while waiting for lockfile commit');
+    try {
+      const pr = await getPullRequest(github, repository, prNumber, expectedBaseSha, expectedHeadSha);
+      validateReleaseMetadata(pr, version);
+      return pr;
+    } catch (error) {
+      // Only our own commit's previous PR snapshot can lag behind the branch ref.
+      // Unexpected heads and all other validation/API errors fail immediately.
+      if (!(error instanceof ChangedHeadError) || error.headSha !== previousHeadSha) throw error;
+      if (attempt === 5) throw new Error('Timed out waiting for release pull request lockfile commit');
+      await wait(1000);
+    }
+  }
 }
 
 async function readFile(github, repository, path, ref) {
@@ -198,7 +224,7 @@ async function validateReleaseFiles(github, repository, pr, expectedBaseSha) {
   return { version, expectedLock, releaseLock };
 }
 
-async function prepareRelease({ github, context, core, prNumber, expectedBaseSha }) {
+async function prepareRelease({ github, context, core, prNumber, expectedBaseSha, wait = waitFor }) {
   const repository = repoParameters(context);
   let pr = await getPullRequest(github, repository, prNumber, expectedBaseSha);
   const release = await validateReleaseFiles(github, repository, pr, expectedBaseSha);
@@ -215,7 +241,7 @@ async function prepareRelease({ github, context, core, prNumber, expectedBaseSha
     });
     requireSha(data.commit?.sha, 'lockfile commit');
     requireCondition(data.commit.parents?.length === 1 && data.commit.parents[0].sha === pr.head.sha, 'Release branch changed while updating lockfile');
-    pr = await getPullRequest(github, repository, prNumber, expectedBaseSha, data.commit.sha);
+    pr = await waitForLockCommit(github, repository, prNumber, expectedBaseSha, pr.head.sha, data.commit.sha, release.version, wait);
     await validateReleaseFiles(github, repository, pr, expectedBaseSha);
   }
   core?.info?.(`Prepared release ${release.version} at ${pr.head.sha}`);
