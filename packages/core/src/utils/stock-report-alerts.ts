@@ -4,8 +4,8 @@ import {
   summarizeHistoricalOutcomes,
 } from '@/reports/historical-outcomes';
 import { gateReasons } from '@/reports/signal-reasons';
-import { type AnalystTargetsReport, getAnalystTargets } from '@/services/analyst-targets';
-import { analyzeTickerContext, type TickerAnalysisContext } from '@/services/ticker-analysis';
+import type { AnalystTargetsReport, getAnalystTargets } from '@/services/analyst-targets';
+import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/ticker-analysis';
 import type { WhatsAppNotification } from '@/utils/whatsapp';
 
 export interface StockReportAlertCandidate {
@@ -258,13 +258,21 @@ async function loadDetail(
   options: { lookbackDays: number; context?: TickerAnalysisContext },
   dependencies: StockReportAlertDependencies
 ): Promise<StockReportAlertDetail> {
-  const analyze = dependencies.analyzeTickerContext ?? analyzeTickerContext;
-  const targets = dependencies.getAnalystTargets ?? getAnalystTargets;
   const [context, analystTargets] = await Promise.all([
     options.context
       ? Promise.resolve(options.context)
-      : analyze(ticker, null, { lookbackDays: options.lookbackDays }).catch(() => null),
-    targets(ticker).catch(() => null),
+      : (async () => {
+          const analyze =
+            dependencies.analyzeTickerContext ??
+            (await import('@/services/ticker-analysis')).analyzeTickerContext;
+          return analyze(ticker, null, { lookbackDays: options.lookbackDays });
+        })().catch(() => null),
+    (async () => {
+      const targets =
+        dependencies.getAnalystTargets ??
+        (await import('@/services/analyst-targets')).getAnalystTargets;
+      return targets(ticker);
+    })().catch(() => null),
   ]);
   const historicalContext = context
     ? buildTickerContext(context.dailyPrices, context.spyCandles, context.sectorCandles)
