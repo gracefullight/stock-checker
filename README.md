@@ -124,6 +124,11 @@ Preserve the source URL, ordered filters, filtered total, capture time, and
 equal the declared total; missing or blocked pages remain partial.
 Public browser collection needs no Finviz key.
 
+Reports show the collected candidate count and evaluated count separately. A candidate
+limit is not an analysis failure. Unavailable results retain their cause, including
+missing history, invalid price/ATR, or infeasible ATR risk references; risk rejections
+do not pause the job as provider failures.
+
 Jobs accept up to 15,000 input rows and live in ignored `data/market-scans/`.
 Creation starts work by default; `autoStart: false` saves a paused manifest.
 Read with `get_market_screen`; use `control_market_screen` with `action: "pause"`

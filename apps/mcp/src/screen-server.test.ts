@@ -131,7 +131,11 @@ describe('screen_stocks MCP tool', () => {
         truncated: false,
       },
       unavailable: [
-        { ticker: 'BAD', reason: 'No usable completed-session analysis is available.' },
+        {
+          ticker: 'BAD',
+          reason: '완료된 거래일의 가격 이력을 가져올 수 없습니다.',
+          diagnostics: { code: 'history-unavailable', rows: 0 },
+        },
       ],
     });
     await withScreenClient(
@@ -147,7 +151,7 @@ describe('screen_stocks MCP tool', () => {
   test('marks an entirely unavailable screen as an error while retaining availability evidence', async () => {
     const screen = fixtureScreen({
       status: 'unavailable',
-      universe: { source: 'provided', tickers: ['BAD'] },
+      universe: { source: 'provided', tickers: ['NIVF'] },
       coverage: {
         requested: 1,
         analyzed: 0,
@@ -158,13 +162,24 @@ describe('screen_stocks MCP tool', () => {
       },
       decisionCounts: { BUY: 0, SELL: 0, HOLD: 0 },
       matches: [],
-      unavailable: [{ ticker: 'BAD', reason: 'Analysis could not be completed for this ticker.' }],
+      unavailable: [
+        {
+          ticker: 'NIVF',
+          reason: '유효한 ATR 기준 손절·목표 가격을 산정할 수 없습니다.',
+          diagnostics: {
+            code: 'risk-levels-infeasible',
+            rows: 500,
+            close: 0.11,
+            atr: 0.17364761106778515,
+          },
+        },
+      ],
     });
     await withScreenClient(
       async () => ({ screen, markdown: 'No ticker could be analyzed.' }),
       async (client) => {
         expect(
-          await client.callTool({ name: 'screen_stocks', arguments: { tickers: ['BAD'] } })
+          await client.callTool({ name: 'screen_stocks', arguments: { tickers: ['NIVF'] } })
         ).toMatchObject({ isError: true, structuredContent: { screen } });
       }
     );
@@ -278,7 +293,12 @@ describe('screen_stocks MCP tool', () => {
           ]);
           expect(notifier).toHaveBeenCalledTimes(1);
           expect(notifier).toHaveBeenCalledWith({
-            title: `종목 스크리닝 · BUY · ${screen.status === 'available' ? '완료' : screen.status === 'partial' ? '일부 누락' : '자료 없음'}`,
+            title: {
+              available: '종목 스크리닝 · BUY · 평가 완료 1/1',
+              partial: '종목 스크리닝 · BUY · 평가 1/2 · 분석 불가 1',
+              unavailable: '종목 스크리닝 · BUY · 평가 0/1 · 분석 불가 1',
+              'zero matches': '종목 스크리닝 · BUY · 평가 완료 1/1',
+            }[status],
             asOf: `검색 완료 ${screen.generatedAt.slice(0, 16).replace('T', ' ')} UTC`,
             summary: expect.stringContaining(noMatches ? '일치 종목 없음.' : 'AAPL BUY'),
           });

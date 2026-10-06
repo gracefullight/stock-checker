@@ -34,10 +34,47 @@ export interface TickerAnalysisContext {
   config: PipelineConfig;
 }
 
+export type TickerAnalysisUnavailableCode =
+  | 'history-unavailable'
+  | 'invalid-price-or-atr'
+  | 'risk-levels-infeasible';
+
+export interface TickerAnalysisUnavailable {
+  code: TickerAnalysisUnavailableCode;
+  rows: number;
+  close?: number;
+  atr?: number;
+}
+
 export interface TickerAnalysisOptions {
   lookbackDays?: number;
   /** Internal caller-owned snapshot used by cache keys and multi-ticker runs. */
   pipelineConfig?: PipelineConfig;
+  /** Safe diagnostics for an analysis that still returns null. */
+  onUnavailable?: (reason: TickerAnalysisUnavailable) => void;
+}
+
+function emitUnavailable(options: TickerAnalysisOptions, reason: TickerAnalysisUnavailable): void {
+  try {
+    options.onUnavailable?.(reason);
+  } catch {
+    // Diagnostic consumers must not change the null analysis outcome.
+  }
+}
+
+function reportUnavailableRisk(
+  options: TickerAnalysisOptions,
+  rows: number,
+  close: number,
+  atr: number
+): void {
+  const validInputs = Number.isFinite(close) && close > 0 && Number.isFinite(atr) && atr > 0;
+  emitUnavailable(options, {
+    code: validInputs ? 'risk-levels-infeasible' : 'invalid-price-or-atr',
+    rows,
+    ...(Number.isFinite(close) ? { close } : {}),
+    ...(Number.isFinite(atr) ? { atr } : {}),
+  });
 }
 
 export async function analyzeTickerContext(
@@ -47,6 +84,7 @@ export async function analyzeTickerContext(
 ): Promise<TickerAnalysisContext | null> {
   const dailyPrices = await getHistoricalPrices(ticker, options.lookbackDays ?? 730);
   if (dailyPrices.length === 0) {
+    emitUnavailable(options, { code: 'history-unavailable', rows: 0 });
     return null;
   }
 
@@ -59,7 +97,10 @@ export async function analyzeTickerContext(
 
   let indicators = calculateAllIndicators({ closes, highs, lows, volumes });
   let riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
-  if (!riskLevels) return null;
+  if (!riskLevels) {
+    reportUnavailableRisk(options, dailyPrices.length, latest.close, indicators.atr);
+    return null;
+  }
   if (options.pipelineConfig && !isLeaderPullbackPipelineConfig(options.pipelineConfig)) {
     throw new TypeError('Analysis requires a complete leader-pullback pipeline configuration');
   }
@@ -177,7 +218,10 @@ export async function analyzeTickerContext(
   if (replayed) {
     indicators = replayed.indicators;
     riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
-    if (!riskLevels) return null;
+    if (!riskLevels) {
+      reportUnavailableRisk(options, dailyPrices.length, latest.close, indicators.atr);
+      return null;
+    }
   }
   const patterns = replayed?.patterns ?? detectedPatterns;
 

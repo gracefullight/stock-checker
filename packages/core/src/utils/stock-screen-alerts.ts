@@ -1,4 +1,5 @@
 import type { StockScreenResult } from '@/reports/stock-screen';
+import { formatScreenEvaluation } from '@/utils/screening-diagnostics';
 import {
   buildStockReportWhatsAppNotification,
   formatStockReportWhatsAppNotification,
@@ -16,8 +17,8 @@ function oneLine(value: string, maximumLength: number): string {
     .trimEnd();
 }
 
-function screenStatus(status: StockScreenResult['status']): string {
-  return status === 'available' ? '완료' : status === 'partial' ? '일부 누락' : '자료 없음';
+function screenEvaluation(screen: StockScreenResult): string {
+  return formatScreenEvaluation({ total: screen.coverage.requested, ...screen.coverage });
 }
 
 /** Display a known UTC instant to minute precision without using the host timezone. */
@@ -36,7 +37,7 @@ export function formatScreenTimestamp(value: string): string {
 function screenCoverage(screen: StockScreenResult): string {
   const { coverage, criteria } = screen;
   return [
-    `필터 ${criteria.decision} · 분석 ${coverage.analyzed}/${coverage.requested} · 일치 ${coverage.matched} · 자료 없음 ${coverage.unavailable}`,
+    `필터 ${criteria.decision} · 분석 ${coverage.analyzed}/${coverage.requested} · 일치 ${coverage.matched} · 분석 불가 ${coverage.unavailable}`,
     `반환 ${coverage.returned}/${coverage.matched} · 제한 ${criteria.limit} · ${coverage.truncated ? '일부 생략' : '생략 없음'} · 알림 ${Math.min(3, screen.matches.length)}/${coverage.returned}개`,
   ].join('\n');
 }
@@ -48,7 +49,7 @@ export async function buildStockScreenReportNotification(
 ): Promise<WhatsAppNotification> {
   const { criteria } = screen;
   const input: StockReportAlertInput = {
-    title: `종목 스크리닝 · ${criteria.decision} · ${screenStatus(screen.status)}`,
+    title: `종목 스크리닝 · ${criteria.decision} · ${screenEvaluation(screen)}`,
     asOf: `검색 완료 ${formatScreenTimestamp(screen.generatedAt)}`,
     coverageSummary: screenCoverage(screen),
     lookbackDays: criteria.lookbackDays,
@@ -88,7 +89,7 @@ export function buildStockScreenWhatsAppNotification(
   });
   const summary = rows.length ? rows.join('\n') : '일치 종목 없음.';
   return {
-    title: oneLine(`종목 스크리닝 · ${criteria.decision} · ${screenStatus(screen.status)}`, 80),
+    title: oneLine(`종목 스크리닝 · ${criteria.decision} · ${screenEvaluation(screen)}`, 80),
     asOf: oneLine(`검색 완료 ${formatScreenTimestamp(screen.generatedAt)}`, 60),
     summary: summary.slice(0, 700).toWellFormed(),
   };

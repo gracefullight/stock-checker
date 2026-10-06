@@ -13,12 +13,14 @@ import {
   createMarketScreenJob,
   getMarketScreenJob,
   type MarketScreenDependencies,
+  type MarketScreenJob,
   type MarketScreenJobSnapshot,
   pauseMarketScreenJob,
   runMarketScreenJob,
 } from '@/reports/market-screen';
 import { writeMarketScreenJson } from '@/reports/market-screen-store';
 import type { StockScreenMatch } from '@/reports/stock-screen';
+import { formatMarketScreenTitle } from '@/utils/screening-diagnostics';
 import {
   buildStockReportWhatsAppNotification,
   formatStockReportWhatsAppNotification,
@@ -284,6 +286,7 @@ export async function runDailyReport(
     await writeMarketScreenJson(path.join(root, `${schedule.localDate}.state.json`), state);
   };
   let dispatch: Promise<WhatsAppNotificationResult> | undefined;
+  let latestJob: MarketScreenJob | undefined;
   const sendOnce = async (
     notification: WhatsAppNotification | (() => Promise<WhatsAppNotification>)
   ): Promise<WhatsAppNotificationResult> => {
@@ -311,10 +314,13 @@ export async function runDailyReport(
         const coverage =
           state.sourceTotal === null
             ? ''
-            : ` · Finviz 후보 ${state.collectedCount}/${state.sourceTotal}${state.completeness === 'partial' ? ' (부분)' : ''}${state.jobId ? ` · 평가 ${state.analyzedCount}/${state.collectedCount}` : ''}`;
+            : ` · Finviz 후보 ${state.collectedCount}/${state.sourceTotal}${state.jobId ? ` · 평가 ${state.analyzedCount}/${state.collectedCount}` : ''}`;
         result = await (dependencies.send ?? sendWhatsAppNotification)({
           ...built,
-          title: `${built.title.replace(/^시장 후보 스크리닝/, '아침 스크리닝')}${coverage}`,
+          title:
+            latestJob && TERMINAL.has(latestJob.status)
+              ? formatMarketScreenTitle(latestJob, '아침 스크리닝')
+              : `${built.title.replace(/^시장 후보 스크리닝/, '아침 스크리닝')}${coverage}`,
         });
       } catch {
         result = { status: 'failed', reason: 'network-error' };
@@ -364,6 +370,7 @@ export async function runDailyReport(
       jobDependencies
     );
   const updateCounts = ({ job }: MarketScreenJobSnapshot) => {
+    latestJob = job;
     state.analyzedCount = job.progress.analyzed;
     state.matchedCount = job.progress.matched;
   };

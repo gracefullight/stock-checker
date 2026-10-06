@@ -16,9 +16,13 @@ import {
   writeMarketScreenJson,
 } from '@/reports/market-screen-store';
 import { projectMatch, type StockScreenMatch } from '@/reports/stock-screen';
-import type { analyzeTickerContext } from '@/services/ticker-analysis';
+import type { analyzeTickerContext, TickerAnalysisUnavailable } from '@/services/ticker-analysis';
 import type { PipelineConfig } from '@/types';
 import { loadPipelineConfig } from '@/utils/config-loader';
+import {
+  describeAnalysisUnavailable,
+  formatMarketScreenTitle,
+} from '@/utils/screening-diagnostics';
 import { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alerts';
 import { formatScreenTimestamp } from '@/utils/stock-screen-alerts';
 import { isWhatsAppNotificationConfigured, sendWhatsAppNotification } from '@/utils/whatsapp';
@@ -94,6 +98,7 @@ export interface MarketScreenError {
   ticker: string;
   reason: string;
   attempts: number;
+  diagnostics?: TickerAnalysisUnavailable;
 }
 
 export interface MarketScreenJob {
@@ -539,7 +544,7 @@ async function notifyCompletion(
     });
     const { progress, universe } = runtime.job;
     const coverageSummary = [
-      `필터 ${runtime.job.criteria.decision} · 분석 ${progress.analyzed}/${progress.total} · 일치 ${progress.matched} · 제외 ${progress.excluded} · 자료 없음 ${progress.unavailable} · 알림 ${candidates.length}/${progress.matched}개`,
+      `필터 ${runtime.job.criteria.decision} · 분석 ${progress.analyzed}/${progress.total} · 일치 ${progress.matched} · 제외 ${progress.excluded} · 분석 불가 ${progress.unavailable} · 알림 ${candidates.length}/${progress.matched}개`,
       `Finviz 후보 수집 ${universe.collectedCount}/${universe.sourceTotal} · ${universe.completeness === 'complete' ? '완전 수집' : '부분 수집'}`,
     ].join('\n');
     const attempt: NotificationAttempt = {
@@ -555,7 +560,7 @@ async function notifyCompletion(
     let result: NonNullable<NotificationAttempt['result']>;
     try {
       const input = {
-        title: `시장 후보 스크리닝 · ${runtime.job.criteria.decision} · ${runtime.job.status === 'completed' ? '완료' : runtime.job.status === 'partial' ? '일부 누락' : '자료 없음'}`,
+        title: formatMarketScreenTitle(runtime.job),
         asOf: `검색 완료 ${formatScreenTimestamp(runtime.job.finishedAt ?? runtime.job.updatedAt)}`,
         coverageSummary,
         lookbackDays: runtime.job.criteria.lookbackDays,
@@ -697,10 +702,14 @@ async function execute(
             await checkpoint(runtime);
             lastStartedAt = Date.now();
             let saved: SavedResult;
+            let unavailableReason: TickerAnalysisUnavailable | undefined;
             try {
               const context = await analyze(ticker, null, {
                 lookbackDays: runtime.job.criteria.lookbackDays,
                 pipelineConfig,
+                onUnavailable: (reason) => {
+                  unavailableReason = reason;
+                },
               });
               if (!context) throw new Error('No usable completed-session analysis is available.');
               const match = projectMatch(ticker, context);
@@ -737,12 +746,23 @@ async function execute(
                   ticker,
                   reason: rateLimited(error)
                     ? 'The market data provider rate-limited this analysis.'
-                    : 'No usable completed-session analysis could be produced.',
+                    : unavailableReason
+                      ? describeAnalysisUnavailable(unavailableReason)
+                      : 'No usable completed-session analysis could be produced.',
                   attempts: 1,
+                  ...(!rateLimited(error) && unavailableReason
+                    ? { diagnostics: unavailableReason }
+                    : {}),
                 },
               };
             }
-            consecutiveUnavailable = saved.kind === 'unavailable' ? consecutiveUnavailable + 1 : 0;
+            // A known risk rejection says nothing about provider health. Keep
+            // it unavailable without stopping evaluation of other candidates.
+            consecutiveUnavailable =
+              saved.kind === 'unavailable' &&
+              (saved.item as MarketScreenError).diagnostics?.code !== 'risk-levels-infeasible'
+                ? consecutiveUnavailable + 1
+                : 0;
             if (consecutiveUnavailable >= 5 && !fatalStop) {
               fatalStop = true;
               await writeMarketScreenJson(jobFile(runtime.root, runtime.jobId, 'control.json'), {

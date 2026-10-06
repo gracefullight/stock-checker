@@ -1,9 +1,17 @@
 import { DEFAULT_SCREENER_TICKERS } from '@/constants/screener';
 import { gateReasons } from '@/reports/signal-reasons';
 import type { LongRiskLevels } from '@/services/risk-levels';
-import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/ticker-analysis';
+import type {
+  analyzeTickerContext,
+  TickerAnalysisContext,
+  TickerAnalysisUnavailable,
+} from '@/services/ticker-analysis';
 import type { PipelineConfig, PipelineResult } from '@/types';
 import { loadPipelineConfig } from '@/utils/config-loader';
+import {
+  describeAnalysisUnavailable,
+  type ScreenAnalysisUnavailable,
+} from '@/utils/screening-diagnostics';
 
 type SignalDecision = PipelineResult['finalDecision'];
 
@@ -89,7 +97,7 @@ export interface StockScreenResult {
     sellScore: number;
     gateReasons: string[];
   }>;
-  unavailable: Array<{ ticker: string; reason: string }>;
+  unavailable: ScreenAnalysisUnavailable[];
   warnings: string[];
 }
 
@@ -283,9 +291,9 @@ export async function generateStockScreen(
   const analyze = dependencies.analyzeTickerContext ?? defaultAnalyzer;
   const pipelineConfig = await (dependencies.loadPipelineConfig ?? loadPipelineConfig)();
   const analyzed: Array<StockScreenMatch | null> = Array(input.tickers.length).fill(null);
-  const unavailable: Array<{ ticker: string; reason: string } | null> = Array(
-    input.tickers.length
-  ).fill(null);
+  const unavailable: Array<ScreenAnalysisUnavailable | null> = Array(input.tickers.length).fill(
+    null
+  );
   const states: Array<'queued' | 'running' | 'completed'> = Array(input.tickers.length).fill(
     'queued'
   );
@@ -309,10 +317,14 @@ export async function generateStockScreen(
         const index = nextIndex++;
         const ticker = input.tickers[index];
         states[index] = 'running';
+        let unavailableReason: TickerAnalysisUnavailable | undefined;
         try {
           const context = await analyze(ticker, null, {
             lookbackDays: input.lookbackDays,
             pipelineConfig,
+            onUnavailable: (reason) => {
+              unavailableReason = reason;
+            },
           });
           if (expired || Date.now() >= deadline) {
             expired = true;
@@ -322,7 +334,10 @@ export async function generateStockScreen(
           else
             unavailable[index] = {
               ticker,
-              reason: 'No usable completed-session analysis is available.',
+              reason: unavailableReason
+                ? describeAnalysisUnavailable(unavailableReason)
+                : 'No usable completed-session analysis is available.',
+              ...(unavailableReason ? { diagnostics: unavailableReason } : {}),
             };
         } catch {
           if (expired || Date.now() >= deadline) {
@@ -360,7 +375,7 @@ export async function generateStockScreen(
   }
   const successful = analyzed.filter((match): match is StockScreenMatch => match !== null);
   const failures = unavailable.filter(
-    (failure): failure is { ticker: string; reason: string } => failure !== null
+    (failure): failure is ScreenAnalysisUnavailable => failure !== null
   );
   const decisionCounts: Record<SignalDecision, number> = { BUY: 0, SELL: 0, HOLD: 0 };
   for (const match of successful) decisionCounts[match.decision]++;

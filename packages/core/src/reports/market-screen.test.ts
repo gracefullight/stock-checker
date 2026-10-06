@@ -341,8 +341,22 @@ describe('durable Finviz candidate jobs', () => {
       excluded: 0,
     });
     expect(analyze.mock.calls.map((call) => call.slice(1))).toEqual([
-      [null, { lookbackDays: 730, pipelineConfig: complete.job.criteria.pipelineConfig }],
-      [null, { lookbackDays: 730, pipelineConfig: complete.job.criteria.pipelineConfig }],
+      [
+        null,
+        {
+          lookbackDays: 730,
+          pipelineConfig: complete.job.criteria.pipelineConfig,
+          onUnavailable: expect.any(Function),
+        },
+      ],
+      [
+        null,
+        {
+          lookbackDays: 730,
+          pipelineConfig: complete.job.criteria.pipelineConfig,
+          onUnavailable: expect.any(Function),
+        },
+      ],
     ]);
   });
 
@@ -599,6 +613,47 @@ describe('durable Finviz candidate jobs', () => {
     expect(analyze.mock.calls.filter((call) => call[0] === 'ONE')).toHaveLength(1);
     expect(paused.page.items).toMatchObject([{ ticker: 'ONE', attempts: 1 }]);
     expect(JSON.stringify(paused)).not.toContain('fixture-secret');
+  });
+
+  it('records infeasible ATR references without confusing them with consecutive provider failures', async () => {
+    analyze.mockImplementation(async (ticker, _fearGreed, options) => {
+      if (ticker === 'GOOD') return context(ticker, 'HOLD');
+      options?.onUnavailable?.({
+        code: 'risk-levels-infeasible',
+        rows: 500,
+        close: 0.1,
+        atr: 0.2,
+      });
+      return null;
+    });
+    const tickers = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'GOOD'];
+    const started = await create(input(tickers));
+    const complete = await settled(started.job.id);
+    const failures = await getMarketScreenJob(started.job.id, { kind: 'unavailable' }, deps());
+
+    expect(complete.job.status).toBe('partial');
+    expect(complete.job.pauseReason).toBeNull();
+    expect(complete.job.progress).toMatchObject({
+      total: 7,
+      analyzed: 1,
+      unavailable: 6,
+      pending: 0,
+      inFlight: 0,
+      matched: 0,
+      excluded: 1,
+    });
+    expect(analyze).toHaveBeenCalledTimes(7);
+    expect(failures.page.items).toHaveLength(6);
+    for (const item of failures.page.items) {
+      expect(item).toMatchObject({
+        reason: '유효한 ATR 기준 손절·목표 가격을 산정할 수 없습니다.',
+        diagnostics: { code: 'risk-levels-infeasible', rows: 500, close: 0.1, atr: 0.2 },
+        attempts: 1,
+      });
+      expect(item).not.toHaveProperty('decision');
+    }
+    expect(notify.mock.calls[0][0].title).toContain('평가 1/7 · 분석 불가 6');
+    expect(notify.mock.calls[0][0].title).not.toMatch(/자료 없음|일부 누락/);
   });
 
   it('pauses after five consecutive unavailable completions, drains the two real workers, and resumes only unfinished candidates', async () => {
@@ -1040,7 +1095,8 @@ describe('durable Finviz candidate jobs', () => {
 
       expect(notify).toHaveBeenCalledOnce();
       const message = notify.mock.calls[0][0];
-      expect(message.title).toContain('일부 누락');
+      expect(message.title).toContain('평가 7/8 · 분석 불가 1');
+      expect(message.title).not.toContain('일부 누락');
       expect(complete.job.progress).toMatchObject({
         total: 8,
         analyzed: 7,
@@ -1102,7 +1158,7 @@ describe('durable Finviz candidate jobs', () => {
       analyze.mockResolvedValue(null);
       const unavailable = await create();
       const unavailableSnapshot = await settled(unavailable.job.id);
-      expect(notify.mock.calls[0][0].title).toContain('자료 없음');
+      expect(notify.mock.calls[0][0].title).toContain('평가 0/2 · 분석 불가 2');
       expect(unavailableSnapshot.job.progress).toMatchObject({
         total: 2,
         analyzed: 0,
@@ -1117,7 +1173,9 @@ describe('durable Finviz candidate jobs', () => {
       options.provenance = { ...options.provenance, sourceTotal: 1669, completeness: 'partial' };
       const partial = await create(options);
       const partialSnapshot = await settled(partial.job.id);
-      expect(notify.mock.calls[1][0].title).toContain('일부 누락');
+      expect(notify.mock.calls[1][0].title).toContain('평가 완료 2/2');
+      expect(notify.mock.calls[1][0].title).toContain('Finviz 후보 2/1669');
+      expect(notify.mock.calls[1][0].title).not.toMatch(/누락|분석 불가|자료 없음/);
       expect(partialSnapshot.job.universe).toMatchObject({
         collectedCount: 2,
         sourceTotal: 1669,

@@ -160,7 +160,11 @@ describe('generateStockScreen', () => {
     for (const call of analyze.mock.calls)
       expect(call.slice(1)).toEqual([
         null,
-        { lookbackDays: 730, pipelineConfig: screen.criteria.pipelineConfig },
+        {
+          lookbackDays: 730,
+          pipelineConfig: screen.criteria.pipelineConfig,
+          onUnavailable: expect.any(Function),
+        },
       ]);
     expect(markdown).toContain('not the entire market');
     expect(markdown).toContain('not probabilities of profit');
@@ -322,6 +326,44 @@ describe('generateStockScreen', () => {
     ]);
     expect(JSON.stringify(result)).not.toContain('fixture-secret');
     expect(JSON.stringify(result)).not.toContain('provider.example');
+  });
+
+  it('distinguishes missing history from infeasible risk levels without fabricating a decision', async () => {
+    const analyze = analyzer().mockImplementation(async (ticker, _fearGreed, options) => {
+      if (ticker === 'GOOD') return context(ticker, 'HOLD');
+      options?.onUnavailable?.(
+        ticker === 'EMPTY'
+          ? { code: 'history-unavailable', rows: 0 }
+          : { code: 'risk-levels-infeasible', rows: 500, close: 0.1, atr: 0.2 }
+      );
+      return null;
+    });
+    const { screen } = await generateStockScreen(
+      { tickers: ['GOOD', 'EMPTY', 'RISK'] },
+      { analyzeTickerContext: analyze }
+    );
+
+    expect(screen.coverage).toMatchObject({
+      requested: 3,
+      analyzed: 1,
+      unavailable: 2,
+      matched: 0,
+    });
+    expect(screen.decisionCounts).toEqual({ BUY: 0, SELL: 0, HOLD: 1 });
+    expect(screen.unavailable).toEqual([
+      {
+        ticker: 'EMPTY',
+        reason: '완료된 거래일의 가격 이력을 가져올 수 없습니다.',
+        diagnostics: { code: 'history-unavailable', rows: 0 },
+      },
+      {
+        ticker: 'RISK',
+        reason: '유효한 ATR 기준 손절·목표 가격을 산정할 수 없습니다.',
+        diagnostics: { code: 'risk-levels-infeasible', rows: 500, close: 0.1, atr: 0.2 },
+      },
+    ]);
+    expect(screen.matches).toEqual([]);
+    expect(screen.unavailable.every((item) => !('decision' in item))).toBe(true);
   });
 
   it('returns unavailable with truthful coverage if every ticker fails', async () => {
@@ -591,6 +633,7 @@ describe('generateStockScreen', () => {
     expect(analyze).toHaveBeenCalledWith('P0', null, {
       lookbackDays: 3650,
       pipelineConfig: screen.criteria.pipelineConfig,
+      onUnavailable: expect.any(Function),
     });
   });
 });

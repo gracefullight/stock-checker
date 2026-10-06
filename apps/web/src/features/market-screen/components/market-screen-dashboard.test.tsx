@@ -101,23 +101,35 @@ describe('saved market-screen dashboard', () => {
     expect(screen.getByRole('button', { name: 'Resume' })).toBeDisabled();
   });
 
-  it('hides prior rows while switching tabs and renders unavailable errors separately from HOLD', async () => {
-    const user = userEvent.setup();
-    const pending = Promise.withResolvers<MarketScreenJobSnapshot>();
-    render(<MarketScreenDashboard />);
-    await screen.findByRole('link', { name: 'AA — Live ticker detail' });
-    vi.mocked(getMarketScreen).mockReturnValueOnce(pending.promise);
-    await user.click(screen.getByRole('tab', { name: 'UNAVAILABLE' }));
-    expect(screen.queryByRole('link', { name: 'AA — Live ticker detail' })).not.toBeInTheDocument();
-    await act(async () =>
-      pending.resolve(fixtureMarketScreenSnapshot(FIRST_MARKET_JOB, 'unavailable'))
-    );
-    expect(await screen.findByText('MISSING')).toBeInTheDocument();
-    expect(screen.getByText(/unavailable data, not a HOLD decision/)).toBeInTheDocument();
-    expect(
-      screen.queryByRole('table', { name: 'Saved market-screen decisions' })
-    ).not.toBeInTheDocument();
-  });
+  it.each([
+    { ticker: 'MISSING', reason: 'Completed-session data unavailable.' },
+    { ticker: 'NIVF', reason: '유효한 ATR 기준 손절·목표 가격을 산정할 수 없습니다.' },
+  ])(
+    'hides prior rows and preserves unavailable analysis reasons separately from HOLD ($ticker)',
+    async ({ ticker, reason }) => {
+      const user = userEvent.setup();
+      const pending = Promise.withResolvers<MarketScreenJobSnapshot>();
+      render(<MarketScreenDashboard />);
+      await screen.findByRole('link', { name: 'AA — Live ticker detail' });
+      vi.mocked(getMarketScreen).mockReturnValueOnce(pending.promise);
+      await user.click(screen.getByRole('tab', { name: 'UNAVAILABLE' }));
+      expect(
+        screen.queryByRole('link', { name: 'AA — Live ticker detail' })
+      ).not.toBeInTheDocument();
+      const unavailable = fixtureMarketScreenSnapshot(FIRST_MARKET_JOB, 'unavailable');
+      unavailable.page.items = [{ ticker, reason, attempts: 1 }];
+      await act(async () => pending.resolve(unavailable));
+      expect(await screen.findByText(ticker)).toBeInTheDocument();
+      expect(screen.getByText(reason)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Analysis unavailable; no HOLD decision was produced\./)
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/This is unavailable data/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('table', { name: 'Saved market-screen decisions' })
+      ).not.toBeInTheDocument();
+    }
+  );
 
   it('uses bounded result pagination and hides the preceding page while awaiting the next one', async () => {
     const user = userEvent.setup();

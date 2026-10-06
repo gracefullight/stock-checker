@@ -99,7 +99,7 @@ export function MarketScreenResults({
                   <span className="font-mono font-bold">{item.ticker}</span>
                   <p className="mt-1 text-muted-foreground">{item.reason}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Attempts: {item.attempts}. This is unavailable data, not a HOLD decision.
+                    Attempts: {item.attempts}. Analysis unavailable; no HOLD decision was produced.
                   </p>
                 </li>
               ) : null

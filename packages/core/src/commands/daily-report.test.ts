@@ -165,7 +165,9 @@ describe('daily screening dispatch', () => {
       expect(
         await stat(path.join(dependencies.rootDirectory, '2026-10-07.dispatch.json'))
       ).toBeDefined();
-      expect(notification.title).toContain('Finviz 후보 2/3916 (부분)');
+      expect(notification.title).toContain('Finviz 후보 2/3916');
+      expect(notification.title).toContain('평가 완료 2/2');
+      expect(notification.title).not.toMatch(/누락|\(부분\)|자료 없음/);
       expect(notification.summary).toContain('과거 BUY 20표본');
       return { status: 'accepted' as const, messageId: 'offline-id' };
     });
@@ -189,6 +191,37 @@ describe('daily screening dispatch', () => {
       (await stat(path.join(dependencies.rootDirectory, '2026-10-07.claim.json'))).mode & 0o777
     ).toBe(0o600);
     expect((await stat(dependencies.rootDirectory)).mode & 0o777).toBe(0o700);
+  });
+
+  it('uses refreshed analysis failure counts without treating capped collection as missing data', async () => {
+    const dependencies = await fixture();
+    const current = snapshot();
+    current.job.progress = { ...current.job.progress, analyzed: 1, unavailable: 1, excluded: 1 };
+    dependencies.getJob = vi.fn(async () => current);
+    const runJob = dependencies.runJob!;
+    dependencies.runJob = vi.fn(async (...arguments_: Parameters<typeof runJob>) => {
+      await runJob(...arguments_);
+      return current;
+    });
+    dependencies.send = vi.fn(async (notification) => {
+      expect(notification.title).toBe(
+        '아침 스크리닝 · BUY · 평가 1/2 · 분석 불가 1 · Finviz 후보 2/3916'
+      );
+      expect(notification.title).not.toMatch(/일부 누락|자료 없음|\(부분\)/);
+      return { status: 'accepted' as const, messageId: 'offline-id' };
+    });
+
+    expect(await runDailyReport({}, dependencies)).toMatchObject({
+      status: 'partial',
+      notificationStatus: 'accepted',
+      analyzedCount: 1,
+    });
+    expect(dependencies.send).toHaveBeenCalledOnce();
+    expect(await runDailyReport({}, dependencies)).toMatchObject({
+      status: 'skipped',
+      reason: 'already-claimed',
+    });
+    expect(dependencies.send).toHaveBeenCalledOnce();
   });
 
   it('concurrent ticks and restart cannot create a second scan or send for the same date', async () => {
