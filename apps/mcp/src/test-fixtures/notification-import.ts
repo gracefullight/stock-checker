@@ -26,6 +26,6 @@ const { buildStockScreenWhatsAppNotification } = await import(
 );
 const message = buildStockScreenWhatsAppNotification(fixtureScreen());
 assert.equal(providerCalls, 0);
-assert.match(message.summary, /AAPL BUY bar 2026-10-02 reference 100\.00/);
-assert.match(message.summary, /analyzed 1\/1; matched 1; unavailable 0/);
+assert.match(message.summary, /AAPL BUY · 종가일 2026-10-02 · 참고 100\.00/);
+assert.match(message.summary, /분석 1\/1 · 일치 1 · 자료 없음 0/);
 process.stdout.write(JSON.stringify({ message, providerCalls }));

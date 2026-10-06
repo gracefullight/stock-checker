@@ -4,6 +4,7 @@ import type { StockReportAlertGenerator } from '@/utils/stock-report-alerts';
 import {
   buildStockScreenReportNotification,
   buildStockScreenWhatsAppNotification,
+  formatScreenTimestamp,
 } from '@/utils/stock-screen-alerts';
 
 function candidate(ticker: string, overrides: Partial<StockScreenMatch> = {}): StockScreenMatch {
@@ -75,6 +76,12 @@ function fixture(overrides: Partial<StockScreenResult> = {}): StockScreenResult 
 }
 
 describe('buildStockScreenWhatsAppNotification', () => {
+  it('formats known UTC scan times to minutes and preserves unknown timestamp inputs', () => {
+    expect(formatScreenTimestamp('2026-10-05T03:30:42.123Z')).toBe('2026-10-05 03:30 UTC');
+    expect(formatScreenTimestamp('2026-02-30T03:30:42.123Z')).toBe('2026-02-30T03:30:42.123Z');
+    expect(formatScreenTimestamp('2026-10-05T03:30:00+11:00')).toBe('2026-10-05T03:30:00+11:00');
+    expect(formatScreenTimestamp('unknown')).toBe('unknown');
+  });
   it('enriches the original snapshot with the screening history window and preserved reasons', async () => {
     const screen = fixture({ criteria: { ...fixture().criteria, lookbackDays: 2920 } });
     const original = structuredClone(screen);
@@ -90,7 +97,7 @@ describe('buildStockScreenWhatsAppNotification', () => {
     const message = await buildStockScreenReportNotification(screen, { generateReport });
 
     expect(generateReport).toHaveBeenCalledExactlyOnceWith('AAPL', { lookbackDays: 2920 });
-    expect(message.summary).toContain('AAPL BUY');
+    expect(message.summary).toContain('*AAPL · BUY*');
     expect(message.summary).toContain('2026-10-02');
     expect(message.summary).toContain('Fixture gates passed');
     expect(message.summary).not.toContain('New unrelated decision');
@@ -112,7 +119,7 @@ describe('buildStockScreenWhatsAppNotification', () => {
     });
     const message = await buildStockScreenReportNotification(screen, { generateReport });
     expect(generateReport).not.toHaveBeenCalled();
-    expect(message.summary).toContain('AAPL BUY');
+    expect(message.summary).toContain('*AAPL · BUY*');
     expect(message.summary).toContain('Fixture gates passed');
   });
 
@@ -123,13 +130,14 @@ describe('buildStockScreenWhatsAppNotification', () => {
     const original = structuredClone(screen);
     const message = buildStockScreenWhatsAppNotification(screen);
 
-    expect(message.title).toBe('Stock Checker screen: BUY available');
-    expect(message.asOf).toBe('Scan completed 2026-10-05T03:30:00.000Z');
-    expect(message.summary).toContain('AAPL BUY bar 2026-10-02 reference 123.46');
-    expect(message.summary).toContain('OII BUY bar 2026-10-01 reference 123.46');
-    expect(message.summary).toContain('completed-close references are not fills');
-    expect(message.summary).toContain('bar dates vary by ticker');
-    expect(message.summary).toContain('Scores are not probabilities of profit');
+    expect(message.title).toBe('종목 스크리닝 · BUY · 완료');
+    expect(message.asOf).toBe('검색 완료 2026-10-05 03:30 UTC');
+    expect(message.summary).toContain('AAPL BUY · 종가일 2026-10-02 · 참고 123.46');
+    expect(message.summary).toContain('OII BUY · 종가일 2026-10-01 · 참고 123.46');
+    expect(message.summary).toContain('종가는 체결가가 아닌 참고값');
+    expect(message.summary).toContain('종가일은 종목마다 다릅니다');
+    expect(message.summary).toContain('점수는 승률이 아닙니다');
+    expect(message.summary.indexOf('OII BUY')).toBeLessThan(message.summary.indexOf('필터 BUY'));
     expect(message.summary).not.toContain('300');
     expect(screen).toEqual(original);
   });
@@ -151,12 +159,8 @@ describe('buildStockScreenWhatsAppNotification', () => {
     });
     const { summary } = buildStockScreenWhatsAppNotification(screen);
 
-    expect(summary).toContain(
-      'Status partial; filter BUY; analyzed 19/20; matched 8; unavailable 1'
-    );
-    expect(summary).toContain(
-      'Report returned 5/8 matches, limit 5, truncated; alert shows 3/5 returned'
-    );
+    expect(summary).toContain('필터 BUY · 분석 19/20 · 일치 8 · 자료 없음 1');
+    expect(summary).toContain('반환 5/8 · 제한 5 · 일부 생략 · 알림 3/5개');
     expect(summary).toContain('AAPL BUY');
     expect(summary).toContain('MSFT BUY');
     expect(summary).toContain('NVDA BUY');
@@ -168,7 +172,7 @@ describe('buildStockScreenWhatsAppNotification', () => {
     'retains %s status and missing-data counts when no candidates were returned',
     (status) => {
       const unavailable = status === 'unavailable' ? 2 : 0;
-      const { summary } = buildStockScreenWhatsAppNotification(
+      const message = buildStockScreenWhatsAppNotification(
         fixture({
           status,
           matches: [],
@@ -182,13 +186,12 @@ describe('buildStockScreenWhatsAppNotification', () => {
           },
         })
       );
-      expect(summary).toContain(`Status ${status}`);
-      expect(summary).toContain(
-        `analyzed ${2 - unavailable}/2; matched 0; unavailable ${unavailable}`
-      );
-      expect(summary).toContain('Report returned 0/0 matches');
-      expect(summary).toContain('alert shows 0/0 returned');
-      expect(summary).toContain('Candidates: none.');
+      const { summary } = message;
+      expect(message.title).toContain(status === 'available' ? '완료' : '자료 없음');
+      expect(summary).toContain(`분석 ${2 - unavailable}/2 · 일치 0 · 자료 없음 ${unavailable}`);
+      expect(summary).toContain('반환 0/0');
+      expect(summary).toContain('알림 0/0개');
+      expect(summary).toContain('일치 종목 없음.');
       expect(summary).not.toMatch(/win rate|%/i);
     }
   );
@@ -202,13 +205,13 @@ describe('buildStockScreenWhatsAppNotification', () => {
         matches: [base],
       })
     );
-    expect(message.title).toBe('Stock Checker screen: ALL available');
-    expect(message.summary).toContain('filter ALL');
-    expect(message.summary).toContain('OII HOLD bar n/a reference n/a');
+    expect(message.title).toBe('종목 스크리닝 · ALL · 완료');
+    expect(message.summary).toContain('필터 ALL');
+    expect(message.summary).toContain('OII HOLD · 종가일 자료 없음 · 참고 자료 없음');
     expect(message.summary).not.toContain('USD 0.00');
   });
 
-  it('produces bounded well-formed single-line template variables even with control characters', () => {
+  it('keeps bounded titles and readable summary lines while sanitizing control characters', () => {
     const matches = [
       candidate(` OII\n\u0000\u202e${'😀'.repeat(100)}`),
       candidate('B'.repeat(32)),
@@ -224,10 +227,11 @@ describe('buildStockScreenWhatsAppNotification', () => {
     expect(message.asOf.length).toBeLessThanOrEqual(60);
     expect(message.summary.length).toBeLessThanOrEqual(700);
     for (const value of Object.values(message)) {
-      expect(value).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      expect(value.replaceAll('\n', '')).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
       expect(value).not.toContain('  ');
       expect(value.isWellFormed()).toBe(true);
     }
     expect(message.summary).toContain(`${'C'.repeat(32)} BUY`);
+    expect(message.summary).toContain('\n\n필터 BUY');
   });
 });

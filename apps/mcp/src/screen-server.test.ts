@@ -278,16 +278,16 @@ describe('screen_stocks MCP tool', () => {
           ]);
           expect(notifier).toHaveBeenCalledTimes(1);
           expect(notifier).toHaveBeenCalledWith({
-            title: `Stock Checker screen: BUY ${screen.status}`,
-            asOf: `Scan completed ${screen.generatedAt}`,
+            title: `종목 스크리닝 · BUY · ${screen.status === 'available' ? '완료' : screen.status === 'partial' ? '일부 누락' : '자료 없음'}`,
+            asOf: `검색 완료 ${screen.generatedAt.slice(0, 16).replace('T', ' ')} UTC`,
             summary: expect.stringContaining(
-              `analyzed ${screen.coverage.analyzed}/${screen.coverage.requested}; matched ${screen.coverage.matched}; unavailable ${unavailable}`
+              `분석 ${screen.coverage.analyzed}/${screen.coverage.requested} · 일치 ${screen.coverage.matched} · 자료 없음 ${unavailable}`
             ),
           });
           const payload = notifier.mock.calls[0]?.[0];
-          expect(payload?.summary).toContain('Scores are not probabilities of profit');
+          expect(payload?.summary).toContain('점수는 승률이 아닙니다');
           expect(payload?.summary).toContain(
-            noMatches ? 'Candidates: none.' : 'AAPL BUY bar 2026-10-02 reference 100.00'
+            noMatches ? '일치 종목 없음.' : 'AAPL BUY · 종가일 2026-10-02 · 참고 100.00'
           );
           expect(payload?.summary.length).toBeLessThanOrEqual(700);
         },

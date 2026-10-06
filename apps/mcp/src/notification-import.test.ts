@@ -20,8 +20,8 @@ test('cold notification formatter imports after a partial market-provider mock w
   expect(JSON.parse(stdout)).toMatchObject({
     providerCalls: 0,
     message: {
-      title: 'Stock Checker screen: BUY available',
-      summary: expect.stringContaining('AAPL BUY bar 2026-10-02 reference 100.00'),
+      title: '종목 스크리닝 · BUY · 완료',
+      summary: expect.stringContaining('AAPL BUY · 종가일 2026-10-02 · 참고 100.00'),
     },
   });
 }, 10_000);

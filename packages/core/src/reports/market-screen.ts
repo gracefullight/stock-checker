@@ -18,6 +18,7 @@ import {
 import { projectMatch, type StockScreenMatch } from '@/reports/stock-screen';
 import type { analyzeTickerContext } from '@/services/ticker-analysis';
 import { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alerts';
+import { formatScreenTimestamp } from '@/utils/stock-screen-alerts';
 import { isWhatsAppNotificationConfigured, sendWhatsAppNotification } from '@/utils/whatsapp';
 
 export {
@@ -532,8 +533,8 @@ async function notifyCompletion(
     });
     const { progress, universe } = runtime.job;
     const coverageSummary = [
-      `Filter ${runtime.job.criteria.decision}. Matched ${progress.matched}; analyzed ${progress.analyzed}/${progress.total}; excluded ${progress.excluded}; unavailable ${progress.unavailable}.`,
-      `Finviz collection ${universe.collectedCount}/${universe.sourceTotal} (${universe.completeness}).`,
+      `필터 ${runtime.job.criteria.decision} · 분석 ${progress.analyzed}/${progress.total} · 일치 ${progress.matched} · 제외 ${progress.excluded} · 자료 없음 ${progress.unavailable} · 알림 ${candidates.length}/${progress.matched}개`,
+      `Finviz 후보 수집 ${universe.collectedCount}/${universe.sourceTotal} · ${universe.completeness === 'complete' ? '완전 수집' : '부분 수집'}`,
     ].join('\n');
     const attempt: NotificationAttempt = {
       schemaVersion: 1,
@@ -548,8 +549,8 @@ async function notifyCompletion(
     let result: NonNullable<NotificationAttempt['result']>;
     try {
       const input = {
-        title: `Stock Checker screen ${runtime.jobId.slice(0, 8)}: ${runtime.job.status}`,
-        asOf: runtime.job.finishedAt ?? runtime.job.updatedAt,
+        title: `시장 후보 스크리닝 · ${runtime.job.criteria.decision} · ${runtime.job.status === 'completed' ? '완료' : runtime.job.status === 'partial' ? '일부 누락' : '자료 없음'}`,
+        asOf: `검색 완료 ${formatScreenTimestamp(runtime.job.finishedAt ?? runtime.job.updatedAt)}`,
         coverageSummary,
         lookbackDays: runtime.job.criteria.lookbackDays,
         candidates,
@@ -566,17 +567,17 @@ async function notifyCompletion(
             title: input.title,
             asOf: input.asOf,
             summary: [
-              coverageSummary,
-              'Scores are signal strengths, not win probabilities. References are completed closes, not entry fills.',
               ...(rows.length
                 ? [
-                    'Top matches:',
                     ...rows.slice(0, 3).map(({ item }) => {
                       const match = item as StockScreenMatch;
-                      return `${match.decision} ${match.ticker}: reference ${match.execution.reference?.price.toFixed(2) ?? 'unavailable'}, ${metric === 'sellScore' ? 'SELL' : 'BUY'} score ${match[metric].toFixed(1)}, session ${match.dataAsOf ?? 'unavailable'}`;
+                      return `${match.ticker} ${match.decision} · 참고 ${match.execution.reference?.price.toFixed(2) ?? '자료 없음'} · ${metric === 'sellScore' ? 'SELL' : 'BUY'} 점수 ${match[metric].toFixed(1)} · 종가일 ${match.dataAsOf ?? '자료 없음'}`;
                     }),
                   ]
-                : ['No matching candidates.']),
+                : ['일치 종목 없음.']),
+              '',
+              coverageSummary,
+              '점수는 승률이 아닙니다. 종가는 체결가가 아닌 참고값입니다.',
             ]
               .join('\n')
               .slice(0, 700),

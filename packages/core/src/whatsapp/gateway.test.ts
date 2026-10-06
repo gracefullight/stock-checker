@@ -327,12 +327,16 @@ describe('local WhatsApp gateway', () => {
   );
 
   it('submits one validated notification and returns only its message ID', async () => {
-    const response = await call('/notifications', 'POST', AUTHORIZATION, JSON.stringify(PAYLOAD));
+    const payload = {
+      ...PAYLOAD,
+      summary: '*AAPL · HOLD*\n승률: 자료 없음\n\n근거: 신규 진입 보류',
+    };
+    const response = await call('/notifications', 'POST', AUTHORIZATION, JSON.stringify(payload));
     expect(response.status).toBe(200);
     expect(JSON.parse(response.body.toString())).toEqual({ messageId: MESSAGE_ID });
     expect(sendText).toHaveBeenCalledExactlyOnceWith(
       PAYLOAD.to,
-      `${PAYLOAD.title}\nAs of: ${PAYLOAD.asOf}\nResults: ${PAYLOAD.summary}\nSignal scores are not win probabilities.`
+      `*${payload.title}*\n기준: ${payload.asOf}\n\n${payload.summary}`
     );
     expect(response.body.toString()).not.toContain(PAYLOAD.to);
     expect(response.body.toString()).not.toContain(TOKEN);

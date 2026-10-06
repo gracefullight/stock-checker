@@ -16,16 +16,41 @@ function oneLine(value: string, maximumLength: number): string {
     .trimEnd();
 }
 
+function screenStatus(status: StockScreenResult['status']): string {
+  return status === 'available' ? '완료' : status === 'partial' ? '일부 누락' : '자료 없음';
+}
+
+/** Display a known UTC instant to minute precision without using the host timezone. */
+export function formatScreenTimestamp(value: string): string {
+  const timestamp = Date.parse(value);
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) ||
+    !Number.isFinite(timestamp) ||
+    new Date(timestamp).toISOString() !== value
+  ) {
+    return value;
+  }
+  return `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`;
+}
+
+function screenCoverage(screen: StockScreenResult): string {
+  const { coverage, criteria } = screen;
+  return [
+    `필터 ${criteria.decision} · 분석 ${coverage.analyzed}/${coverage.requested} · 일치 ${coverage.matched} · 자료 없음 ${coverage.unavailable}`,
+    `반환 ${coverage.returned}/${coverage.matched} · 제한 ${criteria.limit} · ${coverage.truncated ? '일부 생략' : '생략 없음'} · 알림 ${Math.min(3, screen.matches.length)}/${coverage.returned}개`,
+  ].join('\n');
+}
+
 /** Keep the original screening decisions and session dates while adding bounded report details. */
 export async function buildStockScreenReportNotification(
   screen: StockScreenResult,
   dependencies?: Parameters<typeof buildStockReportWhatsAppNotification>[1]
 ): Promise<WhatsAppNotification> {
-  const { coverage, criteria } = screen;
+  const { criteria } = screen;
   const input: StockReportAlertInput = {
-    title: `Stock Checker screen: ${criteria.decision} ${screen.status}`,
-    asOf: `Scan completed ${screen.generatedAt}`,
-    coverageSummary: `Status ${screen.status}; filter ${criteria.decision}; analyzed ${coverage.analyzed}/${coverage.requested}; matched ${coverage.matched}; unavailable ${coverage.unavailable}. Report returned ${coverage.returned}/${coverage.matched} matches, limit ${criteria.limit}, ${coverage.truncated ? 'truncated' : 'not truncated'}; alert shows ${Math.min(3, screen.matches.length)}/${coverage.returned} returned.`,
+    title: `종목 스크리닝 · ${criteria.decision} · ${screenStatus(screen.status)}`,
+    asOf: `검색 완료 ${formatScreenTimestamp(screen.generatedAt)}`,
+    coverageSummary: screenCoverage(screen),
     lookbackDays: criteria.lookbackDays,
     candidates: screen.matches.map((candidate) => ({
       ticker: candidate.ticker,
@@ -53,21 +78,22 @@ export function buildStockScreenWhatsAppNotification(
   screen: StockScreenResult
 ): WhatsAppNotification {
   const candidates = screen.matches.slice(0, 3);
-  const { coverage, criteria } = screen;
+  const { criteria } = screen;
   const rows = candidates.map((candidate) => {
     const price = candidate.execution.reference?.price;
-    const reference = price !== undefined && Number.isFinite(price) ? price.toFixed(2) : 'n/a';
-    return `${oneLine(candidate.ticker, 32)} ${candidate.decision} bar ${oneLine(candidate.dataAsOf ?? 'n/a', 10)} reference ${reference}`;
+    const reference =
+      price !== undefined && Number.isFinite(price) ? price.toFixed(2) : '자료 없음';
+    return `${oneLine(candidate.ticker, 32)} ${candidate.decision} · 종가일 ${oneLine(candidate.dataAsOf ?? '자료 없음', 10)} · 참고 ${reference}`;
   });
   const summary = [
-    `Status ${screen.status}; filter ${criteria.decision}; analyzed ${coverage.analyzed}/${coverage.requested}; matched ${coverage.matched}; unavailable ${coverage.unavailable}.`,
-    `Report returned ${coverage.returned}/${coverage.matched} matches, limit ${criteria.limit}, ${coverage.truncated ? 'truncated' : 'not truncated'}; alert shows ${candidates.length}/${coverage.returned} returned.`,
-    'Scores are not probabilities of profit; completed-close references are not fills; bar dates vary by ticker.',
-    `Candidates: ${rows.length ? rows.join('; ') : 'none'}.`,
-  ].join(' ');
+    ...(rows.length ? rows : ['일치 종목 없음.']),
+    '',
+    screenCoverage(screen),
+    '점수는 승률이 아닙니다. 종가는 체결가가 아닌 참고값이며 종가일은 종목마다 다릅니다.',
+  ].join('\n');
   return {
-    title: oneLine(`Stock Checker screen: ${criteria.decision} ${screen.status}`, 80),
-    asOf: oneLine(`Scan completed ${screen.generatedAt}`, 60),
-    summary: oneLine(summary, 700),
+    title: oneLine(`종목 스크리닝 · ${criteria.decision} · ${screenStatus(screen.status)}`, 80),
+    asOf: oneLine(`검색 완료 ${formatScreenTimestamp(screen.generatedAt)}`, 60),
+    summary: summary.slice(0, 700).toWellFormed(),
   };
 }

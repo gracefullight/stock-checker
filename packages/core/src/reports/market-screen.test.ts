@@ -983,7 +983,9 @@ describe('durable Finviz candidate jobs', () => {
         const state = JSON.parse(await readFile(path.join(root, id, 'state.json'), 'utf8'));
         const attempt = JSON.parse(await readFile(notificationFile(id), 'utf8'));
         expect(state).toMatchObject({ status: 'partial', progress: { pending: 0, inFlight: 0 } });
-        expect(message.asOf).toBe(state.finishedAt);
+        expect(message.asOf).toBe(
+          `검색 완료 ${state.finishedAt.slice(0, 16).replace('T', ' ')} UTC`
+        );
         expect(attempt).toMatchObject({ schemaVersion: 1, jobStatus: 'partial', result: null });
         expect(attempt.finishedAt).toBeNull();
         expect(await readMarketScreenLease(root)).toMatchObject({ jobId: id });
@@ -1002,14 +1004,15 @@ describe('durable Finviz candidate jobs', () => {
 
       expect(notify).toHaveBeenCalledOnce();
       const message = notify.mock.calls[0][0];
-      expect(message.title).toContain('partial');
-      expect(message.summary).toContain('Matched 6; analyzed 7/8; excluded 1; unavailable 1');
-      expect(message.summary).toContain('Scores are signal strengths, not win probabilities');
-      expect(message.summary).toContain('References are completed closes, not entry fills');
-      expect(message.summary).toContain('BUY P5: reference 105.00, BUY score 300.0');
-      expect(message.summary.indexOf('BUY P5:')).toBeLessThan(message.summary.indexOf('BUY P4:'));
-      expect(message.summary.indexOf('BUY P4:')).toBeLessThan(message.summary.indexOf('BUY P3:'));
-      expect(message.summary).not.toContain('BUY P2:');
+      expect(message.title).toContain('일부 누락');
+      expect(message.summary).toContain('분석 7/8 · 일치 6 · 제외 1 · 자료 없음 1');
+      expect(message.summary).toContain('점수는 승률이 아닙니다');
+      expect(message.summary).toContain('종가는 체결가가 아닌 참고값');
+      expect(message.summary).toContain('P5 BUY · 참고 105.00 · BUY 점수 300.0');
+      expect(message.summary.indexOf('P5 BUY')).toBeLessThan(message.summary.indexOf('P4 BUY'));
+      expect(message.summary.indexOf('P4 BUY')).toBeLessThan(message.summary.indexOf('P3 BUY'));
+      expect(message.summary).not.toContain('P2 BUY');
+      expect(message.summary.indexOf('P3 BUY')).toBeLessThan(message.summary.indexOf('필터 BUY'));
       expect(message.summary).not.toContain('BLOCKED');
       expect(message.summary.length).toBeLessThanOrEqual(700);
       expect(JSON.parse(await readFile(notificationFile(started.job.id), 'utf8'))).toMatchObject({
@@ -1032,9 +1035,9 @@ describe('durable Finviz candidate jobs', () => {
 
       expect(notify).toHaveBeenCalledOnce();
       const summary = notify.mock.calls[0][0].summary;
-      expect(summary).toContain('SELL BEST: reference unavailable, SELL score 300.0');
-      expect(summary.indexOf('SELL BEST:')).toBeLessThan(summary.indexOf('SELL MID:'));
-      expect(summary.indexOf('SELL MID:')).toBeLessThan(summary.indexOf('SELL LOW:'));
+      expect(summary).toContain('BEST SELL · 참고 자료 없음 · SELL 점수 300.0');
+      expect(summary.indexOf('BEST SELL')).toBeLessThan(summary.indexOf('MID SELL'));
+      expect(summary.indexOf('MID SELL')).toBeLessThan(summary.indexOf('LOW SELL'));
     });
 
     it('sends a completed zero-match summary and distinguishes excluded HOLDs from failures', async () => {
@@ -1044,27 +1047,25 @@ describe('durable Finviz candidate jobs', () => {
 
       expect(notify).toHaveBeenCalledOnce();
       const message = notify.mock.calls[0][0];
-      expect(message.title).toContain('completed');
-      expect(message.summary).toContain('Matched 0; analyzed 2/2; excluded 2; unavailable 0');
-      expect(message.summary).toContain('No matching candidates');
+      expect(message.title).toContain('완료');
+      expect(message.summary).toContain('분석 2/2 · 일치 0 · 제외 2 · 자료 없음 0');
+      expect(message.summary).toContain('일치 종목 없음');
     });
 
     it('explicitly identifies unavailable runs and partial Finviz collection', async () => {
       analyze.mockResolvedValue(null);
       const unavailable = await create();
       await settled(unavailable.job.id);
-      expect(notify.mock.calls[0][0].title).toContain('unavailable');
-      expect(notify.mock.calls[0][0].summary).toContain(
-        'Matched 0; analyzed 0/2; excluded 0; unavailable 2'
-      );
+      expect(notify.mock.calls[0][0].title).toContain('자료 없음');
+      expect(notify.mock.calls[0][0].summary).toContain('분석 0/2 · 일치 0 · 제외 0 · 자료 없음 2');
 
       analyze.mockImplementation(async (ticker) => context(ticker));
       const options = input();
       options.provenance = { ...options.provenance, sourceTotal: 1669, completeness: 'partial' };
       const partial = await create(options);
       await settled(partial.job.id);
-      expect(notify.mock.calls[1][0].title).toContain('partial');
-      expect(notify.mock.calls[1][0].summary).toContain('Finviz collection 2/1669 (partial)');
+      expect(notify.mock.calls[1][0].title).toContain('일부 누락');
+      expect(notify.mock.calls[1][0].summary).toContain('Finviz 후보 수집 2/1669 · 부분 수집');
     });
 
     it.each([

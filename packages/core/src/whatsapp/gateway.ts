@@ -263,7 +263,7 @@ export function createWhatsAppGateway(options: WhatsAppGatewayOptions) {
       json(response, 503, { error: 'not-connected' });
       return;
     }
-    const message = `${payload.title}\nAs of: ${payload.asOf}\nResults: ${payload.summary}\nSignal scores are not win probabilities.`;
+    const message = `*${payload.title}*\n기준: ${payload.asOf}\n\n${payload.summary}`;
     if (message.length > 4096) throw new InvalidRequest(400);
     let timeout: NodeJS.Timeout | undefined;
     try {

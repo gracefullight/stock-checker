@@ -108,13 +108,26 @@ function sourceUrl(value: string | null): string | null {
   }
 }
 
+function retrievedAt(value: string): string {
+  const instant = Date.parse(value);
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) ||
+    !Number.isFinite(instant) ||
+    new Date(instant).toISOString() !== value
+  ) {
+    return text(value, 30);
+  }
+  return `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`;
+}
+
 function historyLines(history: HistoricalOutcomesReport | null): string[] {
-  if (!history) return ['과거 5거래일 순수익 관측승률: 자료 없음.'];
+  if (!history) return ['승률: 자료 없음 (과거 BUY 5거래일 순수익)', '관측기간: 자료 없음'];
   const { fixedHold, atrBarriers, method, period } = history;
   return [
-    `과거 BUY 순수익 관측승률 ${frequency(fixedHold.winRatePct, fixedHold.wins, fixedHold.samples)}; 왕복비용 ${number(method.roundTripCostBps)}bps${fixedHold.samples > 0 && fixedHold.samples < 30 ? '; 소표본·해석 주의' : ''}.`,
-    `관측기간 ${text(period.from ?? '자료 없음', 10)}~${text(period.to ?? '자료 없음', 10)}; 다음 시가 진입→5거래일 종가 청산.`,
-    `ATR 경로 도달: 손절 ${frequency(atrBarriers.stopTouchRatePct, atrBarriers.stopTouched, atrBarriers.samples)}, 목표 ${frequency(atrBarriers.targetTouchRatePct, atrBarriers.targetTouched, atrBarriers.samples)}.`,
+    `승률: ${frequency(fixedHold.winRatePct, fixedHold.wins, fixedHold.samples)}${fixedHold.samples > 0 && fixedHold.samples < 30 ? ' · 소표본·해석 주의' : ''}`,
+    `관측기간: ${text(period.from ?? '자료 없음', 10)} ~ ${text(period.to ?? '자료 없음', 10)}`,
+    `방식: 다음 시가 진입→5거래일 종가 청산 · 왕복비용 ${number(method.roundTripCostBps)}bps`,
+    `ATR 도달: 손절 ${frequency(atrBarriers.stopTouchRatePct, atrBarriers.stopTouched, atrBarriers.samples)} · 목표 ${frequency(atrBarriers.targetTouchRatePct, atrBarriers.targetTouched, atrBarriers.samples)}`,
   ];
 }
 
@@ -125,13 +138,13 @@ function targetLines(targets: AnalystTargetsReport | null): string[] {
   if (consensus) {
     const analysts = consensus.analystCount;
     lines.push(
-      `목표가 합의 ${text(consensus.currency ?? '통화 미제공', 12)}: 평균 ${number(consensus.mean)}, 범위 ${number(consensus.low)}~${number(consensus.high)}, ${analysts !== null && count(analysts) ? `${analysts}명` : '인원 미제공'}.`,
-      `합의 조회 ${text(consensus.retrievedAt, 30)}; ${text(consensus.source, 40)}.`
+      `합의: 평균 ${number(consensus.mean)} ${text(consensus.currency ?? '통화 미제공', 12)} · 범위 ${number(consensus.low)}~${number(consensus.high)} · ${analysts !== null && count(analysts) ? `${analysts}명` : '인원 미제공'}`,
+      `합의 조회: ${retrievedAt(consensus.retrievedAt)} · ${text(consensus.source, 40)}`
     );
     const url = sourceUrl(consensus.sourceUrl);
     if (url) provenance.push(`합의 출처 ${url}`);
   } else {
-    lines.push('목표가 합의: 자료 없음.');
+    lines.push('합의: 자료 없음');
   }
   const update =
     targets?.recent.status === 'available'
@@ -141,45 +154,138 @@ function targetLines(targets: AnalystTargetsReport | null): string[] {
       : undefined;
   if (update) {
     lines.push(
-      `관측자료 중 최신 개별: ${text(update.publishedAt, 10)} ${text(update.firm, 60)} ${number(update.targetPrice)} ${text(update.currency ?? '통화 미제공', 12)}; ${text(update.source, 40)}.`
+      `개별 최근(조회 자료): ${text(update.publishedAt, 10)} ${text(update.firm, 60)} · ${number(update.targetPrice)} ${text(update.currency ?? '통화 미제공', 12)} · ${text(update.source, 40)}`
     );
     const url = sourceUrl(update.sourceUrl);
     if (url && url !== sourceUrl(consensus?.sourceUrl ?? null)) provenance.push(`개별 출처 ${url}`);
   } else {
-    lines.push('최근 개별 목표가: 자료 없음.');
+    lines.push('최근 개별: 자료 없음');
   }
   return [...lines, ...provenance];
 }
 
-function candidateLines(
+/** Local notification wording only; the signal engine's original reasons stay intact. */
+function reasonText(value: string): string {
+  const clean = text(value, 600);
+  const trend = /^BUY trend gate: (.*); (passed|blocked)\.$/.exec(clean);
+  if (trend) {
+    const gaussian = /^Gaussian Channel: filter (up|down|flat), isGreen=(true|false)$/.exec(
+      trend[1]
+    );
+    const directions: Record<string, string> = { up: '상승', down: '하락', flat: '횡보' };
+    const explanation = gaussian
+      ? `가우시안 채널 ${directions[gaussian[1]]} · ${gaussian[2] === 'true' ? '녹색' : '녹색 아님'}`
+      : trend[1]
+          .replace('trend gate disabled', '추세 필터 비활성')
+          .replace('insufficient data for SMA', 'SMA 자료 부족')
+          .replace(/(\d+)\/3 conditions met/, '조건 $1/3 충족')
+          .replace(' (sideways relaxed)', ' (횡보 기준 완화)');
+    return `추세: ${trend[2] === 'passed' ? '통과' : '차단'} · ${explanation}`;
+  }
+  const score = /^BUY score (.+) \/ threshold (.+); SELL score (.+) \/ threshold (.+)\.$/.exec(
+    clean
+  );
+  if (score) return `점수: 매수 ${score[1]}/${score[2]} · 매도 ${score[3]}/${score[4]} (점수/기준)`;
+  const confluence = /^Confluence: (\d+\/\d+); (passed|not passed or not evaluated)\.$/.exec(clean);
+  if (confluence)
+    return `지표 일치: ${confluence[1]} · ${confluence[2] === 'passed' ? '통과' : '미통과 또는 미평가'}`;
+  const reversal = /^Reversal: (.+); trigger (.+)\.$/.exec(clean);
+  if (reversal) {
+    const statuses: Record<string, string> = {
+      confirmed: '확인',
+      rejected: '미확인',
+    };
+    const triggers: Record<string, string> = {
+      both: '양봉·거래량 급증',
+      bullish_candle: '양봉',
+      volume_spike: '거래량 급증',
+      'none / not evaluated': '없음 또는 미평가',
+    };
+    return `반전: ${statuses[reversal[1]] ?? reversal[1]} · ${triggers[reversal[2]] ?? reversal[2]}`;
+  }
+  const institutional =
+    /^Institutional score (.+); (passed|below threshold)\. The institutional strategy blends this score into BUY scoring\.$/.exec(
+      clean
+    );
+  if (institutional)
+    return `기관 점수: ${institutional[1]} · ${institutional[2] === 'passed' ? '통과' : '기준 미달'} (매수 점수 반영)`;
+  const explanations: Record<string, string> = {
+    'The entry-quality gate rejected this score-qualified BUY setup.':
+      '진입 품질: 매수 점수는 충족했지만 품질 필터가 차단',
+    'No entry: the complete BUY path did not pass or neither eligible decision qualified.':
+      '신규 진입 보류: 매수 경로 미충족 또는 매수·매도 기준 미충족',
+    'SELL is a long-holder exit warning, not a short-entry recommendation.':
+      '매도: 기존 보유분 청산 경고 (공매도 진입 권고 아님)',
+    'BUY qualifies at the completed close; execution remains conditional on the next session open.':
+      '매수: 종가 기준 충족 (다음 거래일 시가에 조건부 실행)',
+  };
+  return explanations[clean] ?? clean;
+}
+
+interface CandidateSection {
+  heading?: string;
+  required: string[];
+  optional: string[];
+}
+
+function candidateSections(
   candidate: StockReportAlertCandidate,
   detail: StockReportAlertDetail | undefined,
   reasonBudget: number
-): { required: string[]; optional: string[] } {
+): CandidateSection[] {
   const action =
     candidate.decision === 'BUY'
       ? '다음 시가 조건부 진입'
       : candidate.decision === 'SELL'
         ? '보유 포지션 청산 경고'
         : '신규 진입 보류';
-  const lines = [
-    `${text(candidate.ticker, 32)} ${candidate.decision} (${action}); 원신호 종가일 ${text(candidate.dataAsOf ?? '자료 없음', 10)}.`,
+  const identity = [
+    `*${text(candidate.ticker, 32)} · ${candidate.decision}*`,
+    `판정: ${action} · 종가일 ${text(candidate.dataAsOf ?? '자료 없음', 10)}`,
   ];
+  const referenceLines: string[] = [];
+  const referenceOptional: string[] = [];
   if (candidate.reference) {
     const reference = candidate.reference;
-    lines.push(
-      candidate.decision === 'BUY'
-        ? `종가 참고 ${number(reference.price)}; ATR ${number(reference.atr)}; 손절 ${number(reference.stopLoss)}, 목표 ${number(reference.takeProfit)}.`
-        : `종가 참고 ${number(reference.price)}.`
-    );
+    referenceLines.push(`종가: ${number(reference.price)}`);
+    if (candidate.decision === 'BUY') {
+      referenceLines.push(
+        `손절: ${number(reference.stopLoss)} · 목표: ${number(reference.takeProfit)}`
+      );
+      referenceOptional.push(`ATR: ${number(reference.atr)} · 진입 시가 미확정`);
+    }
+  } else {
+    referenceLines.push('종가: 자료 없음');
   }
   const aligned =
     detail?.dataAsOf === candidate.dataAsOf && detail?.decision === candidate.decision;
   const reasons = candidate.gateReasons ?? (aligned ? detail?.gateReasons : undefined) ?? [];
-  const reason = `원판정 근거: ${reasons.length ? text(reasons.map((item) => text(item, 90)).join(' / '), reasonBudget) : '자료 없음'}.`;
+  const reasonLines = reasons.map(reasonText);
+  const blocker = reasons.findIndex((line) =>
+    /entry-quality gate rejected|; blocked\.|; not passed or not evaluated\.|; below threshold\./.test(
+      line
+    )
+  );
+  const qualityBlocker = reasons.findIndex((line) => /entry-quality gate rejected/.test(line));
+  const holdingReason = reasons.findIndex((line) => /^No entry:/.test(line));
+  const mainReason =
+    qualityBlocker >= 0
+      ? qualityBlocker
+      : blocker >= 0
+        ? blocker
+        : candidate.decision === 'HOLD' && holdingReason >= 0
+          ? holdingReason
+          : 0;
+  const firstReason = reasonLines[mainReason] ?? '자료 없음';
+  const shortened = text(firstReason, reasonBudget);
+  const reason = `• ${shortened}${shortened.length < firstReason.length ? '…' : ''}`;
+  const scoreReason = reasons.findIndex((line) => /^BUY score .+ \/ threshold /.test(line));
+  const requiredReasons = [reason];
+  if (scoreReason >= 0 && scoreReason !== mainReason)
+    requiredReasons.push(`• ${reasonLines[scoreReason]}`);
   if (detail && !aligned) {
-    lines.push(
-      `상세 재조회 ${text(detail.dataAsOf ?? '자료 없음', 10)} ${detail.decision ?? '자료 없음'}; 원판정 유지.`
+    identity.push(
+      `재조회: ${text(detail.dataAsOf ?? '자료 없음', 10)} ${detail.decision ?? '자료 없음'} · 원판정 유지`
     );
   }
   const targets =
@@ -187,14 +293,26 @@ function candidateLines(
   const targetSummary = targetLines(targets);
   const sources = targetSummary.filter((line) => /^(?:합의|개별) 출처 /.test(line));
   const history = historyLines(aligned ? (detail?.historical ?? null) : null);
-  return {
-    required: [lines[0], reason, history[0], targetSummary[0], ...lines.slice(1)],
-    optional: [
-      ...history.slice(1),
-      ...targetSummary.slice(1).filter((line) => !sources.includes(line)),
-      ...sources,
-    ],
-  };
+  return [
+    { required: identity, optional: [] },
+    { heading: '과거 BUY 신호', required: history.slice(0, 3), optional: history.slice(3) },
+    { heading: '참고 가격 (통화 미제공)', required: referenceLines, optional: referenceOptional },
+    {
+      heading: '애널리스트 목표가',
+      required: targetSummary.slice(0, targets?.consensus ? 2 : 1),
+      optional: targetSummary
+        .slice(targets?.consensus ? 2 : 1)
+        .filter((line) => !sources.includes(line)),
+    },
+    {
+      heading: '원판정 근거',
+      required: requiredReasons,
+      optional: reasonLines
+        .filter((_, index) => index !== mainReason && index !== scoreReason)
+        .map((line) => `• ${line}`),
+    },
+    { heading: '출처', required: [], optional: sources },
+  ];
 }
 
 /** Each ticker block keeps whole lines; no final price or URL is sliced mid-value. */
@@ -203,43 +321,63 @@ export function formatStockReportWhatsAppNotification(
   details: readonly StockReportAlertDetail[]
 ): WhatsAppNotification {
   const candidates = input.candidates.slice(0, MAX_DETAILS);
-  const header = [
-    '과거 관측치이며 미래 수익 확률 아님. 신호점수는 승률 아님; BUY 표본은 중복될 수 있음.',
-    '종가·ATR 가격은 체결가 아닌 참고값. ATR 도달률은 승률·손절 체결확률과 다름. 컨센서스 발표일·목표기간은 미제공.',
-    `결과 요약: ${text(input.coverageSummary, 350)}`,
-    `요청기간 ${input.lookbackDays}일; 상세 ${candidates.length}/${input.candidates.length}개 (최대 ${MAX_DETAILS}). 가격: 기존 Stock Checker 일봉 입력.`,
+  const coverage = input.coverageSummary
+    .split(/\r?\n/)
+    .map((line) => text(line, 350))
+    .filter(Boolean);
+  const coverageLines = [coverage[0], coverage.slice(1).join(' · ')].filter(Boolean);
+  const coverageText = coverageLines.length
+    ? `${text(coverageLines[0], coverageLines[1] ? 175 : 350)}${coverageLines[1] ? `\n${text(coverageLines[1], 175)}` : ''}`
+    : '자료 없음';
+  const footer = [
+    '*결과 범위*',
+    coverageText,
+    `조회 ${input.lookbackDays}일 · 상세 ${candidates.length}/${input.candidates.length}개 (최대 ${MAX_DETAILS})`,
+    '',
+    '*해석 주의*',
+    '과거 BUY 순수익 관측치이며 미래 수익 확률 아님. 신호점수는 승률 아님. BUY 표본은 중복 가능.',
+    '종가·ATR 가격은 미체결 참고값. ATR 도달률은 승률·손절 체결확률 아님.',
+    '합의 발표일·목표기간(합의·개별)은 미제공. 가격: Stock Checker 일봉 입력.',
   ].join('\n');
   const blocks: string[] = [];
   const budget = candidates.length
-    ? Math.floor((MAX_SUMMARY_LENGTH - header.length - candidates.length * 2) / candidates.length)
+    ? Math.floor((MAX_SUMMARY_LENGTH - footer.length - candidates.length * 2) / candidates.length)
     : 0;
   for (const candidate of candidates) {
     const detail = details.find(
       (item) => item.ticker === candidate.ticker && item.lookbackDays === input.lookbackDays
     );
-    const lines = candidateLines(candidate, detail, Math.min(400, Math.floor(budget / 6)));
-    // Identity, original reason, net wins/sample, consensus mean and references
-    // are reserved before auxiliary diagnostics and source links use the remainder.
-    const block = [...lines.required];
-    let length = block.join('\n').length;
+    const sections = candidateSections(candidate, detail, Math.min(140, Math.floor(budget / 8)));
+    const selected = sections.map((section) => [...section.required]);
+    const render = () =>
+      sections
+        .map((section, index) =>
+          selected[index].length
+            ? [...(section.heading ? [`*${section.heading}*`] : []), ...selected[index]].join('\n')
+            : ''
+        )
+        .filter(Boolean)
+        .join('\n\n');
     let omitted = false;
     const omission = '일부 상세·출처는 길이 제한으로 생략.';
-    for (const line of lines.optional) {
-      const separator = block.length ? 1 : 0;
-      if (length + separator + line.length > budget - omission.length - 1) {
-        omitted = true;
-        continue;
+    // Reserve each stock's period/method, original reason, wins/sample,
+    // consensus retrieval and reference prices before adding auxiliary lines.
+    const priority = [3, 5, 4, 1, 2];
+    for (const index of priority) {
+      for (const line of sections[index].optional) {
+        selected[index].push(line);
+        if (render().length > budget - omission.length - 2) {
+          selected[index].pop();
+          omitted = true;
+        }
       }
-      block.push(line);
-      length += separator + line.length;
     }
-    if (omitted) block.push(omission);
-    blocks.push(block.join('\n'));
+    blocks.push(`${render()}${omitted ? `\n${omission}` : ''}`);
   }
   return {
     title: text(input.title, 80),
     asOf: text(input.asOf, 60),
-    summary: blocks.length ? `${header}\n\n${blocks.join('\n\n')}` : `${header}\n상세 후보 없음.`,
+    summary: `${blocks.length ? blocks.join('\n\n') : '상세 후보 없음.'}\n\n${footer}`,
   };
 }
 

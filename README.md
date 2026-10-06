@@ -394,8 +394,12 @@ resume does not repeat an attempted notification. An interrupted or failed
 attempt is not automatically retried, so a process crash can lose that alert.
 Notification failures do not discard analysis or change a completed job to paused.
 
-Messages contain an event title, as-of timestamp/date, and a bounded summary as
-plain text with paragraphs, up to 3,000 UTF-16 code units in the summary.
+Messages use Korean labels, WhatsApp bold titles, short lines, and blank lines
+between ticker sections. Each ticker starts with its SC decision, followed by
+historical win rates, reference prices, analyst targets, and the decision's
+reasons. Scan coverage, sources, and a shared interpretation note follow the
+details. The event date appears once above the summary; each ticker retains its
+own price and observation dates. The summary is bounded to 3,000 UTF-16 code units.
 The detailed candidates include the original SC decision and reasons, historical
 BUY win rates with sample counts and observation dates, and analyst targets when
 available. Historical wins measure net returns from the next session's open

@@ -20,20 +20,23 @@ export function buildStockSignalNotification(
   if (actionable.length === 0) return null;
 
   const dates = [...new Set(actionable.map((item) => item.date))].sort();
-  const asOf = dates.length === 1 ? dates[0] : `${dates[0]} to ${dates[dates.length - 1]}`;
+  const asOf = `종가 ${dates.length === 1 ? dates[0] : `${dates[0]}~${dates[dates.length - 1]}`}`;
   const buyCount = actionable.filter((item) => item.opinion === 'BUY').length;
   const details = actionable.slice(0, 5).map((item) => {
-    const price = `${item.ticker} ${item.opinion} close ${item.close.toFixed(2)}`;
+    const price = `${item.ticker} ${item.opinion} · 종가 ${item.close.toFixed(2)}`;
     return item.opinion === 'BUY'
-      ? `${price}, ATR stop ${item.stopLoss.toFixed(2)}, target ${item.takeProfit.toFixed(2)}`
-      : `${price} (exit signal)`;
+      ? `${price} · ATR 손절 ${item.stopLoss.toFixed(2)} · 목표 ${item.takeProfit.toFixed(2)}`
+      : `${price} · 보유 포지션 청산 경고`;
   });
-  const coverage = actionable.length > 5 ? `; showing 5 of ${actionable.length}` : '';
-
   return {
-    title: 'Stock signals',
+    title: '주식 신호',
     asOf,
-    summary: `BUY ${buyCount}; SELL ${actionable.length - buyCount}; ${details.join('; ')}${coverage}. Prices are completed-close references.`,
+    summary: [
+      ...details,
+      '',
+      `BUY ${buyCount} · SELL ${actionable.length - buyCount} · 알림 ${details.length}/${actionable.length}개`,
+      '종가·ATR 가격은 체결가가 아닌 참고값입니다. 신호점수는 승률이 아닙니다.',
+    ].join('\n'),
   };
 }
 
@@ -64,9 +67,9 @@ export async function buildStockSignalReportNotification(
   });
   return buildStockReportWhatsAppNotification(
     {
-      title: 'Stock signals',
-      asOf: dates.length === 1 ? dates[0] : `${dates[0]} to ${dates[dates.length - 1]}`,
-      coverageSummary: `BUY ${buyCount}; SELL ${actionable.length - buyCount}; alert shows ${Math.min(3, actionable.length)}/${actionable.length} signals.`,
+      title: '주식 신호',
+      asOf: `종가 ${dates.length === 1 ? dates[0] : `${dates[0]}~${dates[dates.length - 1]}`}`,
+      coverageSummary: `BUY ${buyCount} · SELL ${actionable.length - buyCount} · 알림 ${Math.min(3, actionable.length)}/${actionable.length}개`,
       lookbackDays: 730,
       candidates,
     },

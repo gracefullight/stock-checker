@@ -23,10 +23,15 @@ describe('stock signal notification', () => {
       { ...reference, ticker: 'HOLD', opinion: 'HOLD' },
     ]);
     expect(notification).toEqual({
-      title: 'Stock signals',
-      asOf: '2026-10-01',
-      summary:
-        'BUY 1; SELL 1; AAPL BUY close 100.00, ATR stop 97.00, target 106.00; OII SELL close 100.00 (exit signal). Prices are completed-close references.',
+      title: '주식 신호',
+      asOf: '종가 2026-10-01',
+      summary: [
+        'AAPL BUY · 종가 100.00 · ATR 손절 97.00 · 목표 106.00',
+        'OII SELL · 종가 100.00 · 보유 포지션 청산 경고',
+        '',
+        'BUY 1 · SELL 1 · 알림 2/2개',
+        '종가·ATR 가격은 체결가가 아닌 참고값입니다. 신호점수는 승률이 아닙니다.',
+      ].join('\n'),
     });
     expect(notification?.summary).not.toContain('%');
     expect(notification?.summary).not.toContain('HOLD');
@@ -40,10 +45,10 @@ describe('stock signal notification', () => {
         date: index === 7 ? '2026-09-30' : reference.date,
       }))
     );
-    expect(notification?.asOf).toBe('2026-09-30 to 2026-10-01');
-    expect(notification?.summary).toContain('BUY 8; SELL 0');
+    expect(notification?.asOf).toBe('종가 2026-09-30~2026-10-01');
+    expect(notification?.summary).toContain('BUY 8 · SELL 0');
     expect(notification?.summary).toContain('STOCK4 BUY');
     expect(notification?.summary).not.toContain('STOCK5 BUY');
-    expect(notification?.summary).toContain('showing 5 of 8');
+    expect(notification?.summary).toContain('알림 5/8개');
   });
 });

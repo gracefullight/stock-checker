@@ -150,8 +150,8 @@ describe('equity prediction finance inputs', () => {
 
     expect(sendWhatsAppNotification).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
-        title: 'Stock signals',
-        asOf: '2026-10-01',
+        title: '주식 신호',
+        asOf: '종가 2026-10-01',
         summary: expect.stringContaining('SELL 2'),
       })
     );
