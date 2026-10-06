@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/gracefullight/stock-checker/compare/v0.5.0...v0.5.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **whatsapp:** improve stock alert readability ([008bf56](https://github.com/gracefullight/stock-checker/commit/008bf562a467d11052e1e020297a3dd7852c4720))
+
 ## [0.5.0](https://github.com/gracefullight/stock-checker/compare/v0.4.1...v0.5.0) (2026-10-05)
 
 
