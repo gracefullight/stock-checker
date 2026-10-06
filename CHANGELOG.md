@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.5](https://github.com/gracefullight/stock-checker/compare/v0.7.4...v0.7.5) (2026-10-06)
+
+
+### Refactoring
+
+* migrate automation to typescript workspaces ([e1872ce](https://github.com/gracefullight/stock-checker/commit/e1872ceee658a76d7a5ca80bd11701df2daef41b))
+
 ## [0.7.4](https://github.com/gracefullight/stock-checker/compare/v0.7.3...v0.7.4) (2026-10-06)
 
 

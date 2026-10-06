@@ -21,7 +21,7 @@
     },
     "apps/api": {
       "name": "@stock-checker/api",
-      "version": "0.7.4",
+      "version": "0.7.5",
       "dependencies": {
         "@fastify/cors": "^11.3.0",
         "@stock-checker/core": "workspace:*",
@@ -31,7 +31,7 @@
     },
     "apps/mcp": {
       "name": "@stock-checker/mcp",
-      "version": "0.7.4",
+      "version": "0.7.5",
       "dependencies": {
         "@modelcontextprotocol/server": "^2.3.0",
         "@stock-checker/core": "workspace:*",
@@ -45,7 +45,7 @@
     },
     "apps/web": {
       "name": "@stock-checker/web",
-      "version": "0.7.4",
+      "version": "0.7.5",
       "dependencies": {
         "@base-ui/react": "^1.8.0",
         "@serwist/turbopack": "^9.5.12",
@@ -79,11 +79,11 @@
     },
     "packages/automation": {
       "name": "@stock-checker/automation",
-      "version": "0.7.4",
+      "version": "0.7.5",
     },
     "packages/core": {
       "name": "@stock-checker/core",
-      "version": "0.7.4",
+      "version": "0.7.5",
       "dependencies": {
         "@clack/prompts": "^1.8.1",
         "@whiskeysockets/baileys": "7.0.0-rc14",
