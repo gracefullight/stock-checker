@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/gracefullight/stock-checker/compare/v0.7.0...v0.7.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* preserve screening configuration in alert win rates ([a791444](https://github.com/gracefullight/stock-checker/commit/a79144436493f3d3af8f9128e44dbc61fc329c50))
+
 ## [0.7.0](https://github.com/gracefullight/stock-checker/compare/v0.6.0...v0.7.0) (2026-10-06)
 
 
