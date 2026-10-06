@@ -21,22 +21,16 @@ export function buildStockSignalNotification(
 
   const dates = [...new Set(actionable.map((item) => item.date))].sort();
   const asOf = `종가 ${dates.length === 1 ? dates[0] : `${dates[0]}~${dates[dates.length - 1]}`}`;
-  const buyCount = actionable.filter((item) => item.opinion === 'BUY').length;
   const details = actionable.slice(0, 5).map((item) => {
-    const price = `${item.ticker} ${item.opinion} · 종가 ${item.close.toFixed(2)}`;
+    const price = `${item.ticker} ${item.opinion} · 종가 참고 ${item.close.toFixed(2)}`;
     return item.opinion === 'BUY'
-      ? `${price} · ATR 손절 ${item.stopLoss.toFixed(2)} · 목표 ${item.takeProfit.toFixed(2)}`
+      ? `${price} · ATR 손절 참고 ${item.stopLoss.toFixed(2)} · 목표 참고 ${item.takeProfit.toFixed(2)}`
       : `${price} · 보유 포지션 청산 경고`;
   });
   return {
     title: '주식 신호',
     asOf,
-    summary: [
-      ...details,
-      '',
-      `BUY ${buyCount} · SELL ${actionable.length - buyCount} · 알림 ${details.length}/${actionable.length}개`,
-      '종가·ATR 가격은 체결가가 아닌 참고값입니다. 신호점수는 승률이 아닙니다.',
-    ].join('\n'),
+    summary: details.join('\n'),
   };
 }
 

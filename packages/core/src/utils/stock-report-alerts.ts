@@ -124,10 +124,10 @@ function historyLines(history: HistoricalOutcomesReport | null): string[] {
   if (!history) return ['승률: 자료 없음 (과거 BUY 5거래일 순수익)', '관측기간: 자료 없음'];
   const { fixedHold, atrBarriers, method, period } = history;
   return [
-    `승률: ${frequency(fixedHold.winRatePct, fixedHold.wins, fixedHold.samples)}${fixedHold.samples > 0 && fixedHold.samples < 30 ? ' · 소표본·해석 주의' : ''}`,
+    `승률: ${frequency(fixedHold.winRatePct, fixedHold.wins, fixedHold.samples)}${fixedHold.samples > 0 && fixedHold.samples < 30 ? ' · 소표본' : ''}`,
     `관측기간: ${text(period.from ?? '자료 없음', 10)} ~ ${text(period.to ?? '자료 없음', 10)}`,
     `방식: 다음 시가 진입→5거래일 종가 청산 · 왕복비용 ${number(method.roundTripCostBps)}bps`,
-    `ATR 도달: 손절 ${frequency(atrBarriers.stopTouchRatePct, atrBarriers.stopTouched, atrBarriers.samples)} · 목표 ${frequency(atrBarriers.targetTouchRatePct, atrBarriers.targetTouched, atrBarriers.samples)}`,
+    `ATR 도달률(체결률 아님): 손절 ${frequency(atrBarriers.stopTouchRatePct, atrBarriers.stopTouched, atrBarriers.samples)} · 목표 ${frequency(atrBarriers.targetTouchRatePct, atrBarriers.targetTouched, atrBarriers.samples)}`,
   ];
 }
 
@@ -139,7 +139,8 @@ function targetLines(targets: AnalystTargetsReport | null): string[] {
     const analysts = consensus.analystCount;
     lines.push(
       `합의: 평균 ${number(consensus.mean)} ${text(consensus.currency ?? '통화 미제공', 12)} · 범위 ${number(consensus.low)}~${number(consensus.high)} · ${analysts !== null && count(analysts) ? `${analysts}명` : '인원 미제공'}`,
-      `합의 조회: ${retrievedAt(consensus.retrievedAt)} · ${text(consensus.source, 40)}`
+      `합의 조회: ${retrievedAt(consensus.retrievedAt)} · ${text(consensus.source, 40)}`,
+      '합의 발표일: 미제공 · 목표기간(합의·개별): 미제공'
     );
     const url = sourceUrl(consensus.sourceUrl);
     if (url) provenance.push(`합의 출처 ${url}`);
@@ -295,13 +296,13 @@ function candidateSections(
   const history = historyLines(aligned ? (detail?.historical ?? null) : null);
   return [
     { required: identity, optional: [] },
-    { heading: '과거 BUY 신호', required: history.slice(0, 3), optional: history.slice(3) },
+    { heading: '과거 BUY 순수익 관측', required: history.slice(0, 3), optional: history.slice(3) },
     { heading: '참고 가격 (통화 미제공)', required: referenceLines, optional: referenceOptional },
     {
       heading: '애널리스트 목표가',
-      required: targetSummary.slice(0, targets?.consensus ? 2 : 1),
+      required: targetSummary.slice(0, targets?.consensus ? 3 : 1),
       optional: targetSummary
-        .slice(targets?.consensus ? 2 : 1)
+        .slice(targets?.consensus ? 3 : 1)
         .filter((line) => !sources.includes(line)),
     },
     {
@@ -321,27 +322,9 @@ export function formatStockReportWhatsAppNotification(
   details: readonly StockReportAlertDetail[]
 ): WhatsAppNotification {
   const candidates = input.candidates.slice(0, MAX_DETAILS);
-  const coverage = input.coverageSummary
-    .split(/\r?\n/)
-    .map((line) => text(line, 350))
-    .filter(Boolean);
-  const coverageLines = [coverage[0], coverage.slice(1).join(' · ')].filter(Boolean);
-  const coverageText = coverageLines.length
-    ? `${text(coverageLines[0], coverageLines[1] ? 175 : 350)}${coverageLines[1] ? `\n${text(coverageLines[1], 175)}` : ''}`
-    : '자료 없음';
-  const footer = [
-    '*결과 범위*',
-    coverageText,
-    `조회 ${input.lookbackDays}일 · 상세 ${candidates.length}/${input.candidates.length}개 (최대 ${MAX_DETAILS})`,
-    '',
-    '*해석 주의*',
-    '과거 BUY 순수익 관측치이며 미래 수익 확률 아님. 신호점수는 승률 아님. BUY 표본은 중복 가능.',
-    '종가·ATR 가격은 미체결 참고값. ATR 도달률은 승률·손절 체결확률 아님.',
-    '합의 발표일·목표기간(합의·개별)은 미제공. 가격: Stock Checker 일봉 입력.',
-  ].join('\n');
   const blocks: string[] = [];
   const budget = candidates.length
-    ? Math.floor((MAX_SUMMARY_LENGTH - footer.length - candidates.length * 2) / candidates.length)
+    ? Math.floor((MAX_SUMMARY_LENGTH - (candidates.length - 1) * 2) / candidates.length)
     : 0;
   for (const candidate of candidates) {
     const detail = details.find(
@@ -377,7 +360,7 @@ export function formatStockReportWhatsAppNotification(
   return {
     title: text(input.title, 80),
     asOf: text(input.asOf, 60),
-    summary: `${blocks.length ? blocks.join('\n\n') : '상세 후보 없음.'}\n\n${footer}`,
+    summary: blocks.length ? blocks.join('\n\n') : '상세 후보 없음.',
   };
 }
 

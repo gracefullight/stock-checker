@@ -575,9 +575,6 @@ async function notifyCompletion(
                     }),
                   ]
                 : ['일치 종목 없음.']),
-              '',
-              coverageSummary,
-              '점수는 승률이 아닙니다. 종가는 체결가가 아닌 참고값입니다.',
             ]
               .join('\n')
               .slice(0, 700),

@@ -134,15 +134,12 @@ describe('buildStockScreenWhatsAppNotification', () => {
     expect(message.asOf).toBe('검색 완료 2026-10-05 03:30 UTC');
     expect(message.summary).toContain('AAPL BUY · 종가일 2026-10-02 · 참고 123.46');
     expect(message.summary).toContain('OII BUY · 종가일 2026-10-01 · 참고 123.46');
-    expect(message.summary).toContain('종가는 체결가가 아닌 참고값');
-    expect(message.summary).toContain('종가일은 종목마다 다릅니다');
-    expect(message.summary).toContain('점수는 승률이 아닙니다');
-    expect(message.summary.indexOf('OII BUY')).toBeLessThan(message.summary.indexOf('필터 BUY'));
+    expect(message.summary).not.toMatch(/필터|분석|알림|해석 주의|결과 범위|승률/);
     expect(message.summary).not.toContain('300');
     expect(screen).toEqual(original);
   });
 
-  it('limits alerts to three returned candidates and states report truncation independently', () => {
+  it('limits alerts to three candidates while keeping full coverage in the structured screen', () => {
     const matches = ['AAPL', 'MSFT', 'NVDA', 'OII', 'SPCX'].map((ticker) => candidate(ticker));
     const screen = fixture({
       criteria: { ...fixture().criteria, limit: 5 },
@@ -159,8 +156,16 @@ describe('buildStockScreenWhatsAppNotification', () => {
     });
     const { summary } = buildStockScreenWhatsAppNotification(screen);
 
-    expect(summary).toContain('필터 BUY · 분석 19/20 · 일치 8 · 자료 없음 1');
-    expect(summary).toContain('반환 5/8 · 제한 5 · 일부 생략 · 알림 3/5개');
+    expect(screen.coverage).toEqual({
+      requested: 20,
+      analyzed: 19,
+      unavailable: 1,
+      matched: 8,
+      returned: 5,
+      truncated: true,
+    });
+    expect(screen.criteria.limit).toBe(5);
+    expect(summary).not.toMatch(/필터|분석|알림|반환|생략|해석 주의|결과 범위/);
     expect(summary).toContain('AAPL BUY');
     expect(summary).toContain('MSFT BUY');
     expect(summary).toContain('NVDA BUY');
@@ -169,7 +174,7 @@ describe('buildStockScreenWhatsAppNotification', () => {
   });
 
   it.each(['available', 'unavailable'] as const)(
-    'retains %s status and missing-data counts when no candidates were returned',
+    'retains %s status with a concise summary when no candidates were returned',
     (status) => {
       const unavailable = status === 'unavailable' ? 2 : 0;
       const message = buildStockScreenWhatsAppNotification(
@@ -188,10 +193,7 @@ describe('buildStockScreenWhatsAppNotification', () => {
       );
       const { summary } = message;
       expect(message.title).toContain(status === 'available' ? '완료' : '자료 없음');
-      expect(summary).toContain(`분석 ${2 - unavailable}/2 · 일치 0 · 자료 없음 ${unavailable}`);
-      expect(summary).toContain('반환 0/0');
-      expect(summary).toContain('알림 0/0개');
-      expect(summary).toContain('일치 종목 없음.');
+      expect(summary).toBe('일치 종목 없음.');
       expect(summary).not.toMatch(/win rate|%/i);
     }
   );
@@ -206,7 +208,6 @@ describe('buildStockScreenWhatsAppNotification', () => {
       })
     );
     expect(message.title).toBe('종목 스크리닝 · ALL · 완료');
-    expect(message.summary).toContain('필터 ALL');
     expect(message.summary).toContain('OII HOLD · 종가일 자료 없음 · 참고 자료 없음');
     expect(message.summary).not.toContain('USD 0.00');
   });
@@ -232,6 +233,6 @@ describe('buildStockScreenWhatsAppNotification', () => {
       expect(value.isWellFormed()).toBe(true);
     }
     expect(message.summary).toContain(`${'C'.repeat(32)} BUY`);
-    expect(message.summary).toContain('\n\n필터 BUY');
+    expect(message.summary.split('\n')).toHaveLength(3);
   });
 });

@@ -380,14 +380,15 @@ failure without discarding results. To change the recipient, update
 new environment. Changing the recipient does not require linking WhatsApp again.
 
 The CLI sends one summary per successful `predict` run containing BUY or SELL
-results, after saving its CSV/JSON and prediction history. It includes signal
-counts, up to three ticker details, completed-close BUY stop/target references,
+results, after saving its CSV/JSON and prediction history. It includes up to
+three ticker details, completed-close BUY stop/target references,
 and SELL exit warnings. HOLD-only runs send nothing. Repeating a CLI run can
 produce another notification.
 
 Finviz market-screen jobs send one completion summary after their final results
-are saved. The summary includes completion/partial/unavailable status, analyzed
-coverage, matching and unavailable counts, and up to three saved candidates.
+are saved. The summary includes completion/partial/unavailable status and up to
+three saved candidates. Analysis coverage and Finviz collection provenance
+remain available in the saved results, API, and dashboard.
 An empty matching set still produces a result summary. Paused jobs and status
 reads send nothing. The per-job notification record is saved before the request;
 resume does not repeat an attempted notification. An interrupted or failed
@@ -397,8 +398,10 @@ Notification failures do not discard analysis or change a completed job to pause
 Messages use Korean labels, WhatsApp bold titles, short lines, and blank lines
 between ticker sections. Each ticker starts with its SC decision, followed by
 historical win rates, reference prices, analyst targets, and the decision's
-reasons. Scan coverage, sources, and a shared interpretation note follow the
-details. The event date appears once above the summary; each ticker retains its
+reasons and sources. Messages omit the coverage recap and standalone
+interpretation section. Sample counts, observation periods, costs, reference
+dates, and data availability appear alongside the relevant values.
+The event date appears once above the summary; each ticker retains its
 own price and observation dates. The summary is bounded to 3,000 UTF-16 code units.
 The detailed candidates include the original SC decision and reasons, historical
 BUY win rates with sample counts and observation dates, and analyst targets when
@@ -429,7 +432,8 @@ For a bounded MCP `screen_stocks` summary, explicitly pass `notifyWhatsApp: true
 ```
 
 The flag defaults to `false`; ordinary screen reads send nothing. An explicit
-notification includes scan status, coverage, and up to three returned matches.
+notification includes scan status and up to three returned matches. The
+structured screen result retains its coverage counts.
 The tool retains its analysis even when sending fails and reports the notification
 status separately. Repeating a flagged scan can produce another notification.
 

@@ -280,12 +280,10 @@ describe('screen_stocks MCP tool', () => {
           expect(notifier).toHaveBeenCalledWith({
             title: `종목 스크리닝 · BUY · ${screen.status === 'available' ? '완료' : screen.status === 'partial' ? '일부 누락' : '자료 없음'}`,
             asOf: `검색 완료 ${screen.generatedAt.slice(0, 16).replace('T', ' ')} UTC`,
-            summary: expect.stringContaining(
-              `분석 ${screen.coverage.analyzed}/${screen.coverage.requested} · 일치 ${screen.coverage.matched} · 자료 없음 ${unavailable}`
-            ),
+            summary: expect.stringContaining(noMatches ? '일치 종목 없음.' : 'AAPL BUY'),
           });
           const payload = notifier.mock.calls[0]?.[0];
-          expect(payload?.summary).toContain('점수는 승률이 아닙니다');
+          expect(payload?.summary).not.toMatch(/분석|반환|알림|해석 주의|결과 범위|승률/);
           expect(payload?.summary).toContain(
             noMatches ? '일치 종목 없음.' : 'AAPL BUY · 종가일 2026-10-02 · 참고 100.00'
           );

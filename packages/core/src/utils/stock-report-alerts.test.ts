@@ -143,8 +143,7 @@ function deferred<T>() {
 function stockBlock(summary: string, ticker: string, decision = 'BUY'): string {
   const remaining = summary.slice(summary.indexOf(`*${ticker} · ${decision}*`));
   const nextStock = /\n\n\*[^\n*]+ · (?:BUY|SELL|HOLD)\*/.exec(remaining)?.index;
-  const footer = remaining.indexOf('\n\n*결과 범위*');
-  return remaining.slice(0, nextStock ?? (footer >= 0 ? footer : undefined));
+  return remaining.slice(0, nextStock);
 }
 
 function context(): TickerAnalysisContext {
@@ -250,29 +249,24 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.useRealTimers());
 
 describe('stock report WhatsApp formatting', () => {
-  it('leads with the bold stock judgment and groups the financial details before the footer', () => {
+  it('leads with the bold stock judgment and groups the financial details', () => {
     const { summary } = formatStockReportWhatsAppNotification(input(), [detail()]);
     expect(summary.split('\n')[0]).toBe('*AAPL · BUY*');
-    expect(summary).toContain('\n\n*과거 BUY 신호*\n승률: 75.00% (3/4)');
+    expect(summary).toContain('\n\n*과거 BUY 순수익 관측*\n승률: 75.00% (3/4)');
     expect(summary).toContain('\n\n*참고 가격 (통화 미제공)*\n종가: 100.00');
     expect(summary).toContain('\n\n*애널리스트 목표가*\n합의: 평균 150.00 USD');
-    expect(summary.indexOf('*해석 주의*')).toBeGreaterThan(summary.indexOf('원판정 근거'));
-    expect(summary.indexOf('*결과 범위*')).toBeGreaterThan(summary.indexOf('*AAPL · BUY*'));
   });
 
   it('reports observed net wins and sample counts separately from touches and targets', () => {
     const notification = formatStockReportWhatsAppNotification(input(), [detail()]);
     const { summary } = notification;
-    expect(summary).toContain('미래 수익 확률 아님');
-    expect(summary).toContain('신호점수는 승률 아님');
-    expect(summary).toContain('BUY 표본은 중복');
-    expect(summary).toContain('분석 19/20; 일치 5; 실패 1; 반환 4/5');
-    expect(summary).toContain('과거 BUY 신호*\n승률: 75.00% (3/4)');
+    expect(summary).toContain('과거 BUY 순수익 관측*\n승률: 75.00% (3/4)');
     expect(summary).toContain('왕복비용 10.00bps');
-    expect(summary).toContain('소표본·해석 주의');
+    expect(summary).toContain('소표본');
     expect(summary).toContain('관측기간: 2024-10-01 ~ 2026-09-25');
     expect(summary).toContain('다음 시가 진입→5거래일 종가 청산');
     expect(summary).toContain('손절 25.00% (1/4) · 목표 50.00% (2/4)');
+    expect(summary).toContain('ATR 도달률(체결률 아님)');
     expect(summary).toContain('합의: 평균 150.00 USD · 범위 120.00~180.00 · 8명');
     expect(summary).toContain('합의 조회: 2026-10-05 03:30 UTC');
     expect(summary).toContain('https://finance.yahoo.com/quote/AAPL/analysis/');
@@ -280,7 +274,7 @@ describe('stock report WhatsApp formatting', () => {
     expect(summary).toContain('https://example.org/target-1');
     expect(summary).not.toContain('Earlier Firm');
     expect(summary).not.toContain('12개월');
-    expect(summary).toContain('합의 발표일·목표기간(합의·개별)은 미제공');
+    expect(summary).toContain('합의 발표일: 미제공 · 목표기간(합의·개별): 미제공');
   });
 
   it.each(['2026-10-05T03:30:00', '2026-10-05T13:30:00+10:00', '2026-02-30T03:30:00.000Z'])(
@@ -336,16 +330,20 @@ describe('stock report WhatsApp formatting', () => {
     expect(original).toEqual(saved);
   });
 
-  it('keeps two sanitized coverage lines below the stock judgment', () => {
+  it('keeps the stock details independent of coverage and excludes standalone footer sections', () => {
     const original = {
       ...input(),
       coverageSummary: '분석 19/20 · 일치 5\n반환 4/5 · 일부 생략\nFinviz 부분 수집\u0000',
     };
     const { summary } = formatStockReportWhatsAppNotification(original, [detail()]);
     expect(summary.split('\n')[0]).toBe('*AAPL · BUY*');
-    expect(summary).toContain(
-      '*결과 범위*\n분석 19/20 · 일치 5\n반환 4/5 · 일부 생략 · Finviz 부분 수집\n조회 730일'
+    expect(summary).toBe(
+      formatStockReportWhatsAppNotification({ ...original, coverageSummary: '' }, [detail()])
+        .summary
     );
+    expect(summary).not.toContain('*결과 범위*');
+    expect(summary).not.toContain('*해석 주의*');
+    expect(summary).not.toContain('Finviz 부분 수집');
     expect(summary).not.toContain(String.fromCharCode(0));
   });
 
@@ -357,7 +355,7 @@ describe('stock report WhatsApp formatting', () => {
       const { summary } = formatStockReportWhatsAppNotification(input([original]), [report]);
       expect(summary).toContain(`*AAPL · ${decision}*`);
       expect(summary).toContain(decision === 'SELL' ? '보유 포지션 청산 경고' : '신규 진입 보류');
-      expect(summary).toContain('과거 BUY 신호');
+      expect(summary).toContain('과거 BUY 순수익 관측');
       expect(summary).not.toContain('다음 시가 조건부 진입');
       expect(summary).not.toContain('손절: 97.00 · 목표: 106.00');
     }
@@ -390,7 +388,7 @@ describe('stock report WhatsApp formatting', () => {
     );
     expect(notification.summary.length).toBeLessThanOrEqual(3000);
     expect(notification.summary.isWellFormed()).toBe(true);
-    expect(notification.summary).toContain('상세 3/4개');
+    expect(notification.summary.match(/\*[A-Z]+ · BUY\*/g)).toHaveLength(3);
     expect(notification.summary).not.toContain('OII');
     for (const ticker of ['AAPL', 'MSFT', 'NVDA']) {
       const block = stockBlock(notification.summary, ticker);
@@ -500,8 +498,7 @@ describe('stock report WhatsApp formatting', () => {
     };
     const { summary } = formatStockReportWhatsAppNotification(original, reports);
     expect(summary.length).toBeLessThanOrEqual(3000);
-    expect(summary).toContain('*결과 범위*\n전체 분석 범위 기록');
-    expect(summary).toContain('미래 수익 확률 아님');
+    expect(summary).not.toContain('전체 분석 범위 기록');
     for (const ticker of symbols) {
       const block = stockBlock(summary, ticker);
       expect(block).toContain('원판정 근거*\n• 필수원판정근거');
@@ -618,7 +615,6 @@ describe('bounded stock report enrichment', () => {
       .fn<StockReportAlertGenerator>()
       .mockRejectedValue(new Error('fixture-private-token provider error'));
     const message = await buildStockReportWhatsAppNotification(input(), { generateReport });
-    expect(message.summary).toContain('BUY 필터; 분석 19/20');
     expect(message.summary).toContain('*AAPL · BUY*');
     expect(message.summary).toContain('손절: 97.00 · 목표: 106.00');
     expect(message.summary).toContain('Trend passed');
@@ -628,7 +624,7 @@ describe('bounded stock report enrichment', () => {
   it('makes no requests for empty candidates or invalid source metadata', async () => {
     const generateReport = vi.fn<StockReportAlertGenerator>();
     const noCandidates = await buildStockReportWhatsAppNotification(input([]), { generateReport });
-    expect(noCandidates.summary).toContain('상세 후보 없음');
+    expect(noCandidates.summary).toBe('상세 후보 없음.');
     await buildStockReportWhatsAppNotification(input([candidate('AAPL/api?token=secret')]), {
       generateReport,
     });

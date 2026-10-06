@@ -32,7 +32,7 @@
 - `mise run whatsapp:service:restart`: Restart the owned macOS service, preserving credentials and its QR/gateway mode; renew an expired initial QR attempt.
 - WhatsApp alerts: set `WHATSAPP_TO` in E.164 format and keep the local gateway running. CLI BUY/SELL batches, saved market-screen completion summaries, and MCP `screen_stocks` with `notifyWhatsApp: true` send bounded plain-text summaries. MCP notification defaults to `false`; see README for setup.
 - WhatsApp details: preserve the original SC decision, model settings, reasons, and reference date; include historical BUY win rates with sample counts and dates plus available analyst targets. Limit enrichment to three candidates and 30 seconds, skip it when notifications are disabled, and label unavailable data explicitly. Historical rates and ATR touch rates are not future execution probabilities.
-- WhatsApp layout: use Korean labels, bold ticker decisions, short lines, and blank lines between tickers. Put coverage and the shared interpretation note after the details; preserve sample counts, observation periods, costs, and reference dates within the 3,000 UTF-16 summary limit.
+- WhatsApp layout: use Korean labels, bold ticker decisions, short lines, and blank lines between tickers. Keep messages focused on ticker details and sources, with sample counts, observation periods, costs, reference dates, and availability alongside the relevant values. Omit standalone coverage and interpretation sections; keep structured screening coverage intact and the summary within 3,000 UTF-16 units.
 
 ## Coding Style & Naming Conventions
 - Language: TypeScript with `strict: true`, `esModuleInterop: true`.

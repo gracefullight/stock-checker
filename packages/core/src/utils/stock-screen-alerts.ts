@@ -85,12 +85,7 @@ export function buildStockScreenWhatsAppNotification(
       price !== undefined && Number.isFinite(price) ? price.toFixed(2) : '자료 없음';
     return `${oneLine(candidate.ticker, 32)} ${candidate.decision} · 종가일 ${oneLine(candidate.dataAsOf ?? '자료 없음', 10)} · 참고 ${reference}`;
   });
-  const summary = [
-    ...(rows.length ? rows : ['일치 종목 없음.']),
-    '',
-    screenCoverage(screen),
-    '점수는 승률이 아닙니다. 종가는 체결가가 아닌 참고값이며 종가일은 종목마다 다릅니다.',
-  ].join('\n');
+  const summary = rows.length ? rows.join('\n') : '일치 종목 없음.';
   return {
     title: oneLine(`종목 스크리닝 · ${criteria.decision} · ${screenStatus(screen.status)}`, 80),
     asOf: oneLine(`검색 완료 ${formatScreenTimestamp(screen.generatedAt)}`, 60),
