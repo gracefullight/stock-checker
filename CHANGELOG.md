@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.0](https://github.com/gracefullight/stock-checker/compare/v0.5.3...v0.6.0) (2026-10-06)
+
+
+### Features
+
+* schedule sydney morning screening reports ([2786ad2](https://github.com/gracefullight/stock-checker/commit/2786ad232f550ae88ac2ae128d475bb48d5f5432))
+
+
+### Documentation
+
+* shorten readme to essential usage ([0a727eb](https://github.com/gracefullight/stock-checker/commit/0a727eb255cdaa35205e7f1e4c799b81a00d8000))
+
+
+### Continuous Integration
+
+* consolidate python checks into quality workflow ([e88e565](https://github.com/gracefullight/stock-checker/commit/e88e56587265463ebd518a50c21d6cdcc8de4e42))
+
 ## [0.5.3](https://github.com/gracefullight/stock-checker/compare/v0.5.2...v0.5.3) (2026-10-06)
 
 
