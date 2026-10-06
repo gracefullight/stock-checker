@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.4](https://github.com/gracefullight/stock-checker/compare/v0.7.3...v0.7.4) (2026-10-06)
+
+
+### Maintenance
+
+* update oma to 15.7.1 ([ade5221](https://github.com/gracefullight/stock-checker/commit/ade522149256d6d01c60aed40687c12c59c0ecbc))
+
 ## [0.7.3](https://github.com/gracefullight/stock-checker/compare/v0.7.2...v0.7.3) (2026-10-06)
 
 
