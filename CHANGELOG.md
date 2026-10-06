@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2](https://github.com/gracefullight/stock-checker/compare/v0.7.1...v0.7.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* distinguish screening limits and unavailable analysis ([fe6401e](https://github.com/gracefullight/stock-checker/commit/fe6401e34caa504ac262040316be34868a0c4c0d))
+
 ## [0.7.1](https://github.com/gracefullight/stock-checker/compare/v0.7.0...v0.7.1) (2026-10-06)
 
 
