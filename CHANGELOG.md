@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/gracefullight/stock-checker/compare/v0.5.1...v0.5.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* **whatsapp:** remove report footers ([e156e11](https://github.com/gracefullight/stock-checker/commit/e156e11f97ecf071af37bd4246f087c2158a35d3))
+
 ## [0.5.1](https://github.com/gracefullight/stock-checker/compare/v0.5.0...v0.5.1) (2026-10-06)
 
 
