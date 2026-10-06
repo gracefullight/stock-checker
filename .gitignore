@@ -32,6 +32,7 @@ data/config/
 packages/core/data/config/
 packages/core/data/feedback/
 data/market-scans/
+data/daily-reports/
 
 # WhatsApp Web linked-device session and local gateway token
 data/whatsapp/

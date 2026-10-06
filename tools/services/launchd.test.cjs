@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
 const {
+  DAILY_SERVICE_LABEL,
   SERVICE_LABEL,
   createServiceManager,
   main,
@@ -76,8 +77,9 @@ async function fixture(t, overrides = {}) {
   const homeDirectory = path.join(temporary, 'home with spaces');
   const misePath = path.join(temporary, 'tools with spaces/mise');
   const uid = process.getuid?.() ?? 501;
-  const target = `gui/${uid}/${SERVICE_LABEL}`;
-  const plistPath = path.join(homeDirectory, 'Library/LaunchAgents', `${SERVICE_LABEL}.plist`);
+  const label = overrides.service === 'daily-report' ? DAILY_SERVICE_LABEL : SERVICE_LABEL;
+  const target = `gui/${uid}/${label}`;
+  const plistPath = path.join(homeDirectory, 'Library/LaunchAgents', `${label}.plist`);
   const calls = [];
   const state = {
     loaded: false,
@@ -88,21 +90,30 @@ async function fixture(t, overrides = {}) {
     failures: new Map(),
   };
   await fs.mkdir(path.join(projectRoot, 'packages/core/src/whatsapp'), { recursive: true });
+  await fs.mkdir(path.join(projectRoot, 'packages/core/src/commands'), { recursive: true });
   await fs.mkdir(homeDirectory, { recursive: true });
+  await fs.mkdir(path.join(homeDirectory, '.local/bin'), { recursive: true });
+  await fs.writeFile(path.join(homeDirectory, '.local/bin/aside'), '#!/bin/sh\nexit 0\n', {
+    mode: 0o700,
+  });
   await fs.mkdir(path.dirname(misePath), { recursive: true });
   await fs.writeFile(misePath, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
   await fs.writeFile(
     path.join(projectRoot, 'mise.toml'),
-    '[tasks."whatsapp:gateway"]\nrun="node gateway.ts"\n[tasks."whatsapp:link"]\nrun="node gateway.ts --link"\n'
+    '[tasks."whatsapp:gateway"]\nrun="node gateway.ts"\n[tasks."whatsapp:link"]\nrun="node gateway.ts --link"\n[tasks."daily-report"]\nrun="bun daily-report.ts"\n'
   );
   await fs.writeFile(path.join(projectRoot, 'packages/core/src/whatsapp/index.ts'), 'export {};\n');
+  await fs.writeFile(
+    path.join(projectRoot, 'packages/core/src/commands/daily-report.ts'),
+    'export {};\n'
+  );
 
   async function run(program, arguments_, options) {
     calls.push({ program, arguments_: [...arguments_], options });
     const failure = state.failures.get(arguments_[0]);
     if (failure) throw failure;
     if (program === misePath && arguments_[1] === 'exec') {
-      return { stdout: 'v26.1.0\n', stderr: '' };
+      return { stdout: arguments_[3] === 'bun' ? '1.4.2\n' : 'v26.1.0\n', stderr: '' };
     }
     if (program === '/usr/bin/plutil') {
       if (arguments_[0] === '-lint') return { stdout: 'OK\n', stderr: '' };
@@ -186,7 +197,7 @@ test('explicit restart is accepted as a managed lifecycle command', () => {
   });
 });
 
-test('CLI accepts only the WhatsApp service and explicit install pairing', () => {
+test('CLI accepts owned service names and explicit WhatsApp install pairing', () => {
   assert.deepEqual(parseArguments(['install']), {
     command: 'install',
     service: 'whatsapp',
@@ -219,6 +230,104 @@ test('CLI accepts only the WhatsApp service and explicit install pairing', () =>
           : 'invalid-arguments',
     });
   }
+});
+
+test('daily-report CLI rejects pairing and duplicate service options', () => {
+  assert.deepEqual(parseArguments(['install', 'daily-report']), {
+    command: 'install',
+    service: 'daily-report',
+    link: false,
+  });
+  for (const arguments_ of [
+    ['install', 'daily-report', '--link'],
+    ['install', '--link', 'daily-report'],
+    ['start', 'daily-report', 'daily-report'],
+  ])
+    assert.throws(() => parseArguments(arguments_), { code: 'invalid-arguments' });
+});
+
+test('daily report installs an independent one-minute trigger without gateway keepalive', async (t) => {
+  const setup = await fixture(t, { service: 'daily-report' });
+  const status = await setup.manager.install();
+  assert.equal(status.service, 'daily-report');
+  assert.equal(status.label, 'com.stock-checker.daily-report');
+  assert.equal(status.pairing, undefined);
+  assert.equal(status.timezone, 'Australia/Sydney');
+  assert.equal(status.startWindow, '09:00–09:14');
+  const configuration = await setup.readPlist();
+  assert.deepEqual(configuration.ProgramArguments, [
+    setup.misePath,
+    '--quiet',
+    'run',
+    'daily-report',
+  ]);
+  assert.equal(configuration.KeepAlive, false);
+  assert.equal(configuration.StartInterval, 60);
+  assert.equal(configuration.StartCalendarInterval, undefined);
+  assert.equal(configuration.RunAtLoad, true);
+  assert.deepEqual(configuration.EnvironmentVariables, { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' });
+  assert.match(configuration.StandardOutPath, /daily-report\.stdout\.log$/);
+  assert.equal((await fs.stat(setup.plistPath)).mode & 0o777, 0o600);
+  assert.ok(
+    setup.calls.some(({ arguments_ }) => arguments_.join(' ') === '--quiet exec -- bun --version')
+  );
+  assert.deepEqual(await main(['status', 'daily-report'], setup.options), status);
+});
+
+test('daily stop/start/uninstall only controls its own label and preserves gateway files', async (t) => {
+  const setup = await fixture(t, { service: 'daily-report' });
+  await setup.manager.install();
+  const gatewayPlist = path.join(
+    setup.homeDirectory,
+    'Library/LaunchAgents',
+    `${SERVICE_LABEL}.plist`
+  );
+  await fs.writeFile(gatewayPlist, 'gateway is separately owned');
+  setup.calls.length = 0;
+  await setup.manager.stop();
+  assert.equal(setup.state.disabled, true);
+  await setup.manager.start();
+  assert.equal(setup.state.disabled, false);
+  await setup.manager.uninstall();
+  assert.equal(await fs.readFile(gatewayPlist, 'utf8'), 'gateway is separately owned');
+  for (const arguments_ of lifecycleCalls(setup.calls)) {
+    assert.ok(!arguments_.some((argument) => argument.includes(SERVICE_LABEL)));
+  }
+});
+
+test('daily configuration refuses an altered schedule or gateway task', async (t) => {
+  for (const mutation of [
+    (configuration) => {
+      configuration.StartInterval = 1;
+    },
+    (configuration) => {
+      configuration.ProgramArguments[3] = 'whatsapp:gateway';
+    },
+  ]) {
+    const setup = await fixture(t, { service: 'daily-report' });
+    await setup.manager.install();
+    const configuration = await setup.readPlist();
+    mutation(configuration);
+    await fs.writeFile(setup.plistPath, renderPlist(configuration));
+    setup.calls.length = 0;
+    await assert.rejects(setup.manager.start(), { code: 'unmanaged-service' });
+    assert.deepEqual(lifecycleCalls(setup.calls), []);
+  }
+});
+
+test('daily missing runner fails readiness before any launchctl mutation', async (t) => {
+  const setup = await fixture(t, { service: 'daily-report' });
+  await fs.unlink(path.join(setup.projectRoot, 'packages/core/src/commands/daily-report.ts'));
+  await assert.rejects(setup.manager.install(), { code: 'daily-report-not-installed' });
+  assert.deepEqual(lifecycleCalls(setup.calls), []);
+});
+
+test('daily readiness refuses a missing Aside executable without opening the browser', async (t) => {
+  const setup = await fixture(t, { service: 'daily-report' });
+  await fs.unlink(path.join(setup.homeDirectory, '.local/bin/aside'));
+  await assert.rejects(setup.manager.install(), { code: 'aside-not-found' });
+  assert.deepEqual(lifecycleCalls(setup.calls), []);
+  assert.ok(!setup.calls.some(({ program }) => path.basename(program) === 'aside'));
 });
 
 test('plist XML preserves spaces, non-ASCII and metacharacters without shell interpretation', () => {

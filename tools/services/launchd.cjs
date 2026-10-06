@@ -10,9 +10,11 @@ const { isDeepStrictEqual, promisify } = require('node:util');
 
 const execute = promisify(execFile);
 const SERVICE_LABEL = 'com.stock-checker.whatsapp';
+const DAILY_SERVICE_LABEL = 'com.stock-checker.daily-report';
 const OWNER_VERSION = 1;
 const COMMANDS = new Set(['install', 'start', 'restart', 'stop', 'status', 'uninstall']);
 const TASKS = new Set(['whatsapp:gateway', 'whatsapp:link']);
+const SERVICES = new Set(['whatsapp', 'daily-report']);
 const SAFE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 
 class ServiceError extends Error {
@@ -76,10 +78,12 @@ function parseArguments(arguments_) {
   let link = false;
   for (const option of options) {
     if (option === '--link' && command === 'install' && !link) link = true;
-    else if (option === 'whatsapp' && service === undefined) service = option;
+    else if (SERVICES.has(option) && service === undefined) service = option;
     else throw new ServiceError('invalid-arguments');
   }
-  return { command, service: service ?? 'whatsapp', link };
+  service ??= 'whatsapp';
+  if (service === 'daily-report' && link) throw new ServiceError('invalid-arguments');
+  return { command, service, link };
 }
 
 async function defaultRun(program, arguments_, options) {
@@ -87,6 +91,11 @@ async function defaultRun(program, arguments_, options) {
 }
 
 function createServiceManager(options = {}) {
+  const service = options.service ?? 'whatsapp';
+  if (!SERVICES.has(service)) throw new ServiceError('invalid-arguments');
+  const daily = service === 'daily-report';
+  const label = daily ? DAILY_SERVICE_LABEL : SERVICE_LABEL;
+  const tasks = daily ? new Set(['daily-report']) : TASKS;
   const platform = options.platform ?? process.platform;
   const uid = options.uid ?? process.getuid?.();
   const environment = options.environment ?? process.env;
@@ -107,11 +116,11 @@ function createServiceManager(options = {}) {
       projectRoot,
       launchAgents,
       logsDirectory,
-      plistPath: path.join(launchAgents, `${SERVICE_LABEL}.plist`),
-      stdoutPath: path.join(logsDirectory, 'whatsapp.stdout.log'),
-      stderrPath: path.join(logsDirectory, 'whatsapp.stderr.log'),
+      plistPath: path.join(launchAgents, `${label}.plist`),
+      stdoutPath: path.join(logsDirectory, `${service}.stdout.log`),
+      stderrPath: path.join(logsDirectory, `${service}.stderr.log`),
       domain: `gui/${uid}`,
-      target: `gui/${uid}/${SERVICE_LABEL}`,
+      target: `gui/${uid}/${label}`,
     };
     return context;
   }
@@ -201,7 +210,7 @@ function createServiceManager(options = {}) {
     if (
       configuration?.StockCheckerServiceVersion !== OWNER_VERSION ||
       configuration.StockCheckerProjectRoot !== context.projectRoot ||
-      configuration.Label !== SERVICE_LABEL ||
+      configuration.Label !== label ||
       configuration.WorkingDirectory !== context.projectRoot ||
       !Array.isArray(arguments_) ||
       arguments_.length !== 4 ||
@@ -210,7 +219,7 @@ function createServiceManager(options = {}) {
       path.basename(arguments_[0]) !== 'mise' ||
       arguments_[1] !== '--quiet' ||
       arguments_[2] !== 'run' ||
-      !TASKS.has(arguments_[3]) ||
+      !tasks.has(arguments_[3]) ||
       configuration.StandardOutPath !== context.stdoutPath ||
       configuration.StandardErrorPath !== context.stderrPath
     ) {
@@ -301,16 +310,21 @@ function createServiceManager(options = {}) {
     let settings;
     try {
       settings = await io.readFile(path.join(context.projectRoot, 'mise.toml'), 'utf8');
-      const gateway = await io.stat(
-        path.join(context.projectRoot, 'packages/core/src/whatsapp/index.ts')
+      const entry = await io.stat(
+        path.join(
+          context.projectRoot,
+          daily
+            ? 'packages/core/src/commands/daily-report.ts'
+            : 'packages/core/src/whatsapp/index.ts'
+        )
       );
-      if (!gateway.isFile()) throw new Error('Missing entry');
+      if (!entry.isFile()) throw new Error('Missing entry');
     } catch {
-      throw new ServiceError('gateway-not-installed');
+      throw new ServiceError(daily ? 'daily-report-not-installed' : 'gateway-not-installed');
     }
     const taskSection = `[tasks."${task}"]`;
     if (!settings.split(/\r?\n/).some((line) => line.trim() === taskSection)) {
-      throw new ServiceError('gateway-task-missing');
+      throw new ServiceError(daily ? 'daily-report-task-missing' : 'gateway-task-missing');
     }
     const checked = await command(
       mise,
@@ -320,18 +334,60 @@ function createServiceManager(options = {}) {
     if (!/^v26\.\d+\.\d+(?:[-+][\w.-]+)?\s*$/.test(checked.stdout)) {
       throw new ServiceError('node-26-required');
     }
+    if (daily) {
+      const bun = await command(
+        mise,
+        ['--quiet', 'exec', '--', 'bun', '--version'],
+        'runtime-check-failed'
+      );
+      if (!/^1\.\d+\.\d+(?:[-+][\w.-]+)?\s*$/.test(bun.stdout))
+        throw new ServiceError('bun-required');
+      const explicit = options.asidePath ?? environment.ASIDE_BIN;
+      const candidates = explicit
+        ? [explicit]
+        : [
+            path.join(homeDirectory, '.local/bin/aside'),
+            ...(environment.PATH ?? '')
+              .split(path.delimiter)
+              .filter(path.isAbsolute)
+              .map((directory) => path.join(directory, 'aside')),
+          ];
+      let available = false;
+      for (const candidate of candidates) {
+        if (!path.isAbsolute(candidate) || path.basename(candidate) !== 'aside') continue;
+        try {
+          const resolved = await io.realpath(candidate);
+          if (!(await io.stat(resolved)).isFile()) continue;
+          await io.access(resolved, constants.X_OK);
+          available = true;
+          break;
+        } catch {
+          /* Probe executable locations only; no browser navigation. */
+        }
+      }
+      if (!available) throw new ServiceError('aside-not-found');
+    }
   }
 
   function makeConfiguration(mise, link) {
+    if (daily && link) throw new ServiceError('invalid-arguments');
     return {
-      Label: SERVICE_LABEL,
+      Label: label,
       StockCheckerServiceVersion: OWNER_VERSION,
       StockCheckerProjectRoot: context.projectRoot,
-      ProgramArguments: [mise, '--quiet', 'run', link ? 'whatsapp:link' : 'whatsapp:gateway'],
+      ProgramArguments: [
+        mise,
+        '--quiet',
+        'run',
+        daily ? 'daily-report' : link ? 'whatsapp:link' : 'whatsapp:gateway',
+      ],
       WorkingDirectory: context.projectRoot,
-      EnvironmentVariables: { PATH: SAFE_PATH, WHATSAPP_MANAGED_SERVICE: '1' },
+      EnvironmentVariables: daily
+        ? { PATH: SAFE_PATH }
+        : { PATH: SAFE_PATH, WHATSAPP_MANAGED_SERVICE: '1' },
       RunAtLoad: true,
-      KeepAlive: true,
+      KeepAlive: !daily,
+      ...(daily ? { StartInterval: 60 } : {}),
       ThrottleInterval: 30,
       ExitTimeOut: 30,
       ProcessType: 'Background',
@@ -343,7 +399,7 @@ function createServiceManager(options = {}) {
   }
 
   async function writeConfiguration(configuration, previous, beforePublish) {
-    const temporary = path.join(context.launchAgents, `.${SERVICE_LABEL}.${randomUUID()}.plist`);
+    const temporary = path.join(context.launchAgents, `.${label}.${randomUUID()}.plist`);
     let handle;
     try {
       handle = await io.open(temporary, 'wx', 0o600);
@@ -406,12 +462,14 @@ function createServiceManager(options = {}) {
   async function status() {
     const { owned, loaded } = await inspect();
     return {
-      service: 'whatsapp',
-      label: SERVICE_LABEL,
+      service,
+      label,
       installed: Boolean(owned),
       loaded: Boolean(loaded),
       state: loaded ? (loaded.pid ? 'running' : 'waiting') : owned ? 'stopped' : 'not-installed',
-      pairing: owned?.configuration.ProgramArguments[3] === 'whatsapp:link',
+      ...(daily
+        ? { timezone: 'Australia/Sydney', startWindow: '09:00–09:14', tickIntervalSeconds: 60 }
+        : { pairing: owned?.configuration.ProgramArguments[3] === 'whatsapp:link' }),
       ...(loaded?.pid ? { pid: loaded.pid } : {}),
       ...(loaded?.lastExitCode !== undefined ? { lastExitCode: loaded.lastExitCode } : {}),
     };
@@ -478,8 +536,10 @@ function createServiceManager(options = {}) {
 }
 
 async function main(arguments_ = process.argv.slice(2), options = {}) {
-  const { command, link } = parseArguments(arguments_);
-  return createServiceManager(options)[command](command === 'install' ? { link } : undefined);
+  const { command, service, link } = parseArguments(arguments_);
+  return createServiceManager({ ...options, service })[command](
+    command === 'install' ? { link } : undefined
+  );
 }
 
 if (require.main === module) {
@@ -495,6 +555,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DAILY_SERVICE_LABEL,
   SERVICE_LABEL,
   ServiceError,
   createServiceManager,

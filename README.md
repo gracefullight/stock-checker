@@ -177,6 +177,17 @@ also measures BUY samples with the five-session/10-bps method above.
 Failures preserve results. Restart API/MCP after changing the recipient;
 relinking is unnecessary. Unconfigured recipients and GitHub-hosted jobs send nothing.
 
+For daily reports, run `mise run daily-report:service:install` on macOS.
+The service starts once each day at 09:00 Australia/Sydney, including DST;
+it can start until 09:14 if the computer wakes late. Keep Aside available and
+the computer logged in, awake, and online. Finviz stocks below SMA50 are ordered
+by descending volume; defaults collect up to 200 candidates in 60 seconds and
+evaluate them with SC for up to 20 minutes. The report follows completion and
+shows partial coverage; saved jobs also appear in MARKET SCREEN. Check with
+`mise run daily-report:service:status` or `mise run daily-report -- --status`.
+`--dry-run` checks readiness without scanning or sending. Set
+`DAILY_REPORT_MAX_CANDIDATES`, `DAILY_REPORT_MAX_PAGES`, or `ASIDE_BIN` privately.
+
 ## Optional configuration
 
 Yahoo data needs no API key. Optional environment or private client settings:

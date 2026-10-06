@@ -130,6 +130,42 @@ description = "Remove the macOS WhatsApp user service while preserving linked se
 raw = true
 run = "node tools/services/launchd.cjs uninstall whatsapp"
 
+[tasks."daily-report"]
+description = "Run the Sydney 09:00 Finviz-first report; --dry-run and --status perform no scan or send"
+dir = "packages/core"
+raw = true
+run = 'bun src/commands/daily-report.ts "$@"'
+
+[tasks."daily-report:service:install"]
+description = "Install the macOS Sydney morning screening trigger"
+raw = true
+run = "node tools/services/launchd.cjs install daily-report"
+
+[tasks."daily-report:service:start"]
+description = "Enable the installed Sydney morning screening trigger"
+raw = true
+run = "node tools/services/launchd.cjs start daily-report"
+
+[tasks."daily-report:service:restart"]
+description = "Restart the owned morning trigger without bypassing its daily claim or time window"
+raw = true
+run = "node tools/services/launchd.cjs restart daily-report"
+
+[tasks."daily-report:service:stop"]
+description = "Disable the Sydney morning screening trigger across login"
+raw = true
+run = "node tools/services/launchd.cjs stop daily-report"
+
+[tasks."daily-report:service:status"]
+description = "Inspect the installed Sydney morning screening trigger"
+raw = true
+run = "node tools/services/launchd.cjs status daily-report"
+
+[tasks."daily-report:service:uninstall"]
+description = "Remove the morning trigger while preserving reports and WhatsApp sessions"
+raw = true
+run = "node tools/services/launchd.cjs uninstall daily-report"
+
 [tasks."dev:api"]
 description = "Start Fastify API server (port 5101)"
 dir = "apps/api"
