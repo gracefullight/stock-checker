@@ -94,14 +94,14 @@ export function useBacktestWorker() {
   );
 
   const optimize = useCallback(
-    (data: BacktestDataPayload, nTrials: number) => {
+    (data: BacktestDataPayload, nTrials: number, baseConfig: PipelineConfig) => {
       setState((prev) => ({
         ...prev,
         status: 'optimizing',
         optimizeProgress: { trial: 0, nTrials, bestValue: Number.NEGATIVE_INFINITY },
         error: null,
       }));
-      const request: BacktestWorkerRequest = { type: 'optimize', data, nTrials };
+      const request: BacktestWorkerRequest = { type: 'optimize', data, nTrials, baseConfig };
       getWorker().postMessage(request);
     },
     [getWorker]

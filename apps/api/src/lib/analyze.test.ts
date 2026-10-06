@@ -66,7 +66,11 @@ beforeEach(() => {
     score: 100,
     buyScore: 0,
     sellScore: 100,
-    gateResults: { trend: { regime: 'down' }, confluence: { ratio: 0.5 } },
+    gateResults: {
+      trend: { regime: 'down' },
+      confluence: { ratio: 0.5 },
+      institutional: { score: 100 },
+    },
   } as never);
 });
 

@@ -1,7 +1,8 @@
 /**
- * Backtest command — runs Pipeline V4 (momentum) vs V3/V2 against historical price data
- * and measures 5-day directional win rate.
+ * Backtest the active production configuration, then compare explicitly labeled
+ * historical research variants. BUY wins use next-open five-session net returns.
  */
+import pino from 'pino';
 import {
   DEFAULT_INSTITUTIONAL_CONFIG,
   DEFAULT_INSTITUTIONAL_PIPELINE_CONFIG,
@@ -29,12 +30,37 @@ import {
 import { gaussianChannel } from '@/services/gaussian-channel';
 import yahooFinance from '@/services/yahoo-finance';
 import type { BenchmarkCandle, PipelineConfig } from '@/types';
+import { loadPipelineConfig } from '@/utils/config-loader';
 
 // History window per ticker (calendar days). 8y so the 205-bar warm-up clears
 // mid-2019, making 2020 (COVID crash) and 2022 (rate-hike bear) full entry
 // years — the edge must survive bear regimes, not just the 2023-26 bull.
 // Tickers that IPO'd later simply contribute shorter series.
 const HISTORY_DAYS = 2920;
+const logger = pino({ name: 'backtest' }, process.stderr);
+
+export async function resolveBacktestBaselineConfig(options?: {
+  configPath?: string;
+}): Promise<PipelineConfig> {
+  return loadPipelineConfig(options);
+}
+
+export function runBacktestBaseline(
+  contexts: Map<string, TickerContext>,
+  prices: Map<string, Candle[]>,
+  config: PipelineConfig,
+  costPct = DEFAULT_ROUND_TRIP_COST_PCT,
+  evaluationWindow: EvaluationWindow = {}
+): { signals: BacktestSignal[]; result: WinRateResult } {
+  const signals: BacktestSignal[] = [];
+  for (const [ticker, ctx] of contexts) {
+    signals.push(...runSignalsWithContext(ctx, ticker, config));
+  }
+  return {
+    signals,
+    result: measureShared5DayWinRate(signals, prices, costPct, evaluationWindow),
+  };
+}
 
 interface SellAccuracyResult {
   total: number;
@@ -232,6 +258,9 @@ export function measureTrendHoldWinRate(
 }
 
 export async function backtest(opts: { costBps?: number; quick?: boolean } = {}) {
+  // Resolve once before fetching history so every baseline ticker uses the
+  // exact same full snapshot as CLI, API, MCP and market screening.
+  const productionConfig = await resolveBacktestBaselineConfig();
   // Round-trip transaction cost applied to every simulated trade. All WR/R-R
   // numbers below are NET of this cost; a "win" means profitable after costs.
   const COST_PCT = opts.costBps != null ? opts.costBps / 100 : DEFAULT_ROUND_TRIP_COST_PCT;
@@ -378,15 +407,30 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       start: window.start && window.start > evaluationStart ? window.start : evaluationStart,
     });
 
-  // Phase 0: V2 vs V3 vs V4 comparison
+  const baseline = runBacktestBaseline(ctxMap, priceData, productionConfig, COST_PCT, {
+    start: evaluationStart,
+  });
+  logger.info(
+    {
+      config: productionConfig,
+      netWinRatePct: baseline.result.totalSignals ? baseline.result.winRate5d : null,
+      wins: baseline.result.wins,
+      samples: baseline.result.totalSignals,
+      meanNetReturnPct: baseline.result.totalSignals ? baseline.result.avgReturn : null,
+      rewardRisk: baseline.result.rewardRisk,
+    },
+    'Production baseline: shared leader-pullback runtime configuration'
+  );
+
+  // Phase 0: explicit historical research variants, separate from production.
   // V2 = mean-reversion, no new patterns, no institutional
   // V3 = mean-reversion, all patterns, no institutional
-  // V4 = momentum/institutional accumulation strategy (new default)
-  console.log('\n\n📋 Phase 0: V2 vs V3 vs V4 Pipeline Comparison');
+  // V4 = legacy momentum variant.
+  console.log('\n\n📋 Phase 0: Historical Research Variant Comparison');
   console.log('='.repeat(130));
   console.log('V2 = mean-reversion, institutional disabled, new patterns zeroed');
   console.log('V3 = mean-reversion, institutional disabled, new patterns active');
-  console.log('V4 = momentum/institutional accumulation strategy (new default)');
+  console.log('V4 = historical momentum variant; production baseline shown above');
 
   const MR_WEIGHTS = {
     rsi: 79,
@@ -467,7 +511,7 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
 
   // V7 = institutional + the LEGACY entry-quality gate (rs.5, scr<380, no
   // market/stage filter) — pinned explicitly so the comparison row stays stable
-  // even as the shipped default gate evolves. Evaluated through the REAL
+  // even as the canonical gate evolves. Evaluated through the REAL
   // pipeline (Gate 1.7), not as a post-hoc filter.
   const LEGACY_V7_GATE = {
     enabled: true,
@@ -492,8 +536,7 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     qualityGate: { ...LEGACY_V7_GATE, requireMarketUptrend: true },
   };
 
-  // V10 = the SHIPPED default gate (strong-leader pullback: rs.7 + scr<400 +
-  // market kill-switch + above-200d stage filter) — the WR+R/R dominance config.
+  // V10 = canonical constant reference, excluding any active saved optimization.
   const v10Config: PipelineConfig = {
     ...DEFAULT_QUALITY_PIPELINE_CONFIG,
   };
@@ -528,11 +571,11 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     costPct: COST_PCT,
     evaluationWindow: { start: evaluationStart },
   });
-  // V7 = institutional + entry-quality gate, through the real pipeline (the shipped improvement).
+  // V7 = historical institutional + entry-quality gate research variant.
   const v7Result = measure5DayWinRate(v7Signals, priceData, COST_PCT);
   // V9 = V7 + SPY-Gaussian market kill-switch, through the real pipeline.
   const v9Result = measure5DayWinRate(v9Signals, priceData, COST_PCT);
-  // V10 = the shipped default gate (strong-leader pullback + market/stage filters).
+  // V10 = canonical constant reference; production may use a saved full snapshot.
   const v10Result = measure5DayWinRate(v10Signals, priceData, COST_PCT);
 
   console.log(
@@ -548,10 +591,8 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
   console.log(fmtRow('V6 (V5 + trend-hold)', v6Result));
   console.log(fmtRow('V7 (V5 + quality)', v7Result));
   console.log(fmtRow('V9 (V7 + mkt switch)', v9Result));
-  console.log(fmtRow('V10 (shipped gate)', v10Result));
-  console.log(
-    '\n🎯 V7 = shipped improvement (institutional + entry-quality gate, via real pipeline):'
-  );
+  console.log(fmtRow('V10 (canonical)', v10Result));
+  console.log('\n🎯 V7 research variant (institutional + legacy entry-quality gate):');
   console.log(
     `  WR ${v7Result.winRate5d.toFixed(1)}% (vs V5 ${v5Result.winRate5d.toFixed(1)}%)  |  R/R ${v7Result.rewardRisk.toFixed(2)} (vs V5 ${v5Result.rewardRisk.toFixed(2)})  |  N ${v7Result.totalSignals}  |  AvgRet ${v7Result.avgReturn.toFixed(2)}%`
   );
@@ -583,9 +624,7 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
       `    ${yr}: WR=${r.winRate5d.toFixed(1)}%  R/R=${r.rewardRisk.toFixed(2)}  N=${r.totalSignals}  AvgRet=${r.avgReturn.toFixed(2)}%`
     );
   }
-  console.log(
-    '\n🎯 V10 = SHIPPED default gate (rs.7 + scr<400 + market kill-switch + 200d stage), via real pipeline:'
-  );
+  console.log('\n🎯 V10 canonical constant reference (leader pullback, no saved optimization):');
   console.log(
     `  WR ${v10Result.winRate5d.toFixed(1)}% (vs V7 ${v7Result.winRate5d.toFixed(1)}%)  |  R/R ${v10Result.rewardRisk.toFixed(2)} (vs V7 ${v7Result.rewardRisk.toFixed(2)})  |  N ${v10Result.totalSignals}  |  AvgRet ${v10Result.avgReturn.toFixed(2)}%`
   );
@@ -872,7 +911,7 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
         requireBelowSma50: true,
       },
     },
-    // One-shot greed pass on top of the shipped V10 champion — each variant
+    // One-shot exploratory pass on top of the V10 reference — each variant
     // adds a single extra condition. Tiny-N results here are read as noise,
     // not edge (hard-won rule #4: families over lone spikes).
     {
@@ -1084,7 +1123,7 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     '\n📊 Market-cap tier breakdown (as-of-today caps; large ≥$10B / mid $2-10B / small <$2B):'
   );
   const tierRows: [string, BacktestSignal[]][] = [
-    ['V10 shipped (rs.7 + scr<400)', v10Signals],
+    ['V10 canonical (rs.7 + scr<400)', v10Signals],
     ['V10 + ibs.25', sigsByVariant.get('V10 + ibs.25') ?? []],
     ['V7 legacy (rs.5 + scr<380)', v7Signals],
     ['V5 baseline (no gate)', v5Signals],

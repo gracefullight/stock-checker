@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import pino from 'pino';
 import { Optimizer } from '@/optimization/optimizer';
+import { CONFIG_PATH, savePipelineConfig } from '@/utils/config-loader';
 
 const logger = pino({
   level: 'info',
@@ -20,7 +21,7 @@ export async function optimize(symbol: string, options: { trials: string }) {
     const result = await optimizer.optimize(targetSymbol, trials);
 
     // Save to JSON
-    const outputDir = path.join(process.cwd(), 'data/config');
+    const outputDir = path.dirname(CONFIG_PATH);
     if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -34,14 +35,8 @@ export async function optimize(symbol: string, options: { trials: string }) {
     // logger.info('Best Parameters:', JSON.stringify(result.bestParams, null, 2));
 
     // Save as optimized config JSON (loaded at runtime by config-loader)
-    const { saveOptimizedConfig } = await import('@/utils/config-loader');
-    await saveOptimizedConfig({
-      weights: result.bestParams.indicatorWeights,
-      thresholds: result.bestParams.thresholds,
-      patternWeights: result.bestParams.patternWeights,
-      calibration: result.bestParams.calibration,
-    });
-    logger.info('Optimized config saved to data/config/optimized_weights.json');
+    await savePipelineConfig(result.bestParams);
+    logger.info({ configPath: CONFIG_PATH }, 'Full optimized pipeline config saved');
   } catch (error) {
     logger.error({ err: error }, 'Optimization failed');
     process.exit(1);

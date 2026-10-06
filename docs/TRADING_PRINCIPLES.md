@@ -6,8 +6,14 @@ pipeline** (post-hoc filters have repeatedly overestimated edges).
 
 ## Current financial validation status
 
-The numerical results below are an archive of exploratory runs of the previous
-implementation. They are **not validation of the corrected engine**. The finance
+The shared leader-pullback engine was [remeasured on 2026-10-06](validation/leader-pullback-2026-10-06.md)
+using frozen raw data: 538 of 555 requested tickers, 10 bps round-trip cost, and
+next-open five-session holds. Full-period BUY observations won 89/156 (57.05%);
+non-overlapping trades won 89/155 (57.42%). From 2025, both won 28/40 (70%).
+That period was already examined and is not independent out-of-sample validation.
+
+Results under "Archived exploratory results" describe the previous implementation.
+They are **not validation of the corrected engine**. The finance
 audit identified future benchmark leakage in the optimizer, same-close fills
 for signals computed from that close, live/backtest indicator differences,
 inconsistent adjusted OHLC fields, and selection that reused the nominal
@@ -38,11 +44,20 @@ use same-period forecast changes. Historical earnings beats and revisions are
 unavailable as a point-in-time series, so backtests omit those inputs. Live and
 historical scores therefore still differ on earnings evidence.
 
-Historical evaluation consumes BUY and quality-blocked setups in its cluster
-window. The live API and CLI currently return stateless snapshots without that
-prior setup state. Repeated live BUY snapshots therefore do not represent
-separate entries under the clustered backtest, and live/backtest execution
-equivalence is not established.
+CLI, API/web, MCP, screening, and backtests resolve the same complete
+leader-pullback configuration. Its internal strategy name is `institutional`:
+relative strength and price/volume flow identify leaders; the quality gate selects
+their pullbacks. This remains a momentum strategy in investment terms.
+Compatible v3 snapshots live in `data/config/optimized_weights.json`; older partial
+oscillator-weight files are ignored. Optimization preserves the strategy and its
+gates rather than switching to a different scoring family.
+
+For histories of at least 210 sessions, live and historical analysis use the same
+causal per-bar evaluator, including indicators, pattern windows, benchmarks, and
+BUY/quality-blocked cluster state. The cluster gap uses calendar days. Current
+earnings evidence is supplied only to the latest live bar; historical earnings
+remain unavailable. Short-history fallback reports cannot establish backtest
+equivalence. Repeated reports from one completed session are not separate entries.
 
 The [Yahoo Finance client schema](https://github.com/gadicc/yahoo-finance2/blob/dev/src/modules/quoteSummary-iface.ts)
 supplies fiscal-quarter history dates and nested consensus estimates. Quarter
@@ -112,13 +127,13 @@ plus RSI/MACD only as seasoning. RSI is *not* important.
 
 | Principle | Implementation |
 |---|---|
-| Gaussian trend regime | `trendGate.source: 'gaussian'` (pipeline Gate 1); chart band in web UI |
+| Gaussian trend regime | `trendGate.source: 'gaussian'` (pipeline Gate 1) allows uptrend or sideways and blocks downtrend; chart band in web UI |
 | Relative strength (market & sector) | `institutional.components.rsSpy/rsSector` vs SPY + sector ETF |
 | VWAP / breakout volume / liquidity / earnings | institutional flow score components (blended, not hard-gated) |
 | Leader pullback entry (주도주 눌림목) | `qualityGate` (Gate 1.7): `rsMin 0.7` + `requireBelowSma50` + `ibs<0.2` + `atr%<3.5` + `volR>0.8` + `scoreMax 400` |
-| Market kill-switch (essay #2 at the index level) | `qualityGate.requireMarketUptrend` (optional, OFF by default — helped on 122 tickers, hurt at 408; wired into `predict` via `marketUptrend`) |
+| Market kill-switch (essay #2 at the index level) | `qualityGate.requireMarketUptrend` (optional, OFF by default — helped on 122 tickers, hurt at 408; supplied by the shared causal market context) |
 | Anti-parabolic (don't chase) | `qualityGate.scoreMax` — extreme composite scores have the worst forward R/R |
-| One setup, one decision | Historical engine consumes BUY/quality-blocked setups; live snapshots currently lack that prior setup state |
+| One setup, one decision | Shared live/historical evaluator consumes BUY/quality-blocked setups before later bars; live replay requires at least 210 sessions |
 | Oscillators as seasoning only | institutional strategy caps oscillator contribution; flow components dominate |
 
 ## Archived exploratory results (previous implementation)

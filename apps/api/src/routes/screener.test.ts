@@ -1,3 +1,4 @@
+import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@stock-checker/core/src/constants';
 import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -35,6 +36,10 @@ vi.mock('@stock-checker/core/src/utils/chart-indicators', () => ({
   calcSMA: vi.fn(),
 }));
 
+vi.mock('@stock-checker/core/src/utils/config-loader', () => ({
+  loadPipelineConfig: vi.fn(),
+}));
+
 vi.mock('@stock-checker/core/src/utils/signal-history', () => ({
   getSignalHistory: vi.fn(),
 }));
@@ -51,6 +56,7 @@ import {
 } from '@stock-checker/core/src/services/data-fetcher';
 import { getFundamentals } from '@stock-checker/core/src/services/fundamentals';
 import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
+import { loadPipelineConfig } from '@stock-checker/core/src/utils/config-loader';
 import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
 import { analyzeTicker } from '@/lib/analyze';
 import { clearCache } from '@/lib/cache';
@@ -60,6 +66,7 @@ const mockedGetFearGreedIndex = vi.mocked(getFearGreedIndex);
 const mockedAnalyzeTicker = vi.mocked(analyzeTicker);
 const mockedGetHistoricalPrices = vi.mocked(getHistoricalPrices);
 const mockedFetchBenchmarkPrices = vi.mocked(fetchBenchmarkPrices);
+const mockedLoadPipelineConfig = vi.mocked(loadPipelineConfig);
 
 const mockTickerResult = {
   ticker: 'AAPL',
@@ -111,6 +118,7 @@ describe('screenerRoutes', () => {
   beforeEach(async () => {
     app = await build();
     vi.resetAllMocks();
+    mockedLoadPipelineConfig.mockResolvedValue(structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG));
     await clearCache();
   });
 
@@ -143,7 +151,9 @@ describe('screenerRoutes', () => {
       expect(body).toHaveProperty('generatedAt');
       expect(body.results).toHaveLength(1);
       expect(body.results[0].ticker).toBe('AAPL');
-      expect(mockedAnalyzeTicker).toHaveBeenCalledWith('AAPL', 50);
+      expect(mockedAnalyzeTicker).toHaveBeenCalledWith('AAPL', 50, {
+        pipelineConfig: DEFAULT_QUALITY_PIPELINE_CONFIG,
+      });
     });
 
     it('uppercases ticker from query param', async () => {
@@ -152,7 +162,9 @@ describe('screenerRoutes', () => {
 
       await app.inject({ method: 'GET', url: '/api/screener?tickers=aapl' });
 
-      expect(mockedAnalyzeTicker).toHaveBeenCalledWith('AAPL', 30);
+      expect(mockedAnalyzeTicker).toHaveBeenCalledWith('AAPL', 30, {
+        pipelineConfig: DEFAULT_QUALITY_PIPELINE_CONFIG,
+      });
     });
 
     it('falls back to portfolio when no tickers query param', async () => {
@@ -164,7 +176,9 @@ describe('screenerRoutes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(mockedGetPortfolio).toHaveBeenCalled();
-      expect(mockedAnalyzeTicker).toHaveBeenCalledWith('MSFT', 60);
+      expect(mockedAnalyzeTicker).toHaveBeenCalledWith('MSFT', 60, {
+        pipelineConfig: DEFAULT_QUALITY_PIPELINE_CONFIG,
+      });
     });
 
     it('returns empty results when portfolio is empty and no tickers param', async () => {
@@ -219,7 +233,9 @@ describe('screenerRoutes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json()).toMatchObject({ ticker: 'AAPL' });
-      expect(mockedAnalyzeTicker).toHaveBeenCalledWith('AAPL', 50);
+      expect(mockedAnalyzeTicker).toHaveBeenCalledWith('AAPL', 50, {
+        pipelineConfig: DEFAULT_QUALITY_PIPELINE_CONFIG,
+      });
     });
 
     it('returns 404 when analyzeTicker returns null', async () => {
@@ -300,6 +316,20 @@ describe('screenerRoutes', () => {
       ]);
       mockedFetchBenchmarkPrices.mockResolvedValue([]);
       vi.mocked(getFundamentals).mockResolvedValue(null as never);
+    });
+
+    it('returns the complete active strategy snapshot for browser backtests', async () => {
+      const active = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+      active.thresholds.buy = 215;
+      active.institutional.weights.rsSpy = 0.3;
+      active.qualityGate.rsMin = 0.75;
+      mockedLoadPipelineConfig.mockResolvedValue(active);
+
+      const res = await app.inject({ method: 'GET', url: '/api/screener/AAPL/backtest-data' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().pipelineConfig).toEqual(active);
+      expect(mockedLoadPipelineConfig).toHaveBeenCalledTimes(1);
     });
 
     it('preserves nominal liquidity and the known sector when fundamentals are unavailable', async () => {

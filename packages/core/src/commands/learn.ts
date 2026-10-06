@@ -8,6 +8,7 @@ import { calculateMetrics, matchPredictions, type PredictionInput } from '@/opti
 import { Optimizer } from '@/optimization/optimizer';
 import { loadPredictionPriceHistory } from '@/optimization/prediction-history';
 import { p, pc } from '@/ui/prompts';
+import { CONFIG_PATH, savePipelineConfig } from '@/utils/config-loader';
 
 const logger = pino({
   level: 'info',
@@ -17,7 +18,7 @@ const logger = pino({
 // Config
 const PROJECT_ROOT = process.cwd();
 const FEEDBACK_DIR = path.join(PROJECT_ROOT, 'data/feedback');
-const CONFIG_DIR = path.join(PROJECT_ROOT, 'data/config');
+const CONFIG_DIR = path.dirname(CONFIG_PATH);
 
 async function runCommand(cmd: string, args: string[]) {
   logger.info(`> ${cmd} ${args.join(' ')}`);
@@ -169,17 +170,7 @@ export async function learn() {
       JSON.stringify(optResult, null, 2)
     );
 
-    const { saveOptimizedConfig } = await import('@/utils/config-loader');
-    await saveOptimizedConfig({
-      weights: optResult.bestParams.indicatorWeights,
-      thresholds: optResult.bestParams.thresholds,
-      patternWeights: optResult.bestParams.patternWeights,
-      calibration: optResult.bestParams.calibration,
-      trendGate: optResult.bestParams.trendGate,
-      gradientRanges: optResult.bestParams.gradientRanges,
-      confluence: optResult.bestParams.confluence,
-      reversalConfirm: optResult.bestParams.reversalConfirm,
-    });
+    await savePipelineConfig(optResult.bestParams);
 
     s5.stop(`Best: ${pc.bold(optResult.symbol)} (${pc.green(bestOverallValue.toFixed(4))})`);
 

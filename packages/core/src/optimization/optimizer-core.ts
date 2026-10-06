@@ -1,3 +1,4 @@
+import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@/constants';
 import { Backtester } from '@/optimization/backtester';
 import type { BacktestMetrics } from '@/optimization/types';
 import type { BenchmarkCandle, PipelineConfig } from '@/types';
@@ -35,11 +36,16 @@ export function optimizeWithData(
   data: Candle[],
   nTrials = 200,
   onProgress?: (progress: OptimizeProgress) => void,
-  benchmarkData?: { spy: BenchmarkCandle[]; sector: BenchmarkCandle[] }
+  benchmarkData?: { spy: BenchmarkCandle[]; sector: BenchmarkCandle[] },
+  baseConfig: PipelineConfig = DEFAULT_QUALITY_PIPELINE_CONFIG
 ): OptimizeWithDataResult {
+  if (!Number.isInteger(nTrials) || nTrials < 1) {
+    throw new Error('Optimization trials must be a positive integer');
+  }
   if (data.length < 210) {
     throw new Error(`Insufficient data: ${data.length} bars`);
   }
+  assertLeaderPullbackConfig(baseConfig);
 
   const backtester = new Backtester(data, benchmarkData);
   let bestValue = -Infinity;
@@ -47,16 +53,21 @@ export function optimizeWithData(
   let bestMetrics: BacktestMetrics | null = null;
 
   for (let i = 0; i < nTrials; i++) {
-    const params = generateRandomParams();
+    // Include the active runtime snapshot as the first candidate. Optimization
+    // changes weights and thresholds, never the leader-pullback setup rules.
+    const params = i === 0 ? structuredClone(baseConfig) : generateRandomParams(baseConfig);
     const metrics = backtester.run(params);
 
     let value = -Infinity;
-    if (metrics.maxDrawdown > 30) {
+    if (
+      metrics.totalTrades === 0 ||
+      !Number.isFinite(metrics.sharpeRatio) ||
+      !Number.isFinite(metrics.maxDrawdown) ||
+      metrics.maxDrawdown > 30
+    ) {
       value = -Infinity;
     } else {
-      const sharpe = Number.isNaN(metrics.sharpeRatio) ? 0 : metrics.sharpeRatio;
-      const dd = Number.isNaN(metrics.maxDrawdown) ? 100 : metrics.maxDrawdown;
-      value = sharpe * 0.7 - (dd / 100) * 0.3;
+      value = metrics.sharpeRatio * 0.7 - (metrics.maxDrawdown / 100) * 0.3;
     }
 
     if (value > bestValue) {
@@ -69,90 +80,49 @@ export function optimizeWithData(
   }
 
   if (!bestParams || !bestMetrics) {
-    throw new Error('Optimization failed to find valid parameters');
+    throw new Error('Optimization failed to find valid parameters with observed trades');
   }
 
   return { bestValue, bestParams, metrics: bestMetrics, nTrials };
 }
 
-export function generateRandomParams(): PipelineConfig {
+export function generateRandomParams(
+  baseConfig: PipelineConfig = DEFAULT_QUALITY_PIPELINE_CONFIG
+): PipelineConfig {
   const r = (min: number, max: number) => Math.random() * (max - min) + min;
-  const ri = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+  assertLeaderPullbackConfig(baseConfig);
 
-  return {
-    strategy: 'mean-reversion' as const,
-    indicatorWeights: {
-      rsi: r(50, 100),
-      stochastic: r(50, 100),
-      bollinger: r(50, 100),
-      donchian: r(50, 100),
-      williamsR: r(50, 100),
-      fearGreed: r(20, 80),
-      macd: r(50, 100),
-      sma: r(50, 100),
-      ema: r(50, 100),
-      volume: 0,
-    },
-    patternWeights: {
-      ascendingTriangle: r(50, 100),
-      bullishFlag: r(50, 100),
-      doubleBottom: r(50, 100),
-      fallingWedge: r(50, 100),
-      islandReversal: r(50, 100),
-    },
-    thresholds: {
-      buy: ri(150, 250),
-      sell: ri(150, 250),
-    },
-    calibration: {
-      slope: r(0.005, 0.02),
-      intercept: r(-2.0, 0.0),
-    },
-    trendGate: {
-      enabled: true,
-      minConditions: ri(1, 3),
-      sidewaysThreshold: r(1, 5),
-    },
-    gradientRanges: {
-      rsi: { max: r(10, 20), mid: r(25, 35), zero: r(35, 50) },
-      stochK: { max: r(5, 15), mid: r(15, 25), zero: r(30, 45) },
-      williamsR: { max: r(-95, -85), mid: r(-85, -75), zero: r(-70, -50) },
-      bollingerPctB: { max: r(-0.1, 0.05), mid: r(0.05, 0.15), zero: r(0.2, 0.4) },
-    },
-    confluence: {
-      minActive: ri(3, 6),
-      activationThreshold: r(0.2, 0.5),
-    },
-    reversalConfirm: {
-      enabled: true,
-      volumeMultiplier: r(0.8, 1.5),
-    },
-    confidenceGate: {
-      enabled: false,
-      threshold: 50,
-      weights: { trend: 0.25, score: 0.25, confluence: 0.25, reversal: 0.25 },
-    },
-    regimeFilter: {
-      enabled: true,
-      blockUptrend: true,
-    },
-    clusterFilter: {
-      enabled: true,
-      minGapDays: ri(3, 10),
-    },
-    institutional: {
-      enabled: false,
-      weights: {
-        rsSpy: 0.25,
-        rsSector: 0.25,
-        vwap: 0.2,
-        breakoutVol: 0.15,
-        liquidity: 0.1,
-        earnings: 0.05,
-      },
-      threshold: 0.45,
-      rsLookback: { short: 63, long: 126 },
-      minAvgDailyDollarVol: 5_000_000,
-    },
+  const config = structuredClone(baseConfig);
+  const scoreCap = baseConfig.qualityGate?.scoreMax;
+  const maxThreshold = scoreCap === undefined ? Infinity : Math.ceil(scoreCap) - 1;
+  const sampleThreshold = (threshold: number, maximum = Infinity) =>
+    Math.max(1, Math.min(maximum, Math.round(threshold * r(0.8, 1.2))));
+  config.thresholds = {
+    buy: sampleThreshold(baseConfig.thresholds.buy, maxThreshold),
+    sell: sampleThreshold(baseConfig.thresholds.sell),
   };
+  const weights = config.institutional.weights;
+  const keys = Object.keys(weights) as (keyof typeof weights)[];
+  for (const key of keys) weights[key] *= r(0.8, 1.2);
+  const total = keys.reduce((sum, key) => sum + weights[key], 0);
+  for (const key of keys) weights[key] /= total;
+  return config;
+}
+
+function assertLeaderPullbackConfig(config: PipelineConfig): void {
+  if (
+    config.strategy !== 'institutional' ||
+    !config.institutional.enabled ||
+    !config.qualityGate?.enabled ||
+    !config.qualityGate.requireBelowSma50 ||
+    config.qualityGate.rsMin === undefined ||
+    !config.trendGate.enabled ||
+    config.trendGate.source !== 'gaussian' ||
+    !Object.values(config.institutional.weights).every(
+      (weight) => Number.isFinite(weight) && weight >= 0
+    ) ||
+    Object.values(config.institutional.weights).reduce((sum, weight) => sum + weight, 0) <= 0
+  ) {
+    throw new Error('Optimization requires the leader-pullback pipeline');
+  }
 }

@@ -6,6 +6,14 @@ import { generateStockScreen, type StockScreenOptions } from '@/reports/stock-sc
 import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/ticker-analysis';
 import type { PipelineResult } from '@/types';
 
+vi.mock('@/utils/config-loader', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/config-loader')>();
+  return {
+    ...actual,
+    loadPipelineConfig: vi.fn(async () => actual.cloneCanonicalPipelineConfig()),
+  };
+});
+
 function context(
   ticker: string,
   decision: PipelineResult['finalDecision'] = 'BUY',
@@ -83,6 +91,24 @@ afterEach(() => {
 });
 
 describe('generateStockScreen', () => {
+  it('freezes one complete active configuration for all candidates', async () => {
+    const first = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    first.thresholds.buy = 215;
+    const changed = structuredClone(first);
+    changed.thresholds.buy = 250;
+    const load = vi.fn().mockResolvedValueOnce(first).mockResolvedValue(changed);
+    const analyze = analyzer();
+
+    const { screen } = await generateStockScreen(
+      { tickers: ['AAPL', 'OII'] },
+      { analyzeTickerContext: analyze, loadPipelineConfig: load }
+    );
+
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(screen.criteria.pipelineConfig).toEqual(first);
+    expect(analyze.mock.calls.map((call) => call[2]?.pipelineConfig)).toEqual([first, first]);
+  });
+
   it('uses exactly the existing web screener’s 20 symbols, BUY filter, 730 days, and result limit 20', async () => {
     const analyze = analyzer();
 
@@ -132,7 +158,10 @@ describe('generateStockScreen', () => {
     expect(screen.decisionCounts).toEqual({ BUY: 20, SELL: 0, HOLD: 0 });
     expect(analyze.mock.calls.map((call) => call[0])).toEqual([...DEFAULT_SCREENER_TICKERS]);
     for (const call of analyze.mock.calls)
-      expect(call.slice(1)).toEqual([null, { lookbackDays: 730 }]);
+      expect(call.slice(1)).toEqual([
+        null,
+        { lookbackDays: 730, pipelineConfig: screen.criteria.pipelineConfig },
+      ]);
     expect(markdown).toContain('not the entire market');
     expect(markdown).toContain('not probabilities of profit');
     expect(markdown).toContain('analyze_stock');
@@ -402,6 +431,7 @@ describe('generateStockScreen', () => {
       { tickers: ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE'] },
       { analyzeTickerContext: analyze }
     );
+    await Promise.resolve();
     expect(analyze).toHaveBeenCalledTimes(2);
     expect(peak).toBe(2);
     release?.();
@@ -558,6 +588,9 @@ describe('generateStockScreen', () => {
     expect(screen.matches).toHaveLength(50);
     expect(screen.coverage.requested).toBe(50);
     expect(screen.coverage.truncated).toBe(false);
-    expect(analyze).toHaveBeenCalledWith('P0', null, { lookbackDays: 3650 });
+    expect(analyze).toHaveBeenCalledWith('P0', null, {
+      lookbackDays: 3650,
+      pipelineConfig: screen.criteria.pipelineConfig,
+    });
   });
 });

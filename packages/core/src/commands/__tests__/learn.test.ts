@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { learn } from '@/commands/learn';
+import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@/constants';
 import { fitPlattScaling } from '@/optimization/calibrator';
 import { getHistoricalPrices } from '@/services/data-fetcher';
 
@@ -8,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   stop: vi.fn(),
   optimize: vi.fn(),
+  saveConfig: vi.fn(),
 }));
 
 vi.mock('node:child_process', () => ({
@@ -30,7 +32,10 @@ vi.mock('@/optimization/optimizer', () => ({
     optimize = mocks.optimize;
   },
 }));
-vi.mock('@/utils/config-loader', () => ({ saveOptimizedConfig: vi.fn() }));
+vi.mock('@/utils/config-loader', () => ({
+  CONFIG_PATH: '/test-repository/data/config/optimized_weights.json',
+  savePipelineConfig: mocks.saveConfig,
+}));
 vi.mock('@/ui/prompts', () => ({
   p: {
     intro: vi.fn(),
@@ -67,8 +72,9 @@ beforeEach(() => {
   mocks.optimize.mockResolvedValue({
     symbol: 'AAPL',
     bestValue: 1,
-    bestParams: { calibration: { slope: 0.01, intercept: -1 } },
+    bestParams: structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG),
   });
+  mocks.saveConfig.mockResolvedValue(undefined);
 });
 
 describe('learn outcome data and fitting', () => {
@@ -84,6 +90,31 @@ describe('learn outcome data and fitting', () => {
       expect.stringContaining('"correctPredictions": 0')
     );
     expect(fitPlattScaling).toHaveBeenCalledWith([100], [false]);
+  });
+
+  it('saves the selected complete leader-pullback configuration in the shared runtime directory', async () => {
+    const candidates = [190, 205, 220].map((buy) => ({
+      ...structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG),
+      thresholds: { buy, sell: 140 },
+    }));
+    mocks.optimize
+      .mockResolvedValueOnce({ symbol: 'TSLA', bestValue: 0.1, bestParams: candidates[0] })
+      .mockResolvedValueOnce({ symbol: 'GOOGL', bestValue: 0.7, bestParams: candidates[1] })
+      .mockResolvedValueOnce({ symbol: 'AAPL', bestValue: 0.2, bestParams: candidates[2] });
+
+    await learn();
+
+    expect(mocks.saveConfig).toHaveBeenCalledOnce();
+    expect(mocks.saveConfig).toHaveBeenCalledWith(candidates[1]);
+    expect(mocks.saveConfig.mock.calls[0][0].qualityGate).toEqual(candidates[1].qualityGate);
+    expect(mocks.saveConfig.mock.calls[0][0].institutional).toEqual(candidates[1].institutional);
+    const artifact = vi
+      .mocked(fs.writeFileSync)
+      .mock.calls.find(([filename]) => String(filename).includes('optimization_GOOGL_'));
+    expect(artifact?.[0]).toEqual(
+      expect.stringMatching(/^\/test-repository\/data\/config\/optimization_GOOGL_/)
+    );
+    expect(JSON.parse(String(artifact?.[1])).bestParams).toEqual(candidates[1]);
   });
 
   it('reports unavailable accuracy and skips metric/fitting writes after provider failure', async () => {

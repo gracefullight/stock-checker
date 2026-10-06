@@ -17,6 +17,8 @@ import {
 } from '@/reports/market-screen-store';
 import { projectMatch, type StockScreenMatch } from '@/reports/stock-screen';
 import type { analyzeTickerContext } from '@/services/ticker-analysis';
+import type { PipelineConfig } from '@/types';
+import { loadPipelineConfig } from '@/utils/config-loader';
 import { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alerts';
 import { formatScreenTimestamp } from '@/utils/stock-screen-alerts';
 import { isWhatsAppNotificationConfigured, sendWhatsAppNotification } from '@/utils/whatsapp';
@@ -59,6 +61,8 @@ export interface MarketScreenDependencies {
   /** Test-only injection; MCP inputs never accept filesystem locations. */
   rootDirectory?: string;
   analyzeTickerContext?: typeof analyzeTickerContext;
+  /** Offline configuration injection; public screening inputs do not accept paths. */
+  loadPipelineConfig?: typeof loadPipelineConfig;
   minIntervalMs?: number;
   /** Test-only sender injection; public inputs never accept messaging credentials. */
   sendWhatsAppNotification?: typeof sendWhatsAppNotification;
@@ -117,6 +121,8 @@ export interface MarketScreenJob {
     decision: Decision;
     lookbackDays: number;
     engine: string;
+    /** Legacy saved jobs may lack a configuration; resumed jobs freeze one before evaluation. */
+    pipelineConfig?: PipelineConfig;
     concurrency: 2;
     minIntervalMs: number;
   };
@@ -622,6 +628,15 @@ async function execute(
 ) {
   const analyze = dependencies.analyzeTickerContext ?? defaultAnalyzer;
   try {
+    if (!runtime.job.criteria.pipelineConfig) {
+      runtime.job.criteria.pipelineConfig = await (
+        dependencies.loadPipelineConfig ?? loadPipelineConfig
+      )();
+      runtime.job.warnings.push(
+        'This legacy job had no saved configuration. Remaining candidates use the configuration frozen at resume; earlier results may use different settings.'
+      );
+    }
+    const pipelineConfig = runtime.job.criteria.pipelineConfig;
     const previous = (
       await Promise.all(
         (['matches', 'excluded', 'unavailable'] as const).map((kind) =>
@@ -684,6 +699,7 @@ async function execute(
             try {
               const context = await analyze(ticker, null, {
                 lookbackDays: runtime.job.criteria.lookbackDays,
+                pipelineConfig,
               });
               if (!context) throw new Error('No usable completed-session analysis is available.');
               const match = projectMatch(ticker, context);
@@ -809,6 +825,7 @@ export async function createMarketScreenJob(
   dependencies: MarketScreenDependencies = {}
 ): Promise<MarketScreenJobSnapshot> {
   const input = validateCreate(options, dependencies);
+  const pipelineConfig = await (dependencies.loadPipelineConfig ?? loadPipelineConfig)();
   const root = await storeRoot(dependencies);
   const id = randomUUID();
   const now = timestamp();
@@ -836,7 +853,8 @@ export async function createMarketScreenJob(
     criteria: {
       decision: input.decision,
       lookbackDays: input.lookbackDays,
-      engine: 'Existing analyzeTickerContext / evaluateSignal with DEFAULT_QUALITY_PIPELINE_CONFIG',
+      engine: 'Shared leader-pullback pipeline with a persisted configuration per job',
+      pipelineConfig,
       concurrency: 2,
       minIntervalMs: input.minIntervalMs,
     },
@@ -852,7 +870,7 @@ export async function createMarketScreenJob(
     warnings: [
       'Finviz filters select candidates; they do not determine the engine final BUY, SELL, or HOLD decision.',
       'This job covers only the frozen collected Finviz candidate list, not every US-listed stock or every filtered source candidate when collection is partial.',
-      'Scores are signal strengths, not success probabilities. Repeated stateless BUY snapshots are not independent new opportunities.',
+      'Scores are signal strengths, not success probabilities. Repeated snapshots from the same completed session are not independent new opportunities.',
       'Future next-session entry prices are unknown; ATR references use completed closes. SELL is a long-holder exit warning, not a short-entry recommendation.',
       'Analysis timestamps and completed-session dates can differ during a long scan. Current metadata is not a frozen point-in-time financial dataset.',
       'Provider failures are unavailable results, never HOLD. Historical outcome rates and analyst targets require analyze_stock.',

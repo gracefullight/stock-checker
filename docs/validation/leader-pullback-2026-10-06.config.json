@@ -1,0 +1,133 @@
+{
+  "version": "3.0.0",
+  "strategyId": "leader-pullback-v1",
+  "updatedAt": "2026-10-06T04:03:00.408Z",
+  "config": {
+    "strategy": "institutional",
+    "indicatorWeights": {
+      "rsi": 40,
+      "stochastic": 35,
+      "bollinger": 50,
+      "donchian": 85,
+      "williamsR": 35,
+      "fearGreed": 30,
+      "macd": 80,
+      "sma": 100,
+      "ema": 70,
+      "volume": 90
+    },
+    "patternWeights": {
+      "ascendingTriangle": 75,
+      "bullishFlag": 75,
+      "doubleBottom": 70,
+      "fallingWedge": 70,
+      "islandReversal": 73,
+      "descendingTriangle": -75,
+      "bearishFlag": -75,
+      "doubleTop": -70,
+      "risingWedge": -70,
+      "headAndShoulders": -73,
+      "bullishPennant": 70,
+      "cupWithHandle": 75,
+      "threeRisingValleys": 72,
+      "ascendingScallop": 65,
+      "measuredMoveUp": 68,
+      "diamondBottom": 68,
+      "bearishPennant": -70,
+      "invertedCupWithHandle": -68,
+      "threeDescendingPeaks": -72,
+      "descendingScallop": -65,
+      "measuredMoveDown": -68,
+      "topsRectangle": -65
+    },
+    "thresholds": {
+      "buy": 200,
+      "sell": 130
+    },
+    "calibration": {
+      "slope": 0.01,
+      "intercept": -1
+    },
+    "trendGate": {
+      "enabled": true,
+      "minConditions": 1,
+      "sidewaysThreshold": 3,
+      "source": "gaussian"
+    },
+    "gradientRanges": {
+      "rsi": {
+        "max": 70,
+        "mid": 60,
+        "zero": 45
+      },
+      "stochK": {
+        "max": 75,
+        "mid": 60,
+        "zero": 35
+      },
+      "williamsR": {
+        "max": -20,
+        "mid": -35,
+        "zero": -55
+      },
+      "bollingerPctB": {
+        "max": 0.85,
+        "mid": 0.65,
+        "zero": 0.4
+      }
+    },
+    "confluence": {
+      "minActive": 1,
+      "activationThreshold": 0.2
+    },
+    "reversalConfirm": {
+      "enabled": false,
+      "volumeMultiplier": 1
+    },
+    "confidenceGate": {
+      "enabled": false,
+      "threshold": 50,
+      "weights": {
+        "trend": 0.25,
+        "score": 0.25,
+        "confluence": 0.25,
+        "reversal": 0.25
+      }
+    },
+    "regimeFilter": {
+      "enabled": true,
+      "blockUptrend": false
+    },
+    "clusterFilter": {
+      "enabled": true,
+      "minGapDays": 5
+    },
+    "institutional": {
+      "enabled": true,
+      "weights": {
+        "rsSpy": 0.3,
+        "rsSector": 0.25,
+        "vwap": 0.2,
+        "breakoutVol": 0.15,
+        "liquidity": 0.07,
+        "earnings": 0.03
+      },
+      "threshold": 0.55,
+      "rsLookback": {
+        "short": 63,
+        "long": 126
+      },
+      "minAvgDailyDollarVol": 5000000
+    },
+    "qualityGate": {
+      "enabled": true,
+      "ibsMax": 0.2,
+      "atrPctMax": 3.5,
+      "volRMin": 0.8,
+      "volRMax": 99,
+      "scoreMax": 400,
+      "rsMin": 0.7,
+      "requireBelowSma50": true
+    }
+  }
+}

@@ -1,121 +1,167 @@
-/**
- * Dynamic Configuration Loader
- * Loads optimized weights and calibration parameters from JSON
- * Falls back to default constants if no optimized config exists
- */
-
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import pino from 'pino';
-import {
-  BUY_THRESHOLD,
-  DEFAULT_PIPELINE_CONFIG,
-  INDICATOR_WEIGHTS,
-  PATTERN_WEIGHTS,
-  SELL_THRESHOLD,
-} from '@/constants';
-import type { ConfluenceConfig, GradientRanges, ReversalConfig, TrendGateConfig } from '@/types';
+import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@/constants';
+import type { PipelineConfig } from '@/types';
 
-const logger = pino({
-  level: 'info',
-  transport: { target: 'pino-pretty' },
-});
+const logger = pino({ name: 'pipeline-config', level: 'info' }, process.stderr);
 
-const CONFIG_PATH = join(process.cwd(), 'data', 'config', 'optimized_weights.json');
+export const CANONICAL_STRATEGY_ID = 'leader-pullback-v1';
+export const PIPELINE_CONFIG_VERSION = '3.0.0';
+export const CONFIG_PATH = fileURLToPath(
+  new URL('../../../../data/config/optimized_weights.json', import.meta.url)
+);
 
-export interface CalibrationParams {
-  slope: number;
-  intercept: number;
-}
-
-export interface OptimizedWeights {
-  weights: Record<string, number>;
-  thresholds: {
-    buy: number;
-    sell: number;
-  };
-  patternWeights: Record<string, number>;
-  calibration: CalibrationParams;
-  // V2 pipeline fields (optional for backward compat with v1 configs)
-  trendGate?: TrendGateConfig;
-  gradientRanges?: GradientRanges;
-  confluence?: ConfluenceConfig;
-  reversalConfirm?: ReversalConfig;
-}
-
-export interface ConfigFile extends OptimizedWeights {
-  version: string;
+export interface PipelineConfigFile {
+  version: typeof PIPELINE_CONFIG_VERSION;
+  strategyId: typeof CANONICAL_STRATEGY_ID;
   updatedAt: string;
+  config: PipelineConfig;
 }
 
-/**
- * Load optimized configuration from JSON
- * Falls back to default constants if file doesn't exist
- * Accepts both v1.0.0 and v2.0.0 configs
- */
-export async function loadOptimizedConfig(): Promise<OptimizedWeights> {
+export interface PipelineConfigOptions {
+  configPath?: string;
+}
+
+/** Every caller owns its snapshot; nested defaults are never shared mutable state. */
+export function cloneCanonicalPipelineConfig(): PipelineConfig {
+  return structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function matchesCompleteShape(value: unknown, template: unknown): boolean {
+  if (typeof template === 'number') return typeof value === 'number' && Number.isFinite(value);
+  if (typeof template === 'boolean' || typeof template === 'string') {
+    return typeof value === typeof template;
+  }
+  if (!isRecord(template) || !isRecord(value)) return false;
+  return Object.entries(template).every(([key, expected]) =>
+    matchesCompleteShape(value[key], expected)
+  );
+}
+
+/** Accept complete leader-pullback snapshots, never a merge of another strategy's weights. */
+export function isLeaderPullbackPipelineConfig(value: unknown): value is PipelineConfig {
+  if (!matchesCompleteShape(value, DEFAULT_QUALITY_PIPELINE_CONFIG)) return false;
+  const config = value as PipelineConfig;
+  const quality = config.qualityGate;
+  if (
+    config.strategy !== 'institutional' ||
+    !config.institutional.enabled ||
+    !config.trendGate.enabled ||
+    config.trendGate.source !== 'gaussian' ||
+    config.reversalConfirm.enabled ||
+    !config.regimeFilter.enabled ||
+    config.regimeFilter.blockUptrend ||
+    !quality?.enabled ||
+    quality.requireBelowSma50 !== true ||
+    quality.rsMin === undefined ||
+    !Object.entries(DEFAULT_QUALITY_PIPELINE_CONFIG.gradientRanges).every(([indicator, range]) =>
+      Object.entries(range).every(
+        ([bound, expected]) =>
+          config.gradientRanges[indicator as keyof PipelineConfig['gradientRanges']][
+            bound as keyof typeof range
+          ] === expected
+      )
+    )
+  ) {
+    return false;
+  }
+  for (const key of ['requireMarketUptrend', 'requireAboveSma200'] as const) {
+    if (quality[key] !== undefined && typeof quality[key] !== 'boolean') return false;
+  }
+  for (const key of ['vwapMin'] as const) {
+    if (quality[key] !== undefined && !Number.isFinite(quality[key])) return false;
+  }
+  const weights = Object.values(config.institutional.weights);
+  return (
+    config.thresholds.buy > 0 &&
+    config.thresholds.sell > 0 &&
+    Object.values(config.indicatorWeights).every((weight) => weight >= 0) &&
+    Object.values(config.patternWeights).every((weight) => Number.isFinite(weight)) &&
+    config.calibration.slope > 0 &&
+    weights.every((weight) => weight >= 0) &&
+    weights.reduce((sum, weight) => sum + weight, 0) > 0 &&
+    config.institutional.threshold >= 0 &&
+    config.institutional.threshold <= 1 &&
+    config.institutional.minAvgDailyDollarVol > 0 &&
+    Number.isInteger(config.institutional.rsLookback.short) &&
+    config.institutional.rsLookback.short > 0 &&
+    Number.isInteger(config.institutional.rsLookback.long) &&
+    config.institutional.rsLookback.long >= config.institutional.rsLookback.short &&
+    quality.ibsMax > 0 &&
+    quality.ibsMax <= 1 &&
+    quality.atrPctMax > 0 &&
+    quality.volRMin >= 0 &&
+    quality.volRMax > quality.volRMin &&
+    quality.rsMin >= 0 &&
+    quality.rsMin <= 1 &&
+    quality.scoreMax !== undefined &&
+    quality.scoreMax > config.thresholds.buy &&
+    Number.isInteger(config.clusterFilter.minGapDays) &&
+    config.clusterFilter.minGapDays >= 0 &&
+    Number.isInteger(config.confluence.minActive) &&
+    config.confluence.minActive >= 1 &&
+    config.confluence.activationThreshold >= 0 &&
+    config.confluence.activationThreshold <= 1
+  );
+}
+
+export async function loadPipelineConfig(
+  options: PipelineConfigOptions = {}
+): Promise<PipelineConfig> {
   try {
-    const data = await readFile(CONFIG_PATH, 'utf-8');
-    const config = JSON.parse(data) as ConfigFile;
-
-    if (config.version !== '1.0.0' && config.version !== '2.0.0') {
-      logger.warn(`Config version mismatch: ${config.version}, using defaults`);
-      return getDefaultConfig();
+    const snapshot: unknown = JSON.parse(
+      await readFile(options.configPath ?? CONFIG_PATH, 'utf-8')
+    );
+    if (
+      !isRecord(snapshot) ||
+      snapshot.version !== PIPELINE_CONFIG_VERSION ||
+      snapshot.strategyId !== CANONICAL_STRATEGY_ID ||
+      typeof snapshot.updatedAt !== 'string' ||
+      !Number.isFinite(Date.parse(snapshot.updatedAt)) ||
+      !isLeaderPullbackPipelineConfig(snapshot.config)
+    ) {
+      logger.warn(
+        'Ignoring legacy or incompatible pipeline config; using leader-pullback defaults'
+      );
+      return cloneCanonicalPipelineConfig();
     }
-
-    return {
-      weights: { ...INDICATOR_WEIGHTS, ...config.weights },
-      thresholds: {
-        buy: config.thresholds?.buy ?? BUY_THRESHOLD,
-        sell: config.thresholds?.sell ?? SELL_THRESHOLD,
-      },
-      patternWeights: { ...PATTERN_WEIGHTS, ...config.patternWeights },
-      calibration: config.calibration ?? { slope: 0.01, intercept: -1.0 },
-      trendGate: config.trendGate ?? DEFAULT_PIPELINE_CONFIG.trendGate,
-      gradientRanges: config.gradientRanges ?? DEFAULT_PIPELINE_CONFIG.gradientRanges,
-      confluence: config.confluence ?? DEFAULT_PIPELINE_CONFIG.confluence,
-      reversalConfirm: config.reversalConfirm ?? DEFAULT_PIPELINE_CONFIG.reversalConfirm,
-    };
-  } catch (_error) {
-    logger.debug('No optimized config found, using defaults');
-    return getDefaultConfig();
+    return structuredClone(snapshot.config);
+  } catch {
+    logger.debug('No usable pipeline config found; using leader-pullback defaults');
+    return cloneCanonicalPipelineConfig();
   }
 }
 
-/**
- * Get default configuration
- */
-function getDefaultConfig(): OptimizedWeights {
-  return {
-    weights: { ...INDICATOR_WEIGHTS },
-    thresholds: {
-      buy: BUY_THRESHOLD,
-      sell: SELL_THRESHOLD,
-    },
-    patternWeights: { ...PATTERN_WEIGHTS },
-    calibration: { slope: 0.01, intercept: -1.0 },
-    trendGate: DEFAULT_PIPELINE_CONFIG.trendGate,
-    gradientRanges: DEFAULT_PIPELINE_CONFIG.gradientRanges,
-    confluence: DEFAULT_PIPELINE_CONFIG.confluence,
-    reversalConfirm: DEFAULT_PIPELINE_CONFIG.reversalConfirm,
+export async function savePipelineConfig(
+  config: PipelineConfig,
+  options: PipelineConfigOptions = {}
+): Promise<void> {
+  if (!isLeaderPullbackPipelineConfig(config)) {
+    throw new TypeError('Only complete leader-pullback pipeline configurations can be saved');
+  }
+  const configPath = options.configPath ?? CONFIG_PATH;
+  const tempPath = `${configPath}.${randomUUID()}.tmp`;
+  const snapshot: PipelineConfigFile = {
+    version: PIPELINE_CONFIG_VERSION,
+    strategyId: CANONICAL_STRATEGY_ID,
+    updatedAt: new Date().toISOString(),
+    config: structuredClone(config),
   };
-}
-
-/**
- * Save optimized configuration to JSON
- */
-export async function saveOptimizedConfig(config: OptimizedWeights): Promise<void> {
+  await mkdir(dirname(configPath), { recursive: true });
   try {
-    const configData: ConfigFile = {
-      version: '2.0.0',
-      updatedAt: new Date().toISOString(),
-      ...config,
-    };
-
-    await writeFile(CONFIG_PATH, JSON.stringify(configData, null, 2), 'utf-8');
-    logger.info(`Optimized config saved to ${CONFIG_PATH}`);
-  } catch (error) {
-    logger.error({ error }, 'Failed to save optimized config');
-    throw error;
+    await writeFile(tempPath, JSON.stringify(snapshot, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
+    await rename(tempPath, configPath);
+  } finally {
+    await unlink(tempPath).catch(() => undefined);
   }
 }

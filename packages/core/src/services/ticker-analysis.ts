@@ -1,9 +1,14 @@
-import { DEFAULT_QUALITY_PIPELINE_CONFIG, MARKET_BENCHMARK, SECTOR_ETF_MAP } from '@/constants';
+import { MARKET_BENCHMARK, SECTOR_ETF_MAP } from '@/constants';
 import { TICKER_SECTOR_ETF } from '@/constants/tickers';
-import type { Candle } from '@/optimization/engine';
+import {
+  buildTickerContext,
+  type Candle,
+  evaluateLatestSignalWithContext,
+} from '@/optimization/engine';
 import { fetchBenchmarkPrices, getHistoricalPrices } from '@/services/data-fetcher';
 import { getEarningsData } from '@/services/earnings';
 import { getFundamentals } from '@/services/fundamentals';
+import { gaussianChannel } from '@/services/gaussian-channel';
 import { calcRecentMacdHistogram, calculateAllIndicators } from '@/services/indicators';
 import { detectPatterns } from '@/services/patterns';
 import { evaluateSignal } from '@/services/pipeline';
@@ -16,14 +21,8 @@ import type {
   PipelineResult,
   TickerResult,
 } from '@/types';
+import { isLeaderPullbackPipelineConfig, loadPipelineConfig } from '@/utils/config-loader';
 import { tradingDaysUntil } from '@/utils/trading-days';
-
-/**
- * Use the documented institutional-flow and leader-pullback rules.
- * Historical performance needs revalidation after the execution and data fixes
- * described in docs/TRADING_PRINCIPLES.md. Optimizer overrides are not mixed in.
- */
-const pipelineConfig: PipelineConfig = { ...DEFAULT_QUALITY_PIPELINE_CONFIG };
 
 export interface TickerAnalysisContext {
   result: TickerResult;
@@ -35,10 +34,16 @@ export interface TickerAnalysisContext {
   config: PipelineConfig;
 }
 
+export interface TickerAnalysisOptions {
+  lookbackDays?: number;
+  /** Internal caller-owned snapshot used by cache keys and multi-ticker runs. */
+  pipelineConfig?: PipelineConfig;
+}
+
 export async function analyzeTickerContext(
   ticker: string,
   fearGreed: number | null,
-  options: { lookbackDays?: number } = {}
+  options: TickerAnalysisOptions = {}
 ): Promise<TickerAnalysisContext | null> {
   const dailyPrices = await getHistoricalPrices(ticker, options.lookbackDays ?? 730);
   if (dailyPrices.length === 0) {
@@ -52,12 +57,18 @@ export async function analyzeTickerContext(
   const lows = dailyPrices.map((d) => d.low);
   const volumes = dailyPrices.map((d) => d.volume);
 
-  const indicators = calculateAllIndicators({ closes, highs, lows, volumes });
-  const riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
+  let indicators = calculateAllIndicators({ closes, highs, lows, volumes });
+  let riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
   if (!riskLevels) return null;
+  if (options.pipelineConfig && !isLeaderPullbackPipelineConfig(options.pipelineConfig)) {
+    throw new TypeError('Analysis requires a complete leader-pullback pipeline configuration');
+  }
+  const pipelineConfig = options.pipelineConfig
+    ? structuredClone(options.pipelineConfig)
+    : await loadPipelineConfig();
 
-  const { score: patternScore, patterns } = detectPatterns(
-    { highs, lows, closes },
+  const { score: patternScore, patterns: detectedPatterns } = detectPatterns(
+    { highs: highs.slice(-50), lows: lows.slice(-50), closes: closes.slice(-50) },
     pipelineConfig.patternWeights
   );
 
@@ -75,10 +86,17 @@ export async function analyzeTickerContext(
   // and current earnings revision direction (historical backtests omit unavailable
   // point-in-time earnings data; without the benchmark inputs
   // rsSpy/rsSector stay 0 and the leader-pullback gate would block everything).
-  const spyCandles =
+  const spyPrices =
     options.lookbackDays === undefined
       ? await fetchBenchmarkPrices(MARKET_BENCHMARK)
       : await fetchBenchmarkPrices(MARKET_BENCHMARK, options.lookbackDays);
+  const spyCandles = spyPrices.filter(
+    (candle) => candle.date.toISOString().slice(0, 10) <= dateStr
+  );
+  const marketUptrend =
+    spyCandles.length >= 2
+      ? gaussianChannel(spyCandles.map((candle) => candle.close)).isGreen
+      : null;
   let sectorETF: string | null = TICKER_SECTOR_ETF[ticker] ?? null;
   let sector: string | null = null;
   try {
@@ -90,11 +108,14 @@ export async function analyzeTickerContext(
   } catch {
     /* retain the known ticker-sector mapping, or leave sector evidence unavailable */
   }
-  const sectorCandles = sectorETF
+  const sectorPrices = sectorETF
     ? options.lookbackDays === undefined
       ? await fetchBenchmarkPrices(sectorETF)
       : await fetchBenchmarkPrices(sectorETF, options.lookbackDays)
     : [];
+  const sectorCandles = sectorPrices.filter(
+    (candle) => candle.date.toISOString().slice(0, 10) <= dateStr
+  );
 
   const recent20 = dailyPrices.slice(-20);
   const avgDailyDollarVol =
@@ -120,28 +141,45 @@ export async function analyzeTickerContext(
     /* fallback */
   }
 
-  const pipelineResult = evaluateSignal({
-    ticker,
-    indicators,
-    close: latest.close,
-    open: latest.open,
-    // Alternative.me measures Bitcoin sentiment, not US equity sentiment.
-    fearGreed: null,
-    patternScore,
-    recentCandles,
-    recentMacdHistogram,
-    config: pipelineConfig,
-    allCloses: closes,
-    allDates: dailyPrices.map((d) => d.date),
-    allHighs: highs,
-    allLows: lows,
-    allVolumes: volumes,
-    spyCandles,
-    sectorCandles,
-    avgDailyDollarVol,
-    earningsBeat,
-    earningsEstimateUp,
-  });
+  const historicalContext = buildTickerContext(dailyPrices, spyCandles, sectorCandles);
+  const replayed = historicalContext
+    ? evaluateLatestSignalWithContext(historicalContext, ticker, pipelineConfig, {
+        earningsBeat,
+        earningsEstimateUp,
+      })
+    : null;
+  const pipelineResult =
+    replayed?.pipelineResult ??
+    evaluateSignal({
+      ticker,
+      indicators,
+      close: latest.close,
+      open: latest.open,
+      // Alternative.me measures Bitcoin sentiment, not US equity sentiment.
+      fearGreed: null,
+      patternScore,
+      recentCandles,
+      recentMacdHistogram,
+      config: pipelineConfig,
+      allCloses: closes,
+      allDates: dailyPrices.map((d) => d.date),
+      allHighs: highs,
+      allLows: lows,
+      allVolumes: volumes,
+      spyCandles,
+      sectorCandles,
+      avgDailyDollarVol,
+      earningsBeat,
+      earningsEstimateUp,
+      marketUptrend,
+      currentDate: latest.date,
+    });
+  if (replayed) {
+    indicators = replayed.indicators;
+    riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
+    if (!riskLevels) return null;
+  }
+  const patterns = replayed?.patterns ?? detectedPatterns;
 
   const { finalDecision: decision, score, buyScore, sellScore } = pipelineResult;
   const probs = calculateProbabilities(buyScore, sellScore, pipelineConfig.calibration);
@@ -178,6 +216,8 @@ export async function analyzeTickerContext(
     volumeRatio: indicators.volumeRatio,
     trendRegime: pipelineResult.gateResults.trend.regime,
     confluenceRatio: pipelineResult.gateResults.confluence.ratio,
+    institutionalScore: pipelineResult.gateResults.institutional.score,
+    institutionalPassed: pipelineResult.gateResults.institutional.passed,
     sector,
     nextEarningsDate: nextEarningsDate ? nextEarningsDate.toISOString().split('T')[0] : null,
     daysToEarnings: nextEarningsDate ? tradingDaysUntil(nextEarningsDate) : null,
@@ -196,7 +236,8 @@ export async function analyzeTickerContext(
 /** Compatibility projection shared by the API and report consumers. */
 export async function analyzeTicker(
   ticker: string,
-  fearGreed: number | null
+  fearGreed: number | null,
+  options: TickerAnalysisOptions = {}
 ): Promise<TickerResult | null> {
-  return (await analyzeTickerContext(ticker, fearGreed))?.result ?? null;
+  return (await analyzeTickerContext(ticker, fearGreed, options))?.result ?? null;
 }

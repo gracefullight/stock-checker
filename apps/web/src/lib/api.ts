@@ -6,7 +6,7 @@ import type {
   MarketScreenPerformanceSnapshot,
 } from '@stock-checker/core/src/reports/market-screen.ts';
 import type { StockScreenMatch } from '@stock-checker/core/src/reports/stock-screen.ts';
-import type { TickerResult } from '@stock-checker/core/src/types';
+import type { PipelineConfig, TickerResult } from '@stock-checker/core/src/types';
 import axios, { type AxiosError } from 'axios';
 
 // Server components can use the non-public env var to avoid exposing internal
@@ -239,6 +239,7 @@ export function removeFromWatchlist(ticker: string): Promise<void> {
 
 export interface BacktestDataResponse {
   ticker: string;
+  pipelineConfig: PipelineConfig;
   candles: Array<{
     date: string;
     open: number;

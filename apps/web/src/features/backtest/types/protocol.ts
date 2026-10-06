@@ -71,7 +71,7 @@ export interface RunResultDTO {
 
 export type BacktestWorkerRequest =
   | { type: 'run'; data: BacktestDataPayload; config: PipelineConfig }
-  | { type: 'optimize'; data: BacktestDataPayload; nTrials: number };
+  | { type: 'optimize'; data: BacktestDataPayload; nTrials: number; baseConfig: PipelineConfig };
 
 export type BacktestWorkerResponse =
   | { type: 'run-result'; result: RunResultDTO }

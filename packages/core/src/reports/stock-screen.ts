@@ -2,7 +2,8 @@ import { DEFAULT_SCREENER_TICKERS } from '@/constants/screener';
 import { gateReasons } from '@/reports/signal-reasons';
 import type { LongRiskLevels } from '@/services/risk-levels';
 import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/ticker-analysis';
-import type { PipelineResult } from '@/types';
+import type { PipelineConfig, PipelineResult } from '@/types';
+import { loadPipelineConfig } from '@/utils/config-loader';
 
 type SignalDecision = PipelineResult['finalDecision'];
 
@@ -15,6 +16,8 @@ export interface StockScreenOptions {
 
 export interface StockScreenDependencies {
   analyzeTickerContext?: typeof analyzeTickerContext;
+  /** Offline configuration injection; public screening inputs do not accept paths. */
+  loadPipelineConfig?: typeof loadPipelineConfig;
   /** Tests may shorten the deadline; production scans have a 45-second budget. */
   timeBudgetMs?: number;
 }
@@ -61,6 +64,7 @@ export interface StockScreenResult {
     limit: number;
     timeBudgetMs: number;
     engine: string;
+    pipelineConfig: PipelineConfig;
     sort: {
       metric: 'buyScore' | 'sellScore';
       order: 'descending';
@@ -277,6 +281,7 @@ export async function generateStockScreen(
     throw new TypeError('timeBudgetMs must be an integer from 1 to 45000');
   }
   const analyze = dependencies.analyzeTickerContext ?? defaultAnalyzer;
+  const pipelineConfig = await (dependencies.loadPipelineConfig ?? loadPipelineConfig)();
   const analyzed: Array<StockScreenMatch | null> = Array(input.tickers.length).fill(null);
   const unavailable: Array<{ ticker: string; reason: string } | null> = Array(
     input.tickers.length
@@ -305,7 +310,10 @@ export async function generateStockScreen(
         const ticker = input.tickers[index];
         states[index] = 'running';
         try {
-          const context = await analyze(ticker, null, { lookbackDays: input.lookbackDays });
+          const context = await analyze(ticker, null, {
+            lookbackDays: input.lookbackDays,
+            pipelineConfig,
+          });
           if (expired || Date.now() >= deadline) {
             expired = true;
             return;
@@ -371,7 +379,8 @@ export async function generateStockScreen(
       lookbackDays: input.lookbackDays,
       limit: input.limit,
       timeBudgetMs,
-      engine: 'Existing analyzeTickerContext / evaluateSignal with DEFAULT_QUALITY_PIPELINE_CONFIG',
+      engine: 'Shared leader-pullback pipeline with one resolved configuration per scan',
+      pipelineConfig,
       sort: { metric, order: 'descending', tieBreaker: 'ticker-ascending' },
     },
     coverage: {
@@ -405,7 +414,7 @@ export async function generateStockScreen(
       'SELL is a long-holder exit warning, not a short-entry recommendation.',
       'Historical win rates, stop-touch rates, analyst targets and peer valuation are not computed by this screen. Use analyze_stock for a detailed ticker report.',
       'Snapshots use current metadata and may have different completed-session dates; inspect each ticker’s dataAsOf and availability.',
-      'This stateless snapshot does not apply a prior-BUY cluster history; repeated BUY snapshots are not independent new trade opportunities.',
+      'Eligible histories replay the same prior BUY/quality-blocked cluster state as backtests; repeated snapshots from the same completed session are not independent new trade opportunities.',
     ],
   };
   if (expired) {

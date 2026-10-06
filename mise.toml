@@ -294,6 +294,11 @@ description = "Run backtest"
 dir = "packages/core"
 run = "bun src/index.ts backtest $@"
 
+[tasks."strategy:validate"]
+description = "Measure the active leader-pullback strategy against a frozen historical dataset"
+dir = "packages/core"
+run = 'bun src/commands/validate-strategy.ts "$@"'
+
 # ── CI Pipeline ───────────────────────────────────────────────
 [tasks.ci]
 description = "Full CI gate: lint → typecheck → test → build"

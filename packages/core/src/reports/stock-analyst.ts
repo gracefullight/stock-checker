@@ -228,7 +228,7 @@ export async function generateStockAnalystReport(
     warnings: [
       'Historical frequencies are descriptive observations, not calibrated probabilities or independently validated future performance.',
       'Historical sector selection uses current ticker/sector metadata and the surviving requested symbol; point-in-time metadata and delisted-stock coverage are unavailable, creating metadata and survivorship bias.',
-      'Current earnings metadata is fetched now; the historical engine omits unavailable point-in-time earnings. Current stateless snapshots do not apply the historical cluster suppression state, so historical and live inputs differ.',
+      'Current earnings metadata is fetched now; historical evaluation omits unavailable point-in-time earnings. Histories of at least 210 sessions replay the shared causal cluster state. Short-history fallback reports lack backtest equivalence.',
       'Daily OHLC does not reveal intrabar order. Ambiguous first stop/target touches are not assigned an invented winning order.',
       'The fixed round-trip cost is a simplifying assumption; spread, market impact, partial fills and changing liquidity are not modeled.',
       ...(historical.fixedHold.samples > 0 && historical.fixedHold.samples < 30

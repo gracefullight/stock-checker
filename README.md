@@ -61,11 +61,12 @@ Default predictions append monthly CSV rows under `packages/core/public/`;
 Use `mise run predict -- --help` for the full list.
 For Slack BUY/SELL summaries, set `SLACK_WEBHOOK_URL` or pass `--slack-webhook`.
 
-CLI predictions load the global `data/config/optimized_weights.json` over
-`DEFAULT_PIPELINE_CONFIG`; web/API/MCP use `DEFAULT_QUALITY_PIPELINE_CONFIG`.
-Optimization does not automatically change web/MCP rules. See
-[trading principles](docs/TRADING_PRINCIPLES.md) and
-[shared defaults](packages/core/src/constants.ts) for details.
+CLI, web, MCP, screening, and backtests share the leader-pullback strategy and
+the complete configuration in `data/config/optimized_weights.json` (v3).
+Without a compatible file, all use `DEFAULT_QUALITY_PIPELINE_CONFIG`; legacy
+partial weight files are ignored. Optimization preserves this strategy.
+See [trading principles](docs/TRADING_PRINCIPLES.md) and the
+[measured win rates](docs/validation/leader-pullback-2026-10-06.md).
 
 ## Local MCP
 

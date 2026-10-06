@@ -2,40 +2,22 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { orderBy } from 'es-toolkit/array';
 import pino from 'pino';
-import { DEFAULT_PIPELINE_CONFIG, MARKET_BENCHMARK, SECTOR_ETF_MAP } from '@/constants';
-import { TICKER_SECTOR_ETF } from '@/constants/tickers';
 import {
   addAsset,
   generatePerformanceReport,
   getPortfolio,
   removeAsset,
 } from '@/portfolio/manager';
-import {
-  fetchBenchmarkPrices,
-  getFearGreedIndex,
-  getHistoricalPrices,
-} from '@/services/data-fetcher';
+import { getFearGreedIndex } from '@/services/data-fetcher';
 import { formatDividendInfo, getDividendInfo } from '@/services/dividends';
 import { formatEarningsData, getEarningsData } from '@/services/earnings';
 import { getFundamentals } from '@/services/fundamentals';
-import { gaussianChannel } from '@/services/gaussian-channel';
-import { calcRecentMacdHistogram, calculateAllIndicators } from '@/services/indicators';
 import { getStockNews } from '@/services/news';
 import { formatOptionsData, getOptionsChain } from '@/services/options';
-import { detectPatterns } from '@/services/patterns';
-import { evaluateSignal } from '@/services/pipeline';
-import { calculateProbabilities } from '@/services/probability';
-import { calculateLongRiskLevels } from '@/services/risk-levels';
-import type { TickerAnalysisContext } from '@/services/ticker-analysis';
-import type {
-  CandleData,
-  CliOptions,
-  PipelineConfig,
-  PredictionRecord,
-  TickerResult,
-} from '@/types';
+import { analyzeTickerContext, type TickerAnalysisContext } from '@/services/ticker-analysis';
+import type { CliOptions, PipelineConfig, PredictionRecord, TickerResult } from '@/types';
 import { printSummaryTable } from '@/ui/summary';
-import { loadOptimizedConfig } from '@/utils/config-loader';
+import { loadPipelineConfig } from '@/utils/config-loader';
 import { writeToCsv } from '@/utils/csv-writer';
 import { exportToJson } from '@/utils/json-exporter';
 import { sendSlackNotification } from '@/utils/slack';
@@ -54,179 +36,17 @@ const logger = pino({
 async function processTicker(
   ticker: string,
   fearGreed: number | null,
+  pipelineConfig: PipelineConfig,
   contexts?: Map<string, TickerAnalysisContext>
 ): Promise<TickerResult | null> {
   logger.info({ ticker }, 'Processing ticker');
-  const dailyPrices = await getHistoricalPrices(ticker, 730);
-  if (dailyPrices.length === 0) {
-    logger.warn({ ticker }, 'No price data');
+  const context = await analyzeTickerContext(ticker, fearGreed, { pipelineConfig });
+  if (!context) {
+    logger.warn({ ticker }, 'No usable price/ATR analysis');
     return null;
   }
-
-  const latest = dailyPrices[dailyPrices.length - 1];
-  const dateStr = latest.date.toISOString().split('T')[0];
-  const closes = dailyPrices.map((d) => d.close);
-  const highs = dailyPrices.map((d) => d.high);
-  const lows = dailyPrices.map((d) => d.low);
-  const volumes = dailyPrices.map((d) => d.volume);
-
-  const indicators = calculateAllIndicators({ closes, highs, lows, volumes });
-  const riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
-  if (!riskLevels) {
-    logger.warn({ ticker }, 'Insufficient price/ATR data for valid long-position risk levels');
-    return null;
-  }
-  const optimizedConfig = await loadOptimizedConfig();
-  const { score: patternScore, patterns } = detectPatterns(
-    { highs, lows, closes },
-    optimizedConfig.patternWeights
-  );
-
-  // Build pipeline config from optimized + defaults
-  const pipelineConfig: PipelineConfig = {
-    ...DEFAULT_PIPELINE_CONFIG,
-    indicatorWeights: optimizedConfig.weights as PipelineConfig['indicatorWeights'],
-    thresholds: optimizedConfig.thresholds,
-    patternWeights: optimizedConfig.patternWeights,
-    calibration: optimizedConfig.calibration,
-    ...(optimizedConfig.trendGate && { trendGate: optimizedConfig.trendGate }),
-    ...(optimizedConfig.gradientRanges && { gradientRanges: optimizedConfig.gradientRanges }),
-    ...(optimizedConfig.confluence && { confluence: optimizedConfig.confluence }),
-    ...(optimizedConfig.reversalConfirm && { reversalConfirm: optimizedConfig.reversalConfirm }),
-  };
-
-  // Prepare recent candles for reversal confirmation
-  const recentCandles: CandleData[] = dailyPrices.slice(-3).map((d) => ({
-    open: d.open,
-    close: d.close,
-    high: d.high,
-    low: d.low,
-    volume: d.volume,
-  }));
-
-  // Compute recent MACD histogram for crossover detection
-  const recentMacdHistogram = calcRecentMacdHistogram(closes);
-
-  // Benchmark prices for institutional scoring
-  const spyCandles = (await fetchBenchmarkPrices(MARKET_BENCHMARK)).filter(
-    (candle) => candle.date.toISOString().slice(0, 10) <= dateStr
-  );
-  // Market-level regime for the quality gate's kill-switch (essay #2 at the
-  // index level). null when SPY data is unavailable — the gate never blocks
-  // on an unknown regime.
-  const marketUptrend =
-    spyCandles.length >= 2 ? gaussianChannel(spyCandles.map((c) => c.close)).isGreen : null;
-  let sectorETF: string | undefined = TICKER_SECTOR_ETF[ticker];
-  try {
-    const fund = await getFundamentals(ticker);
-    if (fund?.sector && SECTOR_ETF_MAP[fund.sector]) {
-      sectorETF = SECTOR_ETF_MAP[fund.sector];
-    }
-  } catch {
-    /* keep the static sector mapping, when known */
-  }
-  const sectorCandles = sectorETF
-    ? (await fetchBenchmarkPrices(sectorETF)).filter(
-        (candle) => candle.date.toISOString().slice(0, 10) <= dateStr
-      )
-    : [];
-
-  const recent20 = dailyPrices.slice(-20);
-  const avgDailyDollarVol =
-    recent20.reduce((sum, day) => sum + (day.dollarVolume ?? day.close * day.volume), 0) /
-    recent20.length;
-
-  let earningsBeat: boolean | null = null;
-  let earningsEstimateUp: boolean | null = null;
-  try {
-    const earningsInfo = await getEarningsData(ticker);
-    const hist = earningsInfo?.earningsHistory;
-    if (hist && hist.length > 0) {
-      const last = hist[hist.length - 1];
-      if (last.epsActual != null && last.epsEstimate != null) {
-        earningsBeat = last.epsActual > last.epsEstimate;
-      }
-    }
-    const revisionDirection = earningsInfo?.estimateRevisions?.direction;
-    earningsEstimateUp =
-      revisionDirection === 'up' ? true : revisionDirection === 'down' ? false : null;
-  } catch {
-    /* fallback */
-  }
-
-  const pipelineResult = evaluateSignal({
-    ticker,
-    indicators,
-    close: latest.close,
-    open: latest.open,
-    // Alternative.me measures Bitcoin sentiment, not US equity sentiment.
-    fearGreed: null,
-    patternScore,
-    recentCandles,
-    recentMacdHistogram,
-    config: pipelineConfig,
-    allCloses: closes,
-    allDates: dailyPrices.map((day) => day.date),
-    allHighs: highs,
-    allLows: lows,
-    allVolumes: volumes,
-    spyCandles,
-    sectorCandles,
-    avgDailyDollarVol,
-    earningsBeat,
-    earningsEstimateUp,
-    marketUptrend,
-  });
-
-  const { finalDecision: decision, score, buyScore, sellScore } = pipelineResult;
-  const probs = calculateProbabilities(buyScore, sellScore, optimizedConfig.calibration);
-
-  const result: TickerResult = {
-    ticker,
-    date: dateStr,
-    close: latest.close,
-    volume: latest.volume,
-    rsi: indicators.rsi,
-    stochasticK: indicators.stochasticK,
-    bbLower: indicators.bbLower,
-    bbUpper: indicators.bbUpper,
-    donchLower: indicators.donchLower,
-    donchUpper: indicators.donchUpper,
-    williamsR: indicators.williamsR,
-    fearGreed,
-    patterns,
-    score,
-    opinion: decision,
-    atr: indicators.atr,
-    ...riskLevels,
-    macd: indicators.macd,
-    macdSignal: indicators.macdSignal,
-    macdHistogram: indicators.macdHistogram,
-    sma20: indicators.sma20,
-    ema20: indicators.ema20,
-    buyProbability: probs.buyProbability,
-    sellProbability: probs.sellProbability,
-    holdProbability: probs.holdProbability,
-    confidence: probs.confidence,
-    sma50: indicators.sma50,
-    sma200: indicators.sma200,
-    volumeRatio: indicators.volumeRatio,
-    trendRegime: pipelineResult.gateResults.trend.regime,
-    confluenceRatio: pipelineResult.gateResults.confluence.ratio,
-    institutionalScore: pipelineResult.gateResults.institutional.score,
-    institutionalPassed: pipelineResult.gateResults.institutional.passed,
-  };
-
-  contexts?.set(ticker, {
-    result,
-    pipelineResult,
-    dailyPrices,
-    spyCandles,
-    sectorCandles,
-    sectorETF: sectorETF ?? null,
-    config: pipelineConfig,
-  });
-  return result;
+  contexts?.set(ticker, context);
+  return context.result;
 }
 
 async function savePredictions(results: TickerResult[]): Promise<void> {
@@ -299,8 +119,9 @@ export async function predict(options: CliOptions): Promise<void> {
 
   if (portfolioAction === 'report') {
     const tickersToReport = portfolioTicker ? [portfolioTicker] : tickers;
+    const pipelineConfig = await loadPipelineConfig();
     const results = (
-      await Promise.all(tickersToReport.map((t) => processTicker(t, fearGreed)))
+      await Promise.all(tickersToReport.map((t) => processTicker(t, fearGreed, pipelineConfig)))
     ).filter((r): r is TickerResult => r !== null);
     await generatePerformanceReport(tickersToReport, results);
     return;
@@ -340,8 +161,9 @@ export async function predict(options: CliOptions): Promise<void> {
   }
 
   const contexts = new Map<string, TickerAnalysisContext>();
+  const pipelineConfig = await loadPipelineConfig();
   const results = (
-    await Promise.all(tickers.map((t) => processTicker(t, fearGreed, contexts)))
+    await Promise.all(tickers.map((t) => processTicker(t, fearGreed, pipelineConfig, contexts)))
   ).filter((r): r is TickerResult => r !== null);
   const ordered = orderBy(results, ['ticker'], [sort]);
 

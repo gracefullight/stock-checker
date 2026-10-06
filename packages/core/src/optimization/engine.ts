@@ -18,7 +18,13 @@ import { DEFAULT_ROUND_TRIP_COST_PCT } from '@/constants';
 import { type GaussianChannelPoint, gaussianChannel } from '@/services/gaussian-channel';
 import { detectPatterns } from '@/services/patterns';
 import { evaluateSignal } from '@/services/pipeline';
-import type { BenchmarkCandle, CandleData, IndicatorValues, PipelineConfig } from '@/types';
+import type {
+  BenchmarkCandle,
+  CandleData,
+  IndicatorValues,
+  PipelineConfig,
+  PipelineResult,
+} from '@/types';
 
 /** Daily OHLCV candle as consumed by the engine. */
 export interface Candle {
@@ -327,12 +333,27 @@ export function buildTickerContext(
   };
 }
 
-/** Run the config-DEPENDENT signal loop against a precomputed ticker context. */
-export function runSignalsWithContext(
+/** Completed-bar analysis shared by the historical signal loop and live callers. */
+export interface TickerBarEvaluation {
+  index: number;
+  indicators: IndicatorValues;
+  patterns: ReturnType<typeof detectPatterns>['patterns'];
+  pipelineResult: PipelineResult;
+}
+
+export interface CurrentEarningsEvidence {
+  /** Current provider evidence applies only to the latest bar, never to older setup states. */
+  earningsBeat?: boolean | null;
+  earningsEstimateUp?: boolean | null;
+}
+
+/** Shared causal evaluation and setup consumption for historical and live decisions. */
+function* evaluateBarsWithContext(
   ctx: TickerContext,
   ticker: string,
-  config: PipelineConfig
-): BacktestSignal[] {
+  config: PipelineConfig,
+  latestEarnings: CurrentEarningsEvidence = {}
+): Generator<TickerBarEvaluation> {
   const {
     data,
     closes,
@@ -343,7 +364,6 @@ export function runSignalsWithContext(
     sector,
     spyIdxForBar,
     sectorIdxForBar,
-    rsi2Arr,
     rsiArr,
     stochArr,
     bbArr,
@@ -362,7 +382,6 @@ export function runSignalsWithContext(
     gaussianSeries,
   } = ctx;
 
-  const signals: BacktestSignal[] = [];
   const recentBuyDates: Date[] = [];
 
   for (let i = 205; i < data.length; i++) {
@@ -405,7 +424,7 @@ export function runSignalsWithContext(
 
     // Detect chart patterns
     const pw = Math.min(i + 1, 50);
-    const { score: patternScore } = detectPatterns(
+    const { score: patternScore, patterns } = detectPatterns(
       {
         highs: highs.slice(i - pw + 1, i + 1),
         lows: lows.slice(i - pw + 1, i + 1),
@@ -443,15 +462,47 @@ export function runSignalsWithContext(
       avgDailyDollarVol,
       gaussianPoint: gaussianSeries[i],
       marketUptrend: spyIdx >= 0 ? (ctx.spyUptrend[spyIdx] ?? null) : null,
+      ...(i === data.length - 1 ? latestEarnings : {}),
     });
 
     // Record BUYs and quality-blocked setups into the cluster window: a setup is
     // judged ONCE on its first score-fire; later bars of the same deteriorating
-    // cluster must not re-trigger (matches live "first pullback day" semantics).
+    // cluster must not re-trigger; live latest-bar analysis replays this same state.
     if (result.finalDecision === 'BUY' || result.qualityBlocked) {
       recentBuyDates.push(data[i].date);
     }
 
+    yield { index: i, indicators, patterns, pipelineResult: result };
+  }
+}
+
+/** Replay earlier setups, then evaluate the completed latest bar with its current evidence. */
+export function evaluateLatestSignalWithContext(
+  ctx: TickerContext,
+  ticker: string,
+  config: PipelineConfig,
+  latestEarnings: CurrentEarningsEvidence = {}
+): TickerBarEvaluation | null {
+  let latest: TickerBarEvaluation | null = null;
+  for (const evaluation of evaluateBarsWithContext(ctx, ticker, config, latestEarnings)) {
+    latest = evaluation;
+  }
+  return latest?.index === ctx.data.length - 1 ? latest : null;
+}
+
+/** Run the config-dependent signal loop using the same evaluator as live analysis. */
+export function runSignalsWithContext(
+  ctx: TickerContext,
+  ticker: string,
+  config: PipelineConfig
+): BacktestSignal[] {
+  const { data, closes, highs, lows, rsi2Arr, rsiArr } = ctx;
+  const signals: BacktestSignal[] = [];
+  for (const { index: i, indicators, pipelineResult: result } of evaluateBarsWithContext(
+    ctx,
+    ticker,
+    config
+  )) {
     if (result.finalDecision !== 'HOLD') {
       signals.push({
         date: data[i].date,
@@ -501,7 +552,6 @@ export function runSignalsWithContext(
       });
     }
   }
-
   return signals;
 }
 

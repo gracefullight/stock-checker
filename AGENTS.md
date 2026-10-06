@@ -15,6 +15,7 @@
 - `bun install`: Install workspace dependencies and repository Git hooks.
 - `mise run dev`: Start the API (5101) and web (5100) servers.
 - `mise run predict -- --ticker=TSLA,PLTR --sort=asc`: Run predictions and append monthly CSV rows.
+- `mise run strategy:validate -- --dataset=/absolute/raw-snapshot --output=/absolute/report.json`: Recompute BUY observations, non-overlapping five-session trades, costs, and drawdown from a frozen offline dataset.
 - `mise run lint`, `mise run typecheck`, `mise run test`: Run quality checks.
 - `mise run finance:typecheck`: Check the Python financial scripts with Pyrefly.
 - `mise run finance:lint`, `mise run finance:format:check`: Check Python lint and formatting with Ruff.
@@ -43,6 +44,7 @@
 - Naming: `lowerCamelCase` for vars/functions, `UpperCamelCase` for types/interfaces, `UPPER_SNAKE_CASE` for constants.
 - Logging: Use `pino` (avoid `console.log`).
 - Structure: Keep CLI and route handlers thin; place helpers in the owning workspace's `src/`.
+- Signal settings: CLI, API/web, MCP, screening, and backtests resolve the same complete leader-pullback configuration through `loadPipelineConfig`; ignore legacy partial weight files. Preserve quality, trend, and cluster gates during optimization, and freeze the configuration for each batch or saved scan.
 
 ## Testing Guidelines
 - Vitest suites are colocated as `*.test.ts` / `*.test.tsx` in each workspace's `src/`.

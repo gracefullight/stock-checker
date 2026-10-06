@@ -1,4 +1,5 @@
 import { fixtureReport } from '@mcp/test-fixtures/report.ts';
+import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@stock-checker/core/src/constants.ts';
 import type {
   StockScreenMatch,
   StockScreenResult,
@@ -68,6 +69,7 @@ export function fixtureScreen(overrides: Partial<StockScreenResult> = {}): Stock
       limit: 20,
       timeBudgetMs: 45000,
       engine: 'Offline final-decision fixture',
+      pipelineConfig: structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG),
       sort: { metric: 'buyScore', order: 'descending', tieBreaker: 'ticker-ascending' },
     },
     coverage: {

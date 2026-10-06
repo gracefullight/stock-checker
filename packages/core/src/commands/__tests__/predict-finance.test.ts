@@ -1,13 +1,20 @@
 import * as fs from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { predict } from '@/commands/predict';
-import { DEFAULT_PIPELINE_CONFIG } from '@/constants';
+import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@/constants';
+import {
+  buildTickerContext,
+  evaluateLatestSignalWithContext,
+  runSignalsWithContext,
+} from '@/optimization/engine';
+import { gateReasons } from '@/reports/signal-reasons';
 import { fetchBenchmarkPrices, getHistoricalPrices } from '@/services/data-fetcher';
 import { type EarningsData, getEarningsData } from '@/services/earnings';
 import { calculateAllIndicators } from '@/services/indicators';
 import { evaluateSignal } from '@/services/pipeline';
+import { analyzeTickerContext } from '@/services/ticker-analysis';
 import type { IndicatorValues, PipelineResult } from '@/types';
-import { loadOptimizedConfig } from '@/utils/config-loader';
+import { loadPipelineConfig } from '@/utils/config-loader';
 import { writeToCsv } from '@/utils/csv-writer';
 import { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alerts';
 import { isWhatsAppNotificationConfigured, sendWhatsAppNotification } from '@/utils/whatsapp';
@@ -27,7 +34,10 @@ vi.mock('@/services/patterns', () => ({
   detectPatterns: vi.fn().mockReturnValue({ score: 0, patterns: [] }),
 }));
 vi.mock('@/services/pipeline', () => ({ evaluateSignal: vi.fn() }));
-vi.mock('@/utils/config-loader', () => ({ loadOptimizedConfig: vi.fn() }));
+vi.mock('@/utils/config-loader', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/config-loader')>()),
+  loadPipelineConfig: vi.fn(),
+}));
 vi.mock('@/utils/csv-writer', () => ({ writeToCsv: vi.fn() }));
 vi.mock('@/ui/summary', () => ({ printSummaryTable: vi.fn() }));
 vi.mock('@/utils/whatsapp', () => ({
@@ -136,15 +146,188 @@ beforeEach(() => {
   vi.mocked(calculateAllIndicators).mockReturnValue(indicators);
   vi.mocked(evaluateSignal).mockReturnValue(pipelineResult);
   vi.mocked(getEarningsData).mockResolvedValue(earnings);
-  vi.mocked(loadOptimizedConfig).mockResolvedValue({
-    weights: DEFAULT_PIPELINE_CONFIG.indicatorWeights,
-    thresholds: DEFAULT_PIPELINE_CONFIG.thresholds,
-    patternWeights: DEFAULT_PIPELINE_CONFIG.patternWeights,
-    calibration: DEFAULT_PIPELINE_CONFIG.calibration,
-  });
+  vi.mocked(loadPipelineConfig).mockResolvedValue(structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG));
 });
 
 describe('equity prediction finance inputs', () => {
+  it('replays native historical setup state for the completed latest bar in both live interfaces', async () => {
+    const { evaluateSignal: realEvaluateSignal } =
+      await vi.importActual<typeof import('@/services/pipeline')>('@/services/pipeline');
+    vi.mocked(evaluateSignal).mockImplementation(realEvaluateSignal);
+    const prices = Array.from({ length: 210 }, (_, index) => {
+      const close = 100 + index * 0.5;
+      return {
+        ...bar,
+        date: new Date(Date.UTC(2026, 0, index + 1)),
+        open: close + 1,
+        close,
+        high: close + (index === 209 ? 9 : 1),
+        low: close - 1,
+      };
+    });
+    const benchmarks = prices.map((price) => ({ ...price, close: 100, high: 101, low: 99 }));
+    vi.mocked(getHistoricalPrices).mockResolvedValue(prices);
+    vi.mocked(fetchBenchmarkPrices).mockResolvedValue(benchmarks);
+    vi.mocked(getEarningsData).mockResolvedValue({
+      ...earnings,
+      earningsHistory: [],
+      estimateRevisions: null,
+    });
+    const config = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    const nativeContext = buildTickerContext(prices, benchmarks, benchmarks);
+    if (!nativeContext) throw new Error('fixture warmup unavailable');
+    const first = evaluateLatestSignalWithContext(
+      { ...nativeContext, data: nativeContext.data.slice(0, 206) },
+      'AAPL',
+      config
+    );
+    expect(first?.pipelineResult.qualityBlocked).toBe(true);
+    const latest = evaluateLatestSignalWithContext(nativeContext, 'AAPL', config);
+    expect(latest?.pipelineResult.finalDecision).toBe('HOLD');
+    expect(latest?.pipelineResult.qualityBlocked).toBeUndefined();
+    const historical = runSignalsWithContext(nativeContext, 'AAPL', config);
+    expect(
+      historical.some((signal) => signal.date.getTime() === prices.at(-1)!.date.getTime())
+    ).toBe(false);
+
+    const shared = await analyzeTickerContext('AAPL', 10, { pipelineConfig: config });
+    expect(shared?.pipelineResult).toEqual(latest?.pipelineResult);
+    expect(shared?.result.rsi).toBe(latest?.indicators.rsi);
+    expect(shared?.result.patterns).toEqual(latest?.patterns);
+    vi.clearAllMocks();
+    await predict({ tickers: ['AAPL'], sort: 'asc', format: 'csv' });
+    expect(writeToCsv).toHaveBeenCalledExactlyOnceWith([shared!.result]);
+    expect(sendWhatsAppNotification).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { missingSector: false, expected: 'BUY' },
+    { missingSector: true, expected: 'HOLD' },
+  ] as const)(
+    'preserves actual leader-pullback engine decision $expected across CLI and shared analysis',
+    async ({ missingSector, expected }) => {
+      const { evaluateSignal: realEvaluateSignal } =
+        await vi.importActual<typeof import('@/services/pipeline')>('@/services/pipeline');
+      vi.mocked(evaluateSignal).mockImplementation(realEvaluateSignal);
+      const prices = Array.from({ length: 200 }, (_, index) => {
+        const close = 100 + index * 0.5;
+        return {
+          ...bar,
+          date: new Date(Date.UTC(2026, 0, index + 1)),
+          open: close + 1,
+          close,
+          high: close + (index === 199 ? 9 : 1),
+          low: close - 1,
+        };
+      });
+      const close = prices.at(-1)!.close;
+      vi.mocked(getHistoricalPrices).mockResolvedValue(prices);
+      vi.mocked(calculateAllIndicators).mockReturnValue({
+        ...indicators,
+        rsi: 55,
+        stochasticK: 55,
+        williamsR: -45,
+        sma50: close + 1,
+        sma200: 100,
+        volumeRatio: 1.1,
+        donchUpper: 250,
+      });
+      vi.mocked(getEarningsData).mockResolvedValue({
+        ...earnings,
+        earningsHistory: [],
+        estimateRevisions: null,
+      });
+      vi.mocked(fetchBenchmarkPrices).mockImplementation(async (ticker) =>
+        ticker === 'XLK' && missingSector
+          ? []
+          : prices.map((price) => ({ ...price, close: 100, high: 101, low: 99 }))
+      );
+      const context = await analyzeTickerContext('AAPL', 10);
+      expect(context?.pipelineResult.finalDecision).toBe(expected);
+      expect(context?.pipelineResult.qualityBlocked).toBe(missingSector ? true : undefined);
+      const actualEngineInput = vi.mocked(evaluateSignal).mock.calls[0][0];
+      vi.clearAllMocks();
+
+      await predict({ tickers: ['AAPL'], sort: 'asc', format: 'csv' });
+
+      expect(evaluateSignal).toHaveBeenCalledExactlyOnceWith(actualEngineInput);
+      expect(writeToCsv).toHaveBeenCalledExactlyOnceWith([context!.result]);
+      if (expected === 'BUY') {
+        expect(buildStockReportWhatsAppNotification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            candidates: [expect.objectContaining({ context, gateReasons: gateReasons(context!) })],
+          }),
+          undefined
+        );
+      } else {
+        expect(sendWhatsAppNotification).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('uses a caller-owned full config snapshot without reloading between cache key and analysis', async () => {
+    const frozenConfig = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    frozenConfig.thresholds.buy = 250;
+    const context = await analyzeTickerContext('TEST', 10, { pipelineConfig: frozenConfig });
+    expect(context?.config).toEqual(frozenConfig);
+    expect(context?.config).not.toBe(frozenConfig);
+    expect(context?.config.institutional).not.toBe(frozenConfig.institutional);
+    expect(loadPipelineConfig).not.toHaveBeenCalled();
+    frozenConfig.thresholds.buy = 300;
+    expect(context?.config.thresholds.buy).toBe(250);
+    expect(evaluateSignal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ thresholds: { buy: 250, sell: 130 } }),
+      })
+    );
+  });
+
+  it('uses the same full leader-pullback context, decision and reasons as API/MCP analysis', async () => {
+    const sharedContext = await analyzeTickerContext('TEST', 10);
+    expect(sharedContext).not.toBeNull();
+    if (!sharedContext) throw new Error('fixture analysis unavailable');
+    const sharedInput = vi.mocked(evaluateSignal).mock.calls[0][0];
+    vi.clearAllMocks();
+
+    await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
+
+    expect(evaluateSignal).toHaveBeenCalledExactlyOnceWith(sharedInput);
+    expect(sharedInput.config).toEqual(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    expect(writeToCsv).toHaveBeenCalledExactlyOnceWith([sharedContext.result]);
+    expect(buildStockReportWhatsAppNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidates: [
+          expect.objectContaining({
+            decision: sharedContext.pipelineResult.finalDecision,
+            dataAsOf: sharedContext.result.date,
+            reference: {
+              price: sharedContext.result.close,
+              stopLoss: sharedContext.result.stopLoss,
+              takeProfit: sharedContext.result.takeProfit,
+              atr: sharedContext.result.atr,
+            },
+            gateReasons: gateReasons(sharedContext),
+            context: sharedContext,
+          }),
+        ],
+      }),
+      undefined
+    );
+  });
+
+  it('freezes one complete strategy snapshot for every ticker in a CLI batch', async () => {
+    const config = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    config.thresholds.buy = 250;
+    vi.mocked(loadPipelineConfig).mockResolvedValueOnce(config);
+    await predict({ tickers: ['TEST', 'OII'], sort: 'asc', format: 'csv' });
+    expect(loadPipelineConfig).toHaveBeenCalledOnce();
+    expect(evaluateSignal).toHaveBeenCalledTimes(2);
+    for (const [input] of vi.mocked(evaluateSignal).mock.calls) {
+      expect(input.config).toEqual(config);
+      expect(input.config).not.toBe(config);
+    }
+  });
+
   it('sends one WhatsApp summary after both CSV and prediction persistence', async () => {
     await predict({ tickers: ['TEST', 'OII'], sort: 'asc', format: 'csv' });
 
@@ -172,12 +355,10 @@ describe('equity prediction finance inputs', () => {
   });
 
   it('enriches from the saved decision and actual optimized pipeline context after persistence', async () => {
-    const thresholds = { ...DEFAULT_PIPELINE_CONFIG.thresholds, buy: 432, sell: 198 };
-    vi.mocked(loadOptimizedConfig).mockResolvedValue({
-      weights: DEFAULT_PIPELINE_CONFIG.indicatorWeights,
+    const thresholds = { ...DEFAULT_QUALITY_PIPELINE_CONFIG.thresholds, buy: 332, sell: 198 };
+    vi.mocked(loadPipelineConfig).mockResolvedValue({
+      ...structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG),
       thresholds,
-      patternWeights: DEFAULT_PIPELINE_CONFIG.patternWeights,
-      calibration: DEFAULT_PIPELINE_CONFIG.calibration,
     });
     await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
 
@@ -191,7 +372,7 @@ describe('equity prediction finance inputs', () => {
             dataAsOf: '2026-10-01',
             reference: { price: 100, stopLoss: 97, takeProfit: 106, atr: 2 },
             gateReasons: expect.arrayContaining([
-              expect.stringContaining('threshold 432'),
+              expect.stringContaining('threshold 332'),
               expect.stringContaining('threshold 198'),
             ]),
             context: expect.objectContaining({

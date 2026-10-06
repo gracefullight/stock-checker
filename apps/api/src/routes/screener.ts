@@ -3,6 +3,7 @@ import { TICKER_SECTOR_ETF } from '@stock-checker/core/src/constants/tickers';
 import { getPortfolio } from '@stock-checker/core/src/portfolio/manager';
 import { gaussianChannel } from '@stock-checker/core/src/services/gaussian-channel';
 import { calcBB, calcSMA } from '@stock-checker/core/src/utils/chart-indicators';
+import { loadPipelineConfig } from '@stock-checker/core/src/utils/config-loader';
 import { getSignalHistory } from '@stock-checker/core/src/utils/signal-history';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { cachedAnalyzeTicker } from '@/lib/cached/analyze';
@@ -213,10 +214,11 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
             dollarVolume: d.dollarVolume,
           }));
 
-        const [data, spy, fund] = await Promise.all([
+        const [data, spy, fund, pipelineConfig] = await Promise.all([
           cachedBacktestPrices(ticker, days),
           cachedBenchmarkPrices('SPY', days),
           cachedFundamentals(ticker).catch(() => null),
+          loadPipelineConfig(),
         ]);
 
         if (data.length === 0) {
@@ -231,6 +233,7 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
 
         return reply.send({
           ticker,
+          pipelineConfig,
           candles: toCandles(data),
           spy: spy.map((c) => ({
             date: c.date.toISOString().split('T')[0],

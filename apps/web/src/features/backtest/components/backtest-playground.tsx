@@ -13,6 +13,7 @@ import {
   buildPipelineConfig,
   DEFAULT_PLAYGROUND_PARAMS,
   type PlaygroundParams,
+  playgroundParamsFromConfig,
 } from '@/features/backtest/utils/config';
 import { useBacktestWorker } from '@/features/backtest/utils/use-backtest-worker';
 import { type BacktestDataResponse, getBacktestData } from '@/lib/api';
@@ -44,9 +45,15 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
 
   useEffect(() => {
     let cancelled = false;
+    setData(null);
+    setDataError(null);
+    cancel();
     getBacktestData(ticker)
       .then((d) => {
-        if (!cancelled) setData(d);
+        if (!cancelled) {
+          setParams(playgroundParamsFromConfig(d.pipelineConfig));
+          setData(d);
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -56,7 +63,7 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
     return () => {
       cancelled = true;
     };
-  }, [ticker]);
+  }, [ticker, cancel]);
 
   if (dataError) {
     return (
@@ -87,7 +94,8 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
         <p className="mb-3 text-xs font-mono text-muted-foreground">
           Signals use completed daily bars. Entries use the next session's open, followed by a
           five-session hold. Returns include 10 bps per round trip. Daily closing marks determine
-          drawdown. Results are simulations; optimized parameters are selected on these same bars.
+          drawdown. Parameters start from the active leader-pullback strategy. Edits are research
+          overrides; optimized parameters are selected on these same bars.
         </p>
         <BacktestControls value={params} onChange={setParams} disabled={busy} />
         <div className="mt-4 flex items-center gap-2 flex-wrap">
@@ -95,7 +103,7 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
             size="sm"
             className="font-mono text-xs"
             disabled={busy}
-            onClick={() => run(payload, buildPipelineConfig(params))}
+            onClick={() => run(payload, buildPipelineConfig(params, data.pipelineConfig))}
           >
             {state.status === 'running' ? 'RUNNING…' : 'RUN BACKTEST'}
           </Button>
@@ -104,7 +112,7 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
             variant="secondary"
             className="font-mono text-xs"
             disabled={busy}
-            onClick={() => optimize(payload, OPTIMIZE_TRIALS)}
+            onClick={() => optimize(payload, OPTIMIZE_TRIALS, data.pipelineConfig)}
           >
             {state.status === 'optimizing' ? 'OPTIMIZING…' : `OPTIMIZE (${OPTIMIZE_TRIALS})`}
           </Button>
@@ -139,7 +147,7 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
       </SectionCard>
 
       {state.bestParams && (
-        <SectionCard title="OPTIMIZER BEST PARAMS (mean-reversion search)">
+        <SectionCard title="OPTIMIZER BEST PARAMS (leader-pullback search)">
           <pre className="font-mono text-[10px] text-muted-foreground overflow-x-auto max-h-48">
             {JSON.stringify(
               {

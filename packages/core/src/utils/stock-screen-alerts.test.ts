@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@/constants';
 import type { StockScreenMatch, StockScreenResult } from '@/reports/stock-screen';
 import type { StockReportAlertGenerator } from '@/utils/stock-report-alerts';
 import {
@@ -56,6 +57,7 @@ function fixture(overrides: Partial<StockScreenResult> = {}): StockScreenResult 
       limit: 20,
       timeBudgetMs: 45000,
       engine: 'Fixture final decisions',
+      pipelineConfig: structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG),
       sort: { metric: 'buyScore', order: 'descending', tieBreaker: 'ticker-ascending' },
     },
     coverage: {

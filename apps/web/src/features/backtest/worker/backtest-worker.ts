@@ -71,7 +71,8 @@ self.onmessage = (event: MessageEvent<BacktestWorkerRequest>) => {
             post({ type: 'progress', trial, nTrials, bestValue });
           }
         },
-        { spy, sector }
+        { spy, sector },
+        msg.baseConfig
       );
       post({
         type: 'optimize-result',

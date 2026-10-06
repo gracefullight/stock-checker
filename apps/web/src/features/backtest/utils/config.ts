@@ -13,32 +13,45 @@ export interface PlaygroundParams {
   rsMin: number;
 }
 
-export const DEFAULT_PLAYGROUND_PARAMS: PlaygroundParams = {
-  strategy: DEFAULT_QUALITY_PIPELINE_CONFIG.strategy,
-  buyThreshold: DEFAULT_QUALITY_PIPELINE_CONFIG.thresholds.buy,
-  sellThreshold: DEFAULT_QUALITY_PIPELINE_CONFIG.thresholds.sell,
-  minGapDays: DEFAULT_QUALITY_PIPELINE_CONFIG.clusterFilter.minGapDays,
-  confluenceMinActive: DEFAULT_QUALITY_PIPELINE_CONFIG.confluence.minActive,
-  qualityGateEnabled: DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate.enabled,
-  ibsMax: DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate.ibsMax,
-  rsMin: DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate.rsMin,
-};
-
-export function buildPipelineConfig(params: PlaygroundParams): PipelineConfig {
+export function playgroundParamsFromConfig(config: PipelineConfig): PlaygroundParams {
+  const qualityGate = config.qualityGate ?? DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate;
   return {
-    ...DEFAULT_QUALITY_PIPELINE_CONFIG,
+    strategy: config.strategy,
+    buyThreshold: config.thresholds.buy,
+    sellThreshold: config.thresholds.sell,
+    minGapDays:
+      config.clusterFilter?.minGapDays ?? DEFAULT_QUALITY_PIPELINE_CONFIG.clusterFilter.minGapDays,
+    confluenceMinActive:
+      config.confluence?.minActive ?? DEFAULT_QUALITY_PIPELINE_CONFIG.confluence.minActive,
+    qualityGateEnabled: qualityGate.enabled,
+    ibsMax: qualityGate.ibsMax ?? DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate.ibsMax,
+    rsMin: qualityGate.rsMin ?? DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate.rsMin,
+  };
+}
+
+export const DEFAULT_PLAYGROUND_PARAMS = playgroundParamsFromConfig(
+  DEFAULT_QUALITY_PIPELINE_CONFIG
+);
+
+export function buildPipelineConfig(
+  params: PlaygroundParams,
+  baseConfig: PipelineConfig = DEFAULT_QUALITY_PIPELINE_CONFIG
+): PipelineConfig {
+  const config = structuredClone(baseConfig);
+  return {
+    ...config,
     strategy: params.strategy,
     thresholds: { buy: params.buyThreshold, sell: params.sellThreshold },
     clusterFilter: {
-      ...DEFAULT_QUALITY_PIPELINE_CONFIG.clusterFilter,
+      ...(config.clusterFilter ?? DEFAULT_QUALITY_PIPELINE_CONFIG.clusterFilter),
       minGapDays: params.minGapDays,
     },
     confluence: {
-      ...DEFAULT_QUALITY_PIPELINE_CONFIG.confluence,
+      ...(config.confluence ?? DEFAULT_QUALITY_PIPELINE_CONFIG.confluence),
       minActive: params.confluenceMinActive,
     },
     qualityGate: {
-      ...DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate,
+      ...(config.qualityGate ?? DEFAULT_QUALITY_PIPELINE_CONFIG.qualityGate),
       enabled: params.qualityGateEnabled,
       ibsMax: params.ibsMax,
       rsMin: params.rsMin,

@@ -199,6 +199,27 @@ describe('durable Finviz candidate jobs', () => {
       .mockResolvedValue({ status: 'disabled', reason: 'not-configured' });
   });
 
+  it('preserves the created configuration when a saved job is started after settings change', async () => {
+    const first = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    first.thresholds.buy = 215;
+    const changed = structuredClone(first);
+    changed.thresholds.buy = 250;
+    const load = vi.fn().mockResolvedValueOnce(first).mockResolvedValue(changed);
+    const dependencies = { ...deps(), loadPipelineConfig: load };
+    const created = await createMarketScreenJob(
+      input(['ONE', 'TWO'], { autoStart: false }),
+      dependencies
+    );
+    ids.push(created.job.id);
+
+    await runMarketScreenJob(created.job.id, dependencies);
+    const complete = await settled(created.job.id);
+
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(complete.job.criteria.pipelineConfig).toEqual(first);
+    expect(analyze.mock.calls.map((call) => call[2]?.pipelineConfig)).toEqual([first, first]);
+  });
+
   it('atomically publishes a frozen forward policy only alongside matched final BUY rows', async () => {
     analyze.mockImplementation(async (ticker) =>
       context(ticker, ticker === 'ONE' ? 'BUY' : ticker === 'TWO' ? 'SELL' : 'HOLD')
@@ -308,8 +329,8 @@ describe('durable Finviz candidate jobs', () => {
       excluded: 0,
     });
     expect(analyze.mock.calls.map((call) => call.slice(1))).toEqual([
-      [null, { lookbackDays: 730 }],
-      [null, { lookbackDays: 730 }],
+      [null, { lookbackDays: 730, pipelineConfig: complete.job.criteria.pipelineConfig }],
+      [null, { lookbackDays: 730, pipelineConfig: complete.job.criteria.pipelineConfig }],
     ]);
   });
 
