@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3](https://github.com/gracefullight/stock-checker/compare/v0.7.2...v0.7.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* use plain volatility wording in stock reports ([0bcfe84](https://github.com/gracefullight/stock-checker/commit/0bcfe844382ff5ac15aec19e6f5b379ffeae0d8b))
+
 ## [0.7.2](https://github.com/gracefullight/stock-checker/compare/v0.7.1...v0.7.2) (2026-10-06)
 
 
