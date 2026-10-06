@@ -45,7 +45,7 @@
             "name": "oma-hook-Stop",
             "type": "command",
             "command": "\"$GROK_WORKSPACE_ROOT/.grok/hooks/oma-hook.sh\" --vendor 'grok' --event 'Stop'",
-            "timeout": 15
+            "timeout": 40
           }
         ]
       }

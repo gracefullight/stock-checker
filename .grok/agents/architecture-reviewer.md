@@ -4,7 +4,7 @@ description: Architecture review and recommendation. Use for system design,
   module boundaries, ADRs, and tradeoff analysis.
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 15
+maxTurns: 100
 skills:
   - oma-architecture
 ---

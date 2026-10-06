@@ -5,7 +5,7 @@ description: Documentation drift detection and sync specialist. Use to update
   reflecting recent diffs.
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 15
+maxTurns: 100
 skills:
   - oma-docs
 ---

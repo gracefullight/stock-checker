@@ -61,7 +61,7 @@
       {
         "type": "command",
         "command": "bun \"/Users/gracefullight/workspace/stock-checker/.agents/hooks/core/persistent-mode.ts\"",
-        "timeout": 5
+        "timeout": 30
       }
     ]
   }

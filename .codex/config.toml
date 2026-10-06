@@ -13,16 +13,7 @@ args = [ "mcp" ]
 [mcp_servers.stock_checker]
 command = "mise"
 args = [ "--quiet", "run", "mcp" ]
-env_vars = [
-  "FMP_API_KEY",
-  "TIINGO_API_KEY",
-  "STOCK_CHECKER_DASHBOARD_URL",
-  "WHATSAPP_TO",
-  "WHATSAPP_GATEWAY_URL",
-  "WHATSAPP_GATEWAY_TOKEN",
-  "WHATSAPP_AUTH_DIR",
-  "WHATSAPP_GATEWAY_PORT",
-]
+env_vars = [ "FMP_API_KEY", "TIINGO_API_KEY", "STOCK_CHECKER_DASHBOARD_URL", "WHATSAPP_TO", "WHATSAPP_GATEWAY_URL", "WHATSAPP_GATEWAY_TOKEN", "WHATSAPP_AUTH_DIR", "WHATSAPP_GATEWAY_PORT" ]
 startup_timeout_sec = 30
 tool_timeout_sec = 180
 

@@ -7,7 +7,7 @@ tools:
   - glob
   - shell
 model: inherit
-maxTurns: 10
+maxTurns: 100
 skills:
   - oma-pm
 ---

@@ -3,7 +3,7 @@ name: backend-engineer
 description: Backend implementation. Use for API, authentication, DB migration work.
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 40
+maxTurns: 100
 skills:
   - oma-backend
 ---

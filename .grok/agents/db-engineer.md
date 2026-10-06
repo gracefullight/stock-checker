@@ -4,7 +4,7 @@ description: Database design and implementation specialist. Use for schema, ERD,
   migration, query tuning, vector DB work.
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 25
+maxTurns: 100
 skills:
   - oma-db
 ---

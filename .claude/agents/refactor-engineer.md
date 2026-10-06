@@ -5,7 +5,7 @@ description: Behavior-preserving refactoring specialist. Hotspot repayment,
   observable behavior.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
-maxTurns: 30
+maxTurns: 100
 skills:
   - oma-refactor
 ---

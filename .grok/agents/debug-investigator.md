@@ -4,7 +4,7 @@ description: Bug diagnosis and fix specialist. Error analysis, root cause
   identification, regression test writing.
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 25
+maxTurns: 100
 skills:
   - oma-debug
 ---

@@ -4,7 +4,7 @@ description: React/Next.js/Angular/TypeScript frontend implementation. Use for
   UI, components, styling work.
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 40
+maxTurns: 100
 skills:
   - oma-frontend
   - oma-design

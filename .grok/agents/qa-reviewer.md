@@ -3,7 +3,7 @@ name: qa-reviewer
 description: OWASP security, performance, accessibility, code quality review agent
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 15
+maxTurns: 100
 skills:
   - oma-qa
 ---

@@ -3,7 +3,7 @@ name: pm-planner
 description: PM requirements analysis, task decomposition, API contract definition agent
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 10
+maxTurns: 100
 skills:
   - oma-pm
 ---

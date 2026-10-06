@@ -12,6 +12,8 @@ This skill follows oh-my-agent's CLI-first concept: whenever a vendor's native C
 
 > The direct Gemini path (`gemini -p` stream, `generativelanguage.googleapis.com` API) is deprecated. `agy` is the supported Gemini image route — it's free with Gemini Code Assist and doesn't require billing on AI Studio.
 
+Since `agy` 1.2.16, native image requests use the built-in `image-generator` subagent. OMA asks agy to use that route when available, with `generate_image` as the fallback for older sessions, and to wait for completion before copying the generated image bytes to the requested paths.
+
 ### Invocation
 
 #### Standalone
@@ -19,7 +21,7 @@ This skill follows oh-my-agent's CLI-first concept: whenever a vendor's native C
 ```
 /oma-image a red apple on white background
 /oma-image --vendor all --size 1536x1024 jeju coastline at sunset
-/oma-image -n 3 --quality high --out ./hero "minimalist dashboard hero illustration"
+/oma-image -n 3 --quality high --output-dir ./hero "minimalist dashboard hero illustration"
 ```
 
 #### Shell CLI

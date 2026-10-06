@@ -4,7 +4,7 @@ description: Terraform infrastructure implementation and review. Use for cloud
   provisioning, IAM/OIDC, networking, and terraform plan review.
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 30
+maxTurns: 100
 skills:
   - oma-tf-infra
 ---

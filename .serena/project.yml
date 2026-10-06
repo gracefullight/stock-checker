@@ -192,5 +192,7 @@ additional_workspace_folders: []
 # Note that when using the JetBrains backend, language servers are not used and this list is correspondingly ignored.
 languages:
 - typescript
+- python
 language_servers:
 - typescript
+- python

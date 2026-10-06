@@ -5,7 +5,7 @@ description: Cross-source research specialist. Freely traverses web/docs/code
   questions with cited, trust-labeled, triangulated findings.
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 30
+maxTurns: 100
 skills:
   - oma-search
   - oma-market

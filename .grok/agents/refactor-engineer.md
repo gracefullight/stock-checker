@@ -5,7 +5,7 @@ description: Behavior-preserving refactoring specialist. Hotspot repayment,
   observable behavior.
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 30
+maxTurns: 100
 skills:
   - oma-refactor
 ---

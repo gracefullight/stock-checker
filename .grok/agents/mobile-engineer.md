@@ -4,7 +4,7 @@ description: Flutter/React Native/Swift native mobile implementation. Use for
   mobile app, widgets, SwiftUI, platform feature work.
 tools: run_terminal_cmd, read_file, search_replace, list_dir, grep
 model: grok-build
-maxTurns: 40
+maxTurns: 100
 skills:
   - oma-mobile
 ---

@@ -11,7 +11,7 @@ tools:
   - code
   - subagent
 model: inherit
-maxTurns: 25
+maxTurns: 100
 skills:
   - oma-db
 ---

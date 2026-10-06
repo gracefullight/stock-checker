@@ -10,7 +10,7 @@ tools:
   - code
   - subagent
 model: inherit
-maxTurns: 40
+maxTurns: 100
 skills:
   - oma-backend
 ---
