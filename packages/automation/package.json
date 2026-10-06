@@ -1,0 +1,13 @@
+{
+  "name": "@stock-checker/automation",
+  "version": "0.7.4",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#automation/*": "./*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --experimental-vm-modules --test services/launchd.test.mts whatsapp/baileys-patch.test.mts"
+  }
+}

@@ -1,7 +1,53 @@
-const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
-const { test } = require('node:test');
-const { findReleasePrNumber, prepareRelease, mergeRelease, updateWorkspaceLock } = require('./release.cjs');
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+import {
+  findReleasePrNumber,
+  type GitHubLookupClient,
+  type GitHubReleaseClient,
+  type MergeReleaseOptions,
+  mergeRelease,
+  type PrepareReleaseOptions,
+  type PullListParameters,
+  prepareRelease,
+  type ReleaseChangedFile,
+  type ReleaseFileUpdateParameters,
+  type ReleaseMergeParameters,
+  type ReleaseMergeResponse,
+  type ReleasePullRequest,
+  updateWorkspaceLock,
+} from '#scripts/release.mts';
+
+interface FixturePullRequest extends ReleasePullRequest {
+  user: NonNullable<ReleasePullRequest['user']>;
+  body: string;
+  base: ReleasePullRequest['base'] & { repo: NonNullable<ReleasePullRequest['base']['repo']> };
+  head: ReleasePullRequest['head'] & { repo: NonNullable<ReleasePullRequest['head']['repo']> };
+}
+
+interface FixtureState {
+  pr: FixturePullRequest;
+  baseFiles: Record<string, string>;
+  headFiles: Record<string, string>;
+  files: ReleaseChangedFile[];
+  mainSha: string;
+  branchSha: string;
+  writes: ReleaseFileUpdateParameters[];
+  merges: ReleaseMergeParameters[];
+  pullReads: number;
+  mergeResult: ReleaseMergeResponse;
+  beforePullRead?(state: FixtureState): void;
+  transformPullResponse?(snapshot: FixturePullRequest): FixturePullRequest;
+  mergeError?: Error;
+  comparisonBasehead?: string;
+  comparison?: { status: string; behind_by: number };
+  writeParent?: string;
+}
+
+interface ApiFixture {
+  state: FixtureState;
+  github: GitHubReleaseClient;
+}
 
 const BASE_SHA = 'a'.repeat(40);
 const HEAD_SHA = 'b'.repeat(40);
@@ -13,6 +59,7 @@ const workspaceNames = {
   'apps/api': '@stock-checker/api',
   'apps/mcp': '@stock-checker/mcp',
   'apps/web': '@stock-checker/web',
+  'packages/automation': '@stock-checker/automation',
   'packages/core': '@stock-checker/core',
 };
 
@@ -21,15 +68,23 @@ test('release PR lookup uses a valid action output without querying GitHub', asy
 });
 
 test('release PR lookup rejects malformed action output and invalid numbers', async () => {
-  for (const prOutput of ['{', '{}', 'null', '{"number":"42"}', '{"number":0}', '{"number":-1}', '{"number":1.5}']) {
+  for (const prOutput of [
+    '{',
+    '{}',
+    'null',
+    '{"number":"42"}',
+    '{"number":0}',
+    '{"number":-1}',
+    '{"number":1.5}',
+  ]) {
     await assert.rejects(findReleasePrNumber({ github: {}, context, prOutput }));
   }
 });
 
 test('release PR lookup resumes an existing canonical branch when the action is a no-op', async () => {
   const list = () => {};
-  const calls = [];
-  const github = {
+  const calls: Array<{ method: unknown; parameters: PullListParameters }> = [];
+  const github: GitHubLookupClient = {
     rest: { pulls: { list } },
     paginate: async (method, parameters) => {
       calls.push({ method, parameters });
@@ -37,58 +92,98 @@ test('release PR lookup resumes an existing canonical branch when the action is 
     },
   };
   assert.equal(await findReleasePrNumber({ github, context, prOutput: '' }), 42);
-  assert.deepEqual(calls, [{
-    method: list,
-    parameters: { owner: 'gracefullight', repo: 'stock-checker', state: 'open', base: 'main', head: `gracefullight:${RELEASE_BRANCH}`, per_page: 100 },
-  }]);
+  assert.deepEqual(calls, [
+    {
+      method: list,
+      parameters: {
+        owner: 'gracefullight',
+        repo: 'stock-checker',
+        state: 'open',
+        base: 'main',
+        head: `gracefullight:${RELEASE_BRANCH}`,
+        per_page: 100,
+      },
+    },
+  ]);
 });
 
 test('release PR lookup returns undefined when no pending release exists', async () => {
-  const github = { rest: { pulls: { list: () => {} } }, paginate: async () => [] };
+  const github: GitHubLookupClient = {
+    rest: { pulls: { list: () => {} } },
+    paginate: async () => [],
+  };
   assert.equal(await findReleasePrNumber({ github, context }), undefined);
 });
 
 test('release PR lookup rejects ambiguous or invalid existing pull requests', async () => {
-  for (const pullRequests of [[{ number: 42 }, { number: 43 }], [{ number: '42' }], [{ number: 0 }]]) {
-    const github = { rest: { pulls: { list: () => {} } }, paginate: async () => pullRequests };
+  for (const pullRequests of [
+    [{ number: 42 }, { number: 43 }],
+    [{ number: '42' }],
+    [{ number: 0 }],
+  ]) {
+    const github: GitHubLookupClient = {
+      rest: { pulls: { list: () => {} } },
+      paginate: async () => pullRequests,
+    };
     await assert.rejects(findReleasePrNumber({ github, context }));
   }
 });
 
-function lockFixture(version = '0.0.0') {
+function lockFixture(version = '0.0.0'): string {
   const workspaces = [
     '    "": { "name": "stock-checker", "devDependencies": { "vitest": "^5.0.3", }, },',
-    ...Object.entries(workspaceNames).map(([path, name]) =>
-      `    "${path}": {\n      "name": "${name}",\n      "version": "${version}",\n      "dependencies": { "@stock-checker/core": "workspace:*", "fixture": "0.0.0", },\n    },`,
+    ...Object.entries(workspaceNames).map(
+      ([path, name]) =>
+        `    "${path}": {\n      "name": "${name}",\n      "version": "${version}",\n      "dependencies": { "@stock-checker/core": "workspace:*", "fixture": "0.0.0", },\n    },`
     ),
   ];
-  return `{\n  "lockfileVersion": 1,\n  "configVersion": 1,\n  "workspaces": {\n${workspaces.join('\n')}\n  },\n  "packages": {\n    "fixture": ["fixture@0.0.0", "", {}, "sha512-,}\\\"quoted"],\n  },\n}\n`;
+  return `{\n  "lockfileVersion": 1,\n  "configVersion": 1,\n  "workspaces": {\n${workspaces.join('\n')}\n  },\n  "packages": {\n    "fixture": ["fixture@0.0.0", "", {}, "sha512-,}\\"quoted"],\n  },\n}\n`;
 }
 
-const patchMetadata = '  "patchedDependencies": {\n    "@whiskeysockets/baileys@7.0.0-rc14": "patches/@whiskeysockets%2Fbaileys@7.0.0-rc14.patch",\n  },\n';
+const patchMetadata =
+  '  "patchedDependencies": {\n    "@whiskeysockets/baileys@7.0.0-rc14": "patches/@whiskeysockets%2Fbaileys@7.0.0-rc14.patch",\n  },\n';
 
-function patchedLockFixture(version = '0.0.0') {
+function patchedLockFixture(version = '0.0.0'): string {
   return lockFixture(version).replace('  "packages": {', `${patchMetadata}  "packages": {`);
 }
 
-function apiFixture({ synchronized = false, patched = false } = {}) {
+function apiFixture({
+  synchronized = false,
+  patched = false,
+}: {
+  synchronized?: boolean;
+  patched?: boolean;
+} = {}): ApiFixture {
   const repository = { id: 1, full_name: 'gracefullight/stock-checker' };
-  const baseFiles = {
-    'package.json': JSON.stringify({ name: 'stock-checker', version: '0.0.0', private: true, scripts: { test: 'node --test' } }),
+  const baseFiles: Record<string, string> = {
+    'package.json': JSON.stringify({
+      name: 'stock-checker',
+      version: '0.0.0',
+      private: true,
+      scripts: { test: 'node --test' },
+    }),
     '.release-please-manifest.json': JSON.stringify({ '.': '0.0.0' }),
     'bun.lock': patched ? patchedLockFixture() : lockFixture(),
   };
   for (const [path, name] of Object.entries(workspaceNames)) {
-    baseFiles[`${path}/package.json`] = JSON.stringify({ name, version: '0.0.0', private: true, dependencies: { fixture: '^1.0.0' } });
+    baseFiles[`${path}/package.json`] = JSON.stringify({
+      name,
+      version: '0.0.0',
+      private: true,
+      dependencies: { fixture: '^1.0.0' },
+    });
   }
-  const headFiles = Object.fromEntries(Object.entries(baseFiles).map(([path, text]) => {
-    if (path === 'bun.lock') return [path, synchronized ? updateWorkspaceLock(text, '0.0.0', '0.1.0') : text];
-    const json = JSON.parse(text);
-    json[path === '.release-please-manifest.json' ? '.' : 'version'] = '0.1.0';
-    return [path, JSON.stringify(json)];
-  }));
+  const headFiles = Object.fromEntries(
+    Object.entries(baseFiles).map(([path, text]) => {
+      if (path === 'bun.lock')
+        return [path, synchronized ? updateWorkspaceLock(text, '0.0.0', '0.1.0') : text];
+      const json = JSON.parse(text) as Record<string, unknown>;
+      json[path === '.release-please-manifest.json' ? '.' : 'version'] = '0.1.0';
+      return [path, JSON.stringify(json)];
+    })
+  );
   headFiles['CHANGELOG.md'] = '# Changelog\n\n## 0.1.0\n';
-  const state = {
+  const state: FixtureState = {
     pr: {
       number: 42,
       state: 'open',
@@ -102,7 +197,12 @@ function apiFixture({ synchronized = false, patched = false } = {}) {
     },
     baseFiles,
     headFiles,
-    files: Object.keys(headFiles).filter((path) => path !== 'bun.lock' || synchronized).map((filename) => ({ filename, status: filename === 'CHANGELOG.md' ? 'added' : 'modified' })),
+    files: Object.keys(headFiles)
+      .filter((path) => path !== 'bun.lock' || synchronized)
+      .map((filename) => ({
+        filename,
+        status: filename === 'CHANGELOG.md' ? 'added' : 'modified',
+      })),
     mainSha: BASE_SHA,
     branchSha: HEAD_SHA,
     writes: [],
@@ -110,7 +210,7 @@ function apiFixture({ synchronized = false, patched = false } = {}) {
     pullReads: 0,
     mergeResult: { merged: true, sha: MERGE_SHA, message: 'Pull Request successfully merged' },
   };
-  const github = {
+  const github: GitHubReleaseClient = {
     rest: {
       pulls: {
         get: async () => {
@@ -127,7 +227,9 @@ function apiFixture({ synchronized = false, patched = false } = {}) {
         },
       },
       git: {
-        getRef: async ({ ref }) => ({ data: { object: { sha: ref === 'heads/main' ? state.mainSha : state.branchSha } } }),
+        getRef: async ({ ref }) => ({
+          data: { object: { sha: ref === 'heads/main' ? state.mainSha : state.branchSha } },
+        }),
       },
       repos: {
         compareCommitsWithBasehead: async ({ basehead }) => {
@@ -136,9 +238,19 @@ function apiFixture({ synchronized = false, patched = false } = {}) {
         },
         getContent: async ({ path, ref }) => {
           const files = ref === BASE_SHA ? state.baseFiles : state.headFiles;
-          assert.ok(ref === BASE_SHA || ref === state.pr.head.sha, `Unexpected content ref: ${ref}`);
+          assert.ok(
+            ref === BASE_SHA || ref === state.pr.head.sha,
+            `Unexpected content ref: ${ref}`
+          );
           assert.ok(Object.hasOwn(files, path), `Unknown content path: ${path}`);
-          return { data: { type: 'file', encoding: 'base64', content: Buffer.from(files[path]).toString('base64'), sha: 'f'.repeat(40) } };
+          return {
+            data: {
+              type: 'file',
+              encoding: 'base64',
+              content: Buffer.from(files[path]).toString('base64'),
+              sha: 'f'.repeat(40),
+            },
+          };
         },
         createOrUpdateFileContents: async (parameters) => {
           state.writes.push(parameters);
@@ -156,25 +268,32 @@ function apiFixture({ synchronized = false, patched = false } = {}) {
   return { state, github };
 }
 
-function prepareOptions(fixture) {
+function prepareOptions(fixture: ApiFixture): PrepareReleaseOptions {
   return { github: fixture.github, context, prNumber: 42, expectedBaseSha: BASE_SHA };
 }
 
-function mergeOptions(fixture) {
+function mergeOptions(fixture: ApiFixture): MergeReleaseOptions {
   return { ...prepareOptions(fixture), expectedHeadSha: HEAD_SHA };
 }
 
-test('lock updater changes four workspace versions and preserves dependency data and bytes', () => {
+test('lock updater changes five workspace versions and preserves dependency data and bytes', () => {
   const original = lockFixture();
   const updated = updateWorkspaceLock(original, '0.0.0', '0.1.0');
   assert.equal(updated, original.replaceAll('"version": "0.0.0"', '"version": "0.1.0"'));
   assert.equal(updateWorkspaceLock(updated, '0.1.0', '0.1.0'), updated);
-  assert.equal(updateWorkspaceLock(original.replaceAll('\n', '\r\n'), '0.0.0', '0.1.0'), updated.replaceAll('\n', '\r\n'));
+  assert.equal(
+    updateWorkspaceLock(original.replaceAll('\n', '\r\n'), '0.0.0', '0.1.0'),
+    updated.replaceAll('\n', '\r\n')
+  );
 });
 
 test('lock updater handles the repository Bun lockfile without changing anything else', () => {
-  const original = readFileSync(new URL('../../bun.lock', `file://${__filename}`), 'utf8');
-  const current = JSON.parse(readFileSync(new URL('../../package.json', `file://${__filename}`), 'utf8')).version;
+  const original = readFileSync(new URL('../../bun.lock', import.meta.url), 'utf8');
+  const current = (
+    JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+      version: string;
+    }
+  ).version;
   const [major, minor, patch] = current.split('.');
   const next = `${major}.${minor}.${BigInt(patch) + 1n}`;
   const updated = updateWorkspaceLock(original, current, next);
@@ -185,7 +304,10 @@ test('lock updater preserves intervening Bun patch metadata byte for byte', () =
   const original = patchedLockFixture();
   const expected = original.replaceAll('"version": "0.0.0"', '"version": "0.1.0"');
   assert.equal(updateWorkspaceLock(original, '0.0.0', '0.1.0'), expected);
-  assert.equal(updateWorkspaceLock(original.replaceAll('\n', '\r\n'), '0.0.0', '0.1.0'), expected.replaceAll('\n', '\r\n'));
+  assert.equal(
+    updateWorkspaceLock(original.replaceAll('\n', '\r\n'), '0.0.0', '0.1.0'),
+    expected.replaceAll('\n', '\r\n')
+  );
   assert.ok(expected.includes(patchMetadata));
 });
 
@@ -201,14 +323,28 @@ test('prepare synchronizes workspace versions while retaining Bun patch metadata
 });
 
 for (const [name, change] of [
-  ['modified patch path', (text) => text.replace('patches/@whiskeysockets%2Fbaileys@7.0.0-rc14.patch', 'patches/unrelated.patch')],
+  [
+    'modified patch path',
+    (text) =>
+      text.replace('patches/@whiskeysockets%2Fbaileys@7.0.0-rc14.patch', 'patches/unrelated.patch'),
+  ],
   ['removed patch mapping', (text) => text.replace(patchMetadata, '')],
-  ['additional patch mapping', (text) => text.replace('  "patchedDependencies": {', '  "patchedDependencies": {\n    "fixture@0.0.0": "patches/fixture.patch",')],
-]) {
+  [
+    'additional patch mapping',
+    (text) =>
+      text.replace(
+        '  "patchedDependencies": {',
+        '  "patchedDependencies": {\n    "fixture@0.0.0": "patches/fixture.patch",'
+      ),
+  ],
+] satisfies Array<[string, (text: string) => string]>) {
   test(`prepare rejects ${name} in a release version update`, async () => {
     const fixture = apiFixture({ patched: true, synchronized: true });
     fixture.state.headFiles['bun.lock'] = change(fixture.state.headFiles['bun.lock']);
-    await assert.rejects(prepareRelease(prepareOptions(fixture)), /Unexpected changes in release lockfile/);
+    await assert.rejects(
+      prepareRelease(prepareOptions(fixture)),
+      /Unexpected changes in release lockfile/
+    );
     assert.equal(fixture.state.writes.length, 0);
     assert.equal(fixture.state.merges.length, 0);
   });
@@ -218,11 +354,19 @@ for (const [name, change] of [
   ['missing workspace', (text) => text.replace('"apps/api"', '"apps/other"')],
   ['wrong workspace name', (text) => text.replace('"@stock-checker/api"', '"untrusted-package"')],
   ['mismatched version', (text) => text.replace('"version": "0.0.0"', '"version": "0.2.0"')],
-  ['unexpected root version', (text) => text.replace('"name": "stock-checker",', '"name": "stock-checker", "version": "0.0.0",')],
+  [
+    'unexpected root version',
+    (text) =>
+      text.replace('"name": "stock-checker",', '"name": "stock-checker", "version": "0.0.0",'),
+  ],
   ['unsupported format', (text) => text.replace('"lockfileVersion": 1', '"lockfileVersion": 2')],
-  ['duplicate version', (text) => text.replace('"version": "0.0.0",', '"version": "0.0.0", "version": "0.0.0",')],
-]) {
-  test(`lock updater rejects ${name}`, () => assert.throws(() => updateWorkspaceLock(change(lockFixture()), '0.0.0', '0.1.0')));
+  [
+    'duplicate version',
+    (text) => text.replace('"version": "0.0.0",', '"version": "0.0.0", "version": "0.0.0",'),
+  ],
+] satisfies Array<[string, (text: string) => string]>) {
+  test(`lock updater rejects ${name}`, () =>
+    assert.throws(() => updateWorkspaceLock(change(lockFixture()), '0.0.0', '0.1.0')));
 }
 
 test('prepare rejects unchanged and decreased release versions', async () => {
@@ -239,21 +383,35 @@ test('prepare rejects unchanged and decreased release versions', async () => {
 
 test('prepare rejects malformed PR numbers and SHAs before reading GitHub', async () => {
   const fixture = apiFixture();
-  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), prNumber: '42' }), /number/);
-  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), expectedBaseSha: 'main' }), /SHA/);
+  await assert.rejects(
+    prepareRelease({ ...prepareOptions(fixture), prNumber: '42' as unknown as number }),
+    /number/
+  );
+  await assert.rejects(
+    prepareRelease({ ...prepareOptions(fixture), expectedBaseSha: 'main' }),
+    /SHA/
+  );
   assert.equal(fixture.state.pullReads, 0);
 });
 
 test('lock updater rejects prerelease, leading-zero, missing and malformed versions', () => {
   for (const version of ['01.0.0', '1.0', '1.0.0-beta.1', 'v1.0.0', '', undefined]) {
-    assert.throws(() => updateWorkspaceLock(lockFixture(), '0.0.0', version), /Invalid release version/);
+    assert.throws(
+      () => updateWorkspaceLock(lockFixture(), '0.0.0', version),
+      /Invalid release version/
+    );
   }
 });
 
 test('prepare verifies release files and updates only the release branch lockfile', async () => {
   const fixture = apiFixture();
   const result = await prepareRelease(prepareOptions(fixture));
-  assert.deepEqual(result, { prNumber: 42, headSha: LOCK_SHA, baseSha: BASE_SHA, version: '0.1.0' });
+  assert.deepEqual(result, {
+    prNumber: 42,
+    headSha: LOCK_SHA,
+    baseSha: BASE_SHA,
+    version: '0.1.0',
+  });
   assert.equal(fixture.state.writes.length, 1);
   assert.equal(fixture.state.writes[0].path, 'bun.lock');
   assert.equal(fixture.state.writes[0].branch, RELEASE_BRANCH);
@@ -270,40 +428,214 @@ test('prepare retries an already synchronized release without an extra commit', 
 
 test('prepare accepts the linked release header used after the first release', async () => {
   const fixture = apiFixture({ synchronized: true });
-  fixture.state.pr.body = fixture.state.pr.body.replace('## 0.1.0', '## [0.1.0](https://github.com/gracefullight/stock-checker/compare/v0.0.0...v0.1.0)');
+  fixture.state.pr.body = fixture.state.pr.body.replace(
+    '## 0.1.0',
+    '## [0.1.0](https://github.com/gracefullight/stock-checker/compare/v0.0.0...v0.1.0)'
+  );
   assert.equal((await prepareRelease(prepareOptions(fixture))).version, '0.1.0');
 });
 
 for (const [name, change] of [
-  ['wrong pull request number', (state) => { state.pr.number = 43; }],
-  ['fork', (state) => { state.pr.head.repo = { id: 2, full_name: 'attacker/stock-checker' }; }],
-  ['human author', (state) => { state.pr.user.login = 'gracefullight'; }],
-  ['non-bot author type', (state) => { state.pr.user.type = 'User'; }],
-  ['wrong branch', (state) => { state.pr.head.ref = 'arbitrary-feature'; }],
-  ['wrong base branch', (state) => { state.pr.base.ref = 'development'; }],
-  ['draft', (state) => { state.pr.draft = true; }],
-  ['closed pull request', (state) => { state.pr.state = 'closed'; }],
-  ['missing pending label', (state) => { state.pr.labels = []; }],
-  ['advanced main', (state) => { state.mainSha = MERGE_SHA; }],
-  ['changed branch ref', (state) => { state.branchSha = MERGE_SHA; }],
-  ['unexpected file', (state) => { state.files.push({ filename: '.github/workflows/release.yml', status: 'modified' }); }],
-  ['renamed file', (state) => { state.files[0].previous_filename = '.github/workflows/release.yml'; }],
-  ['deleted file', (state) => { state.files[0].status = 'removed'; }],
-  ['missing version file', (state) => { state.files = state.files.filter((file) => file.filename !== 'apps/api/package.json'); }],
-  ['mismatched package version', (state) => { state.headFiles['apps/api/package.json'] = state.headFiles['apps/api/package.json'].replace('0.1.0', '0.2.0'); }],
-  ['mismatched title version', (state) => { state.pr.title = 'chore(main): release 9.9.9'; }],
-  ['unexpected title format', (state) => { state.pr.title = 'Release 0.1.0'; }],
-  ['mismatched body version', (state) => { state.pr.body = state.pr.body.replace('## 0.1.0', '## 9.9.9'); }],
-  ['missing body', (state) => { state.pr.body = null; }],
-  ['missing body header', (state) => { state.pr.body = 'Release 0.1.0'; }],
-  ['duplicate release headers', (state) => { state.pr.body += '\n## 9.9.9 (2026-10-05)\n'; }],
-  ['unexpected first header', (state) => { state.pr.body = `## Other release\n${state.pr.body}`; }],
-  ['modified package scripts', (state) => { state.headFiles['package.json'] = state.headFiles['package.json'].replace('node --test', 'curl attacker'); }],
-  ['modified dependencies', (state) => { state.headFiles['apps/api/package.json'] = state.headFiles['apps/api/package.json'].replace('^1.0.0', '^2.0.0'); }],
-  ['unexpected manifest data', (state) => { state.headFiles['.release-please-manifest.json'] = JSON.stringify({ '.': '0.1.0', unsafe: '0.1.0' }); }],
-  ['modified lock dependencies', (state) => { state.headFiles['bun.lock'] = state.headFiles['bun.lock'].replace('fixture@0.0.0', 'fixture@9.9.9'); }],
-  ['old base lock versions', (state) => { state.baseFiles['bun.lock'] = lockFixture('0.2.0'); }],
-]) {
+  [
+    'wrong pull request number',
+    (state) => {
+      state.pr.number = 43;
+    },
+  ],
+  [
+    'fork',
+    (state) => {
+      state.pr.head.repo = { id: 2, full_name: 'attacker/stock-checker' };
+    },
+  ],
+  [
+    'human author',
+    (state) => {
+      state.pr.user.login = 'gracefullight';
+    },
+  ],
+  [
+    'non-bot author type',
+    (state) => {
+      state.pr.user.type = 'User';
+    },
+  ],
+  [
+    'wrong branch',
+    (state) => {
+      state.pr.head.ref = 'arbitrary-feature';
+    },
+  ],
+  [
+    'wrong base branch',
+    (state) => {
+      state.pr.base.ref = 'development';
+    },
+  ],
+  [
+    'draft',
+    (state) => {
+      state.pr.draft = true;
+    },
+  ],
+  [
+    'closed pull request',
+    (state) => {
+      state.pr.state = 'closed';
+    },
+  ],
+  [
+    'missing pending label',
+    (state) => {
+      state.pr.labels = [];
+    },
+  ],
+  [
+    'advanced main',
+    (state) => {
+      state.mainSha = MERGE_SHA;
+    },
+  ],
+  [
+    'changed branch ref',
+    (state) => {
+      state.branchSha = MERGE_SHA;
+    },
+  ],
+  [
+    'unexpected file',
+    (state) => {
+      state.files.push({ filename: '.github/workflows/release.yml', status: 'modified' });
+    },
+  ],
+  [
+    'renamed file',
+    (state) => {
+      state.files[0].previous_filename = '.github/workflows/release.yml';
+    },
+  ],
+  [
+    'deleted file',
+    (state) => {
+      state.files[0].status = 'removed';
+    },
+  ],
+  [
+    'missing version file',
+    (state) => {
+      state.files = state.files.filter((file) => file.filename !== 'apps/api/package.json');
+    },
+  ],
+  [
+    'missing automation version file',
+    (state) => {
+      state.files = state.files.filter(
+        (file) => file.filename !== 'packages/automation/package.json'
+      );
+    },
+  ],
+  [
+    'mismatched package version',
+    (state) => {
+      state.headFiles['apps/api/package.json'] = state.headFiles['apps/api/package.json'].replace(
+        '0.1.0',
+        '0.2.0'
+      );
+    },
+  ],
+  [
+    'mismatched automation package version',
+    (state) => {
+      state.headFiles['packages/automation/package.json'] = state.headFiles[
+        'packages/automation/package.json'
+      ].replace('0.1.0', '0.2.0');
+    },
+  ],
+  [
+    'mismatched title version',
+    (state) => {
+      state.pr.title = 'chore(main): release 9.9.9';
+    },
+  ],
+  [
+    'unexpected title format',
+    (state) => {
+      state.pr.title = 'Release 0.1.0';
+    },
+  ],
+  [
+    'mismatched body version',
+    (state) => {
+      state.pr.body = state.pr.body.replace('## 0.1.0', '## 9.9.9');
+    },
+  ],
+  [
+    'missing body',
+    (state) => {
+      state.pr.body = null as unknown as string;
+    },
+  ],
+  [
+    'missing body header',
+    (state) => {
+      state.pr.body = 'Release 0.1.0';
+    },
+  ],
+  [
+    'duplicate release headers',
+    (state) => {
+      state.pr.body += '\n## 9.9.9 (2026-10-05)\n';
+    },
+  ],
+  [
+    'unexpected first header',
+    (state) => {
+      state.pr.body = `## Other release\n${state.pr.body}`;
+    },
+  ],
+  [
+    'modified package scripts',
+    (state) => {
+      state.headFiles['package.json'] = state.headFiles['package.json'].replace(
+        'node --test',
+        'curl attacker'
+      );
+    },
+  ],
+  [
+    'modified dependencies',
+    (state) => {
+      state.headFiles['apps/api/package.json'] = state.headFiles['apps/api/package.json'].replace(
+        '^1.0.0',
+        '^2.0.0'
+      );
+    },
+  ],
+  [
+    'unexpected manifest data',
+    (state) => {
+      state.headFiles['.release-please-manifest.json'] = JSON.stringify({
+        '.': '0.1.0',
+        unsafe: '0.1.0',
+      });
+    },
+  ],
+  [
+    'modified lock dependencies',
+    (state) => {
+      state.headFiles['bun.lock'] = state.headFiles['bun.lock'].replace(
+        'fixture@0.0.0',
+        'fixture@9.9.9'
+      );
+    },
+  ],
+  [
+    'old base lock versions',
+    (state) => {
+      state.baseFiles['bun.lock'] = lockFixture('0.2.0');
+    },
+  ],
+] satisfies Array<[string, (state: FixtureState) => void]>) {
   test(`prepare rejects ${name} before mutating GitHub`, async () => {
     const fixture = apiFixture();
     change(fixture.state);
@@ -324,7 +656,7 @@ test('prepare detects branch races before writing the lockfile', async () => {
 
 test('prepare waits for the initial PR base and head snapshot to catch up to pinned refs', async () => {
   const fixture = apiFixture();
-  const waits = [];
+  const waits: number[] = [];
   let staleReads = 2;
   fixture.state.transformPullResponse = (snapshot) => {
     if (staleReads > 0) {
@@ -334,7 +666,12 @@ test('prepare waits for the initial PR base and head snapshot to catch up to pin
     }
     return snapshot;
   };
-  const result = await prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } });
+  const result = await prepareRelease({
+    ...prepareOptions(fixture),
+    wait: async (delay) => {
+      waits.push(delay);
+    },
+  });
   assert.equal(result.headSha, LOCK_SHA);
   assert.equal(fixture.state.comparisonBasehead, `${BASE_SHA}...${HEAD_SHA}`);
   assert.deepEqual(waits, [1000, 1000]);
@@ -342,12 +679,20 @@ test('prepare waits for the initial PR base and head snapshot to catch up to pin
 
 test('prepare bounds the wait for an initial stale PR snapshot', async () => {
   const fixture = apiFixture();
-  const waits = [];
+  const waits: number[] = [];
   fixture.state.transformPullResponse = (snapshot) => {
     snapshot.base.sha = 'e'.repeat(40);
     return snapshot;
   };
-  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /Timed out waiting for initial/);
+  await assert.rejects(
+    prepareRelease({
+      ...prepareOptions(fixture),
+      wait: async (delay) => {
+        waits.push(delay);
+      },
+    }),
+    /Timed out waiting for initial/
+  );
   assert.deepEqual(waits, [1000, 1000, 1000, 1000, 1000]);
   assert.equal(fixture.state.pullReads, 6);
   assert.equal(fixture.state.writes.length, 0);
@@ -364,8 +709,13 @@ test('prepare permits only the pinned internally consistent old metadata until c
     }
     return snapshot;
   };
-  const waits = [];
-  const result = await prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } });
+  const waits: number[] = [];
+  const result = await prepareRelease({
+    ...prepareOptions(fixture),
+    wait: async (delay) => {
+      waits.push(delay);
+    },
+  });
   assert.equal(result.version, '0.1.0');
   assert.deepEqual(waits, [1000, 1000]);
 });
@@ -378,8 +728,16 @@ test('prepare rejects a third old metadata snapshot during initial propagation',
     snapshot.body = snapshot.body.replace('## 0.1.0', `## ${version}`);
     return snapshot;
   };
-  const waits = [];
-  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /metadata changed while waiting/);
+  const waits: number[] = [];
+  await assert.rejects(
+    prepareRelease({
+      ...prepareOptions(fixture),
+      wait: async (delay) => {
+        waits.push(delay);
+      },
+    }),
+    /metadata changed while waiting/
+  );
   assert.deepEqual(waits, [1000]);
   assert.equal(fixture.state.writes.length, 0);
 });
@@ -391,15 +749,18 @@ test('prepare rejects main or branch changes during initial snapshot propagation
       snapshot.base.sha = 'e'.repeat(40);
       return snapshot;
     };
-    const waits = [];
-    await assert.rejects(prepareRelease({
-      ...prepareOptions(fixture),
-      wait: async (delay) => {
-        waits.push(delay);
-        if (reference === 'main') fixture.state.mainSha = MERGE_SHA;
-        else fixture.state.branchSha = MERGE_SHA;
-      },
-    }), /Main advanced|branch changed while waiting/);
+    const waits: number[] = [];
+    await assert.rejects(
+      prepareRelease({
+        ...prepareOptions(fixture),
+        wait: async (delay) => {
+          waits.push(delay);
+          if (reference === 'main') fixture.state.mainSha = MERGE_SHA;
+          else fixture.state.branchSha = MERGE_SHA;
+        },
+      }),
+      /Main advanced|branch changed while waiting/
+    );
     assert.deepEqual(waits, [1000]);
     assert.equal(fixture.state.pullReads, 1);
     assert.equal(fixture.state.writes.length, 0);
@@ -407,7 +768,7 @@ test('prepare rejects main or branch changes during initial snapshot propagation
 });
 
 test('prepare rejects a third head or base snapshot during initial propagation', async () => {
-  for (const field of ['head', 'base']) {
+  for (const field of ['head', 'base'] as const) {
     const fixture = apiFixture();
     fixture.state.transformPullResponse = (snapshot) => {
       snapshot.base.sha = 'e'.repeat(40);
@@ -415,8 +776,16 @@ test('prepare rejects a third head or base snapshot during initial propagation',
       if (fixture.state.pullReads > 1) snapshot[field].sha = 'f'.repeat(40);
       return snapshot;
     };
-    const waits = [];
-    await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /changed while waiting for initial/);
+    const waits: number[] = [];
+    await assert.rejects(
+      prepareRelease({
+        ...prepareOptions(fixture),
+        wait: async (delay) => {
+          waits.push(delay);
+        },
+      }),
+      /changed while waiting for initial/
+    );
     assert.deepEqual(waits, [1000]);
     assert.equal(fixture.state.writes.length, 0);
   }
@@ -442,8 +811,15 @@ test('prepare preserves provenance and metadata guards for an initial stale snap
       if (field === 'body') snapshot.body = snapshot.body.replace('## 0.1.0', '## 9.9.9');
       return snapshot;
     };
-    const waits = [];
-    await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }));
+    const waits: number[] = [];
+    await assert.rejects(
+      prepareRelease({
+        ...prepareOptions(fixture),
+        wait: async (delay) => {
+          waits.push(delay);
+        },
+      })
+    );
     assert.deepEqual(waits, []);
     assert.equal(fixture.state.writes.length, 0);
   }
@@ -459,7 +835,7 @@ test('prepare detects branch races during the GitHub content update', async () =
 test('prepare waits only for its own lockfile commit to propagate to the PR API', async () => {
   const fixture = apiFixture();
   let staleReads = 2;
-  const waits = [];
+  const waits: number[] = [];
   fixture.state.transformPullResponse = (snapshot) => {
     if (fixture.state.writes.length && staleReads > 0) {
       staleReads -= 1;
@@ -467,7 +843,12 @@ test('prepare waits only for its own lockfile commit to propagate to the PR API'
     }
     return snapshot;
   };
-  const result = await prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } });
+  const result = await prepareRelease({
+    ...prepareOptions(fixture),
+    wait: async (delay) => {
+      waits.push(delay);
+    },
+  });
   assert.equal(result.headSha, LOCK_SHA);
   assert.deepEqual(waits, [1000, 1000]);
   assert.equal(fixture.state.writes.length, 1);
@@ -475,12 +856,20 @@ test('prepare waits only for its own lockfile commit to propagate to the PR API'
 
 test('prepare bounds the wait for a permanently stale PR API snapshot', async () => {
   const fixture = apiFixture();
-  const waits = [];
+  const waits: number[] = [];
   fixture.state.transformPullResponse = (snapshot) => {
     if (fixture.state.writes.length) snapshot.head.sha = HEAD_SHA;
     return snapshot;
   };
-  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /Timed out waiting/);
+  await assert.rejects(
+    prepareRelease({
+      ...prepareOptions(fixture),
+      wait: async (delay) => {
+        waits.push(delay);
+      },
+    }),
+    /Timed out waiting/
+  );
   assert.deepEqual(waits, [1000, 1000, 1000, 1000, 1000]);
   assert.equal(fixture.state.pullReads, 8);
   assert.equal(fixture.state.merges.length, 0);
@@ -488,26 +877,42 @@ test('prepare bounds the wait for a permanently stale PR API snapshot', async ()
 
 test('prepare rejects a third PR head while waiting for its own lockfile commit', async () => {
   const fixture = apiFixture();
-  const waits = [];
+  const waits: number[] = [];
   fixture.state.transformPullResponse = (snapshot) => {
     if (fixture.state.writes.length) snapshot.head.sha = MERGE_SHA;
     return snapshot;
   };
-  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /head changed/);
+  await assert.rejects(
+    prepareRelease({
+      ...prepareOptions(fixture),
+      wait: async (delay) => {
+        waits.push(delay);
+      },
+    }),
+    /head changed/
+  );
   assert.deepEqual(waits, []);
   assert.equal(fixture.state.merges.length, 0);
 });
 
 test('prepare rejects a changed branch ref before polling the PR API', async () => {
   const fixture = apiFixture();
-  const waits = [];
+  const waits: number[] = [];
   const update = fixture.github.rest.repos.createOrUpdateFileContents;
   fixture.github.rest.repos.createOrUpdateFileContents = async (parameters) => {
     const result = await update(parameters);
     fixture.state.branchSha = MERGE_SHA;
     return result;
   };
-  await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }), /branch changed while waiting/);
+  await assert.rejects(
+    prepareRelease({
+      ...prepareOptions(fixture),
+      wait: async (delay) => {
+        waits.push(delay);
+      },
+    }),
+    /branch changed while waiting/
+  );
   assert.deepEqual(waits, []);
   assert.equal(fixture.state.pullReads, 2);
   assert.equal(fixture.state.merges.length, 0);
@@ -516,7 +921,7 @@ test('prepare rejects a changed branch ref before polling the PR API', async () 
 test('prepare preserves base and metadata guards while a lockfile commit propagates', async () => {
   for (const change of ['base', 'author', 'title', 'body']) {
     const fixture = apiFixture();
-    const waits = [];
+    const waits: number[] = [];
     fixture.state.beforePullRead = (state) => {
       if (state.writes.length) {
         if (change === 'base') state.pr.base.sha = MERGE_SHA;
@@ -525,7 +930,14 @@ test('prepare preserves base and metadata guards while a lockfile commit propaga
         if (change === 'body') state.pr.body = state.pr.body.replace('## 0.1.0', '## 9.9.9');
       }
     };
-    await assert.rejects(prepareRelease({ ...prepareOptions(fixture), wait: async (delay) => { waits.push(delay); } }));
+    await assert.rejects(
+      prepareRelease({
+        ...prepareOptions(fixture),
+        wait: async (delay) => {
+          waits.push(delay);
+        },
+      })
+    );
     assert.deepEqual(waits, []);
     assert.equal(fixture.state.merges.length, 0);
   }
@@ -536,9 +948,13 @@ test('merge uses the validated SHA and squash method with a literal commit messa
   const result = await mergeRelease(mergeOptions(fixture));
   assert.deepEqual(result, { merged: true, sha: MERGE_SHA, version: '0.1.0' });
   assert.deepEqual(fixture.state.merges[0], {
-    owner: 'gracefullight', repo: 'stock-checker', pull_number: 42,
-    sha: HEAD_SHA, merge_method: 'squash',
-    commit_title: 'chore(main): release 0.1.0', commit_message: 'Release Please automated release.',
+    owner: 'gracefullight',
+    repo: 'stock-checker',
+    pull_number: 42,
+    sha: HEAD_SHA,
+    merge_method: 'squash',
+    commit_title: 'chore(main): release 0.1.0',
+    commit_message: 'Release Please automated release.',
   });
 });
 
@@ -591,7 +1007,8 @@ test('merge propagates API failures and rejects unmerged or invalid-SHA response
   for (const failure of ['api', 'not-merged', 'missing-sha']) {
     const fixture = apiFixture({ synchronized: true });
     if (failure === 'api') fixture.state.mergeError = new Error('HTTP 409 merge conflict');
-    else if (failure === 'not-merged') fixture.state.mergeResult = { merged: false, message: 'Merge blocked' };
+    else if (failure === 'not-merged')
+      fixture.state.mergeResult = { merged: false, message: 'Merge blocked' };
     else fixture.state.mergeResult.sha = null;
     await assert.rejects(mergeRelease(mergeOptions(fixture)));
   }

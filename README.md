@@ -6,10 +6,11 @@ engine, web dashboards, local MCP reports, a CLI, and WhatsApp notifications.
 | Workspace | Purpose |
 |---|---|
 | `packages/core` | Signals, backtests, persistence, and CLI |
+| `packages/automation` | TypeScript service tooling and WhatsApp SDK regressions |
 | `apps/api` | Fastify API — port 5101 |
 | `apps/web` | Next.js dashboard — port 5100 |
 | `apps/mcp` | Local stdio MCP reports and screening |
-| `tools/finance` | Python 3.14 finance tools, Ruff, and Pyrefly |
+| `packages/finance` | Python 3.14 finance tools, Ruff, and Pyrefly |
 
 | Screener | Ticker detail |
 |---|---|
@@ -218,7 +219,10 @@ mise run deps:update
 ```
 
 Add `:core`, `:api`, `:web`, or `:mcp` to `test` / `typecheck` for scoped checks.
-Python uses `tools/finance/uv.lock`; `finance:run` executes scripts, and
+mise imports Bun workspace scripts using its experimental Node task inference;
+`mise run //apps/web:typecheck` runs the package script directly. Automation
+uses `.mts` and `tsx`; `typecheck:automation` is included in the same quality gate.
+Python uses `packages/finance/uv.lock`; `finance:run` executes scripts, and
 `finance:deps:outdated` / `finance:deps:update` maintain the lock.
 [Quality](.github/workflows/quality.yml) includes application and Python checks;
 [daily data](.github/workflows/daily-data.yml) commits CSV predictions, and

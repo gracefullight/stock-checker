@@ -1,12 +1,11 @@
-'use strict';
-
-const { execFile } = require('node:child_process');
-const { constants } = require('node:fs');
-const fs = require('node:fs/promises');
-const { homedir } = require('node:os');
-const path = require('node:path');
-const { randomUUID } = require('node:crypto');
-const { isDeepStrictEqual, promisify } = require('node:util');
+import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { constants, type Stats } from 'node:fs';
+import * as fs from 'node:fs/promises';
+import { homedir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual, promisify } from 'node:util';
 
 const execute = promisify(execFile);
 const SERVICE_LABEL = 'com.stock-checker.whatsapp';
@@ -17,15 +16,121 @@ const TASKS = new Set(['whatsapp:gateway', 'whatsapp:link']);
 const SERVICES = new Set(['whatsapp', 'daily-report']);
 const SAFE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 
+export type ServiceName = 'whatsapp' | 'daily-report';
+export type ServiceCommand = 'install' | 'start' | 'restart' | 'stop' | 'status' | 'uninstall';
+type ServiceTask = 'whatsapp:gateway' | 'whatsapp:link' | 'daily-report';
+
+export interface ServiceRunOptions {
+  cwd: string;
+}
+
+export type ServiceRunner = (
+  program: string,
+  arguments_: readonly string[],
+  options: ServiceRunOptions
+) => Promise<{ stdout: string; stderr: string }>;
+
+export interface ServiceManagerOptions {
+  service?: ServiceName;
+  platform?: string;
+  uid?: number;
+  environment?: NodeJS.ProcessEnv;
+  run?: ServiceRunner;
+  fs?: Pick<
+    typeof fs,
+    | 'access'
+    | 'chmod'
+    | 'link'
+    | 'lstat'
+    | 'mkdir'
+    | 'open'
+    | 'readFile'
+    | 'realpath'
+    | 'rename'
+    | 'stat'
+    | 'unlink'
+  >;
+  projectRoot?: string;
+  homeDirectory?: string;
+  misePath?: string;
+  asidePath?: string;
+}
+
+export type ServiceConfiguration = {
+  Label: string;
+  StockCheckerServiceVersion: number;
+  StockCheckerProjectRoot: string;
+  ProgramArguments: [string, '--quiet', 'run', ServiceTask];
+  WorkingDirectory: string;
+  EnvironmentVariables: { PATH: string; WHATSAPP_MANAGED_SERVICE?: string };
+  RunAtLoad: boolean;
+  KeepAlive: boolean;
+  StartInterval?: number;
+  ThrottleInterval: number;
+  ExitTimeOut: number;
+  ProcessType: string;
+  AbandonProcessGroup: boolean;
+  Umask: number;
+  StandardOutPath: string;
+  StandardErrorPath: string;
+};
+
+export interface ServiceStatus {
+  service: ServiceName;
+  label: string;
+  installed: boolean;
+  loaded: boolean;
+  state: 'running' | 'waiting' | 'stopped' | 'not-installed';
+  pairing?: boolean;
+  timezone?: string;
+  startWindow?: string;
+  tickIntervalSeconds?: number;
+  pid?: number;
+  lastExitCode?: number;
+}
+
+interface ServiceContext {
+  projectRoot: string;
+  launchAgents: string;
+  logsDirectory: string;
+  plistPath: string;
+  stdoutPath: string;
+  stderrPath: string;
+  domain: string;
+  target: string;
+}
+
+interface OwnedConfiguration {
+  configuration: ServiceConfiguration;
+  stat: Stats;
+}
+
+interface LoadedService {
+  origin: string | undefined;
+  pid: number | undefined;
+  lastExitCode: number | undefined;
+}
+
+export interface ServiceManager {
+  install(options?: { link?: boolean }): Promise<ServiceStatus>;
+  start(): Promise<ServiceStatus>;
+  restart(): Promise<ServiceStatus>;
+  stop(): Promise<ServiceStatus>;
+  status(): Promise<ServiceStatus>;
+  uninstall(): Promise<ServiceStatus>;
+}
+
 class ServiceError extends Error {
-  constructor(code) {
+  readonly code: string;
+
+  constructor(code: string) {
     super(code);
     this.name = 'ServiceError';
     this.code = code;
   }
 }
 
-function xmlEscape(value) {
+function xmlEscape(value: unknown): string {
   const text = String(value);
   if (
     Array.from(text).some((character) => {
@@ -38,18 +143,20 @@ function xmlEscape(value) {
   return text.replace(
     /[<>&"']/g,
     (character) =>
-      ({
-        '<': '&lt;',
-        '>': '&gt;',
-        '&': '&amp;',
-        '"': '&quot;',
-        "'": '&apos;',
-      })[character]
+      (
+        ({
+          '<': '&lt;',
+          '>': '&gt;',
+          '&': '&amp;',
+          '"': '&quot;',
+          "'": '&apos;',
+        }) as Record<string, string>
+      )[character]
   );
 }
 
-function renderPlist(configuration) {
-  function render(value, indentation) {
+function renderPlist(configuration: Record<string, unknown>): string {
+  function render(value: unknown, indentation: number): string {
     const space = '  '.repeat(indentation);
     if (typeof value === 'boolean') return `${space}<${value ? 'true' : 'false'}/>`;
     if (typeof value === 'number') return `${space}<integer>${value}</integer>`;
@@ -57,7 +164,7 @@ function renderPlist(configuration) {
     if (Array.isArray(value)) {
       return `${space}<array>\n${value.map((item) => render(item, indentation + 1)).join('\n')}\n${space}</array>`;
     }
-    const entries = Object.entries(value)
+    const entries = Object.entries(value as Record<string, unknown>)
       .map(
         ([key, item]) => `${space}  <key>${xmlEscape(key)}</key>\n${render(item, indentation + 1)}`
       )
@@ -71,10 +178,14 @@ function renderPlist(configuration) {
   );
 }
 
-function parseArguments(arguments_) {
+function parseArguments(arguments_: readonly string[]): {
+  command: ServiceCommand;
+  service: ServiceName;
+  link: boolean;
+} {
   const [command, ...options] = arguments_;
-  if (!COMMANDS.has(command)) throw new ServiceError('invalid-command');
-  let service;
+  if (!command || !COMMANDS.has(command)) throw new ServiceError('invalid-command');
+  let service: string | undefined;
   let link = false;
   for (const option of options) {
     if (option === '--link' && command === 'install' && !link) link = true;
@@ -83,14 +194,19 @@ function parseArguments(arguments_) {
   }
   service ??= 'whatsapp';
   if (service === 'daily-report' && link) throw new ServiceError('invalid-arguments');
-  return { command, service, link };
+  return { command: command as ServiceCommand, service: service as ServiceName, link };
 }
 
-async function defaultRun(program, arguments_, options) {
-  return execute(program, arguments_, { ...options, timeout: 15_000, maxBuffer: 262_144 });
-}
+const defaultRun: ServiceRunner = async (program, arguments_, options) => {
+  return execute(program, [...arguments_], {
+    ...options,
+    timeout: 15_000,
+    maxBuffer: 262_144,
+    encoding: 'utf8',
+  });
+};
 
-function createServiceManager(options = {}) {
+function createServiceManager(options: ServiceManagerOptions = {}): ServiceManager {
   const service = options.service ?? 'whatsapp';
   if (!SERVICES.has(service)) throw new ServiceError('invalid-arguments');
   const daily = service === 'daily-report';
@@ -101,13 +217,16 @@ function createServiceManager(options = {}) {
   const environment = options.environment ?? process.env;
   const run = options.run ?? defaultRun;
   const io = options.fs ?? fs;
-  const requestedRoot = path.resolve(options.projectRoot ?? path.join(__dirname, '../..'));
+  const requestedRoot = path.resolve(
+    options.projectRoot ?? fileURLToPath(new URL('../../..', import.meta.url))
+  );
   const homeDirectory = path.resolve(options.homeDirectory ?? homedir());
-  let context;
+  let context: ServiceContext;
 
   async function initialize() {
     if (platform !== 'darwin') throw new ServiceError('macos-required');
-    if (!Number.isSafeInteger(uid) || uid <= 0) throw new ServiceError('user-session-required');
+    if (typeof uid !== 'number' || !Number.isSafeInteger(uid) || uid <= 0)
+      throw new ServiceError('user-session-required');
     if (context) return context;
     const projectRoot = await io.realpath(requestedRoot);
     const launchAgents = path.join(homeDirectory, 'Library/LaunchAgents');
@@ -125,7 +244,7 @@ function createServiceManager(options = {}) {
     return context;
   }
 
-  async function command(program, arguments_, failureCode) {
+  async function command(program: string, arguments_: readonly string[], failureCode: string) {
     try {
       return await run(program, arguments_, { cwd: context.projectRoot });
     } catch {
@@ -133,16 +252,16 @@ function createServiceManager(options = {}) {
     }
   }
 
-  async function statOrMissing(file) {
+  async function statOrMissing(file: string): Promise<Stats | undefined> {
     try {
       return await io.lstat(file);
     } catch (error) {
-      if (error.code === 'ENOENT') return undefined;
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
       throw new ServiceError('filesystem-inspection-failed');
     }
   }
 
-  async function ensureDirectory(directory, privateMode = false) {
+  async function ensureDirectory(directory: string, privateMode = false): Promise<void> {
     const parent = path.dirname(directory);
     if (parent !== directory) {
       const parentStat = await statOrMissing(parent);
@@ -159,8 +278,8 @@ function createServiceManager(options = {}) {
     if (privateMode) await io.chmod(directory, 0o700);
   }
 
-  async function ensurePrivateLog(file) {
-    let handle;
+  async function ensurePrivateLog(file: string) {
+    let handle: fs.FileHandle | undefined;
     try {
       handle = await io.open(
         file,
@@ -189,7 +308,7 @@ function createServiceManager(options = {}) {
     await ensurePrivateLog(context.stderrPath);
   }
 
-  async function readConfiguration() {
+  async function readConfiguration(): Promise<OwnedConfiguration | undefined> {
     const stat = await statOrMissing(context.plistPath);
     if (!stat) return undefined;
     if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== uid || stat.size > 65_536) {
@@ -200,7 +319,7 @@ function createServiceManager(options = {}) {
       ['-convert', 'json', '-o', '-', '--', context.plistPath],
       'unmanaged-service'
     );
-    let configuration;
+    let configuration: Partial<ServiceConfiguration> | null;
     try {
       configuration = JSON.parse(converted.stdout);
     } catch {
@@ -233,19 +352,20 @@ function createServiceManager(options = {}) {
     ) {
       throw new ServiceError('unmanaged-service');
     }
-    return { configuration, stat };
+    return { configuration: configuration as ServiceConfiguration, stat };
   }
 
-  async function inspectLoaded() {
-    let inspected;
+  async function inspectLoaded(): Promise<LoadedService | undefined> {
+    let inspected: Awaited<ReturnType<ServiceRunner>>;
     try {
       inspected = await run('/bin/launchctl', ['print', context.target], {
         cwd: context.projectRoot,
       });
     } catch (error) {
+      const failure = error as { code?: number; stderr?: string };
       if (
-        (error.code === 113 || error.code === 3) &&
-        /could not find service/i.test(error.stderr ?? '')
+        (failure.code === 113 || failure.code === 3) &&
+        /could not find service/i.test(failure.stderr ?? '')
       ) {
         return undefined;
       }
@@ -263,7 +383,7 @@ function createServiceManager(options = {}) {
     };
   }
 
-  function assertOwned(owned, loaded) {
+  function assertOwned(owned: OwnedConfiguration | undefined, loaded: LoadedService | undefined) {
     if (loaded && (!owned || loaded.origin !== context.plistPath)) {
       throw new ServiceError('unmanaged-service');
     }
@@ -306,8 +426,8 @@ function createServiceManager(options = {}) {
     throw new ServiceError('mise-not-found');
   }
 
-  async function checkReadiness(mise, task) {
-    let settings;
+  async function checkReadiness(mise: string, task: ServiceTask) {
+    let settings: string;
     try {
       settings = await io.readFile(path.join(context.projectRoot, 'mise.toml'), 'utf8');
       const entry = await io.stat(
@@ -369,7 +489,7 @@ function createServiceManager(options = {}) {
     }
   }
 
-  function makeConfiguration(mise, link) {
+  function makeConfiguration(mise: string, link: boolean): ServiceConfiguration {
     if (daily && link) throw new ServiceError('invalid-arguments');
     return {
       Label: label,
@@ -398,9 +518,13 @@ function createServiceManager(options = {}) {
     };
   }
 
-  async function writeConfiguration(configuration, previous, beforePublish) {
+  async function writeConfiguration(
+    configuration: ServiceConfiguration,
+    previous: Stats | undefined,
+    beforePublish?: () => Promise<void>
+  ) {
     const temporary = path.join(context.launchAgents, `.${label}.${randomUUID()}.plist`);
-    let handle;
+    let handle: fs.FileHandle | undefined;
     try {
       handle = await io.open(temporary, 'wx', 0o600);
       await handle.writeFile(renderPlist(configuration), 'utf8');
@@ -433,8 +557,8 @@ function createServiceManager(options = {}) {
       }
     } finally {
       await handle?.close();
-      await io.unlink(temporary).catch((error) => {
-        if (error.code !== 'ENOENT') throw error;
+      await io.unlink(temporary).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       });
     }
   }
@@ -443,7 +567,7 @@ function createServiceManager(options = {}) {
     await command('/bin/launchctl', ['bootout', context.target], 'service-stop-failed');
   }
 
-  async function activate(loaded, restartRunning = false) {
+  async function activate(loaded: LoadedService | undefined, restartRunning = false) {
     await command('/bin/launchctl', ['enable', context.target], 'service-enable-failed');
     if (!loaded) {
       await command(
@@ -459,7 +583,7 @@ function createServiceManager(options = {}) {
     await command('/bin/launchctl', arguments_, 'service-start-failed');
   }
 
-  async function status() {
+  async function status(): Promise<ServiceStatus> {
     const { owned, loaded } = await inspect();
     return {
       service,
@@ -491,7 +615,7 @@ function createServiceManager(options = {}) {
     return status();
   }
 
-  async function startOwnedService(restartRunning) {
+  async function startOwnedService(restartRunning: boolean) {
     const { owned, loaded } = await inspect();
     if (!owned) throw new ServiceError('service-not-installed');
     await checkReadiness(
@@ -535,14 +659,16 @@ function createServiceManager(options = {}) {
   return { install, start, restart, stop, status, uninstall };
 }
 
-async function main(arguments_ = process.argv.slice(2), options = {}) {
+async function main(
+  arguments_: readonly string[] = process.argv.slice(2),
+  options: ServiceManagerOptions = {}
+): Promise<ServiceStatus> {
   const { command, service, link } = parseArguments(arguments_);
-  return createServiceManager({ ...options, service })[command](
-    command === 'install' ? { link } : undefined
-  );
+  const manager = createServiceManager({ ...options, service });
+  return command === 'install' ? manager.install({ link }) : manager[command]();
 }
 
-if (require.main === module) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main()
     .then((result) => {
       process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -554,12 +680,12 @@ if (require.main === module) {
     });
 }
 
-module.exports = {
-  DAILY_SERVICE_LABEL,
-  SERVICE_LABEL,
-  ServiceError,
+export {
   createServiceManager,
+  DAILY_SERVICE_LABEL,
   main,
   parseArguments,
   renderPlist,
+  SERVICE_LABEL,
+  ServiceError,
 };

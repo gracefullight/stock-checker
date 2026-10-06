@@ -1,50 +1,65 @@
-'use strict';
-
-const assert = require('node:assert/strict');
-const { constants } = require('node:fs');
-const fs = require('node:fs/promises');
-const os = require('node:os');
-const path = require('node:path');
-const { test } = require('node:test');
-const {
-  DAILY_SERVICE_LABEL,
-  SERVICE_LABEL,
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { constants } from 'node:fs';
+import * as fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { type TestContext, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import {
   createServiceManager,
+  DAILY_SERVICE_LABEL,
   main,
   parseArguments,
   renderPlist,
-} = require('./launchd.cjs');
+  SERVICE_LABEL,
+  type ServiceConfiguration,
+  ServiceError,
+  type ServiceManagerOptions,
+  type ServiceRunner,
+  type ServiceRunOptions,
+} from '#automation/services/launchd.mts';
 
-function decodeXml(text) {
+type FixtureValue = string | number | boolean | FixtureValue[] | { [key: string]: FixtureValue };
+interface ServiceCall {
+  program: string;
+  arguments_: string[];
+  options: ServiceRunOptions;
+}
+
+function decodeXml(text: string): string {
   return text.replace(
     /&(lt|gt|amp|quot|apos);/g,
-    (_, name) =>
-      ({
-        lt: '<',
-        gt: '>',
-        amp: '&',
-        quot: '"',
-        apos: "'",
-      })[name]
+    (_: string, name: string) =>
+      (
+        ({
+          lt: '<',
+          gt: '>',
+          amp: '&',
+          quot: '"',
+          apos: "'",
+        }) as Record<string, string>
+      )[name]
   );
 }
 
 // Standalone fixture parser for plutil's mocked JSON conversion. The real
 // installer always delegates validity checks and conversion to macOS plutil.
-function parseFixturePlist(xml) {
+function parseFixturePlist(xml: string): ServiceConfiguration {
   const tokens = xml
     .match(
       /<(?:dict|array|key|string|integer|true|false)\b[^>]*>|<\/(?:dict|array|key|string|integer)>|[^<>]+/g
-    )
+    )!
     .map((token) => token.trim())
     .filter(Boolean);
   let index = tokens.indexOf('<dict>');
-  function value() {
+  function value(): FixtureValue {
     const token = tokens[index++];
     if (token === '<true/>') return true;
     if (token === '<false/>') return false;
     if (token === '<dict>') {
-      const result = {};
+      const result: Record<string, FixtureValue> = {};
       while (tokens[index] !== '</dict>') {
         assert.equal(tokens[index++], '<key>');
         const key = decodeXml(tokens[index++]);
@@ -55,7 +70,7 @@ function parseFixturePlist(xml) {
       return result;
     }
     if (token === '<array>') {
-      const result = [];
+      const result: FixtureValue[] = [];
       while (tokens[index] !== '</array>') result.push(value());
       index++;
       return result;
@@ -65,10 +80,10 @@ function parseFixturePlist(xml) {
     assert.equal(tokens[index++], token === '<string>' ? '</string>' : '</integer>');
     return token === '<string>' ? decodeXml(content) : Number(content);
   }
-  return value();
+  return value() as ServiceConfiguration;
 }
 
-async function fixture(t, overrides = {}) {
+async function fixture(t: TestContext, overrides: ServiceManagerOptions = {}) {
   const temporary = await fs.realpath(
     await fs.mkdtemp(path.join(os.tmpdir(), 'stock-checker-service-'))
   );
@@ -80,14 +95,14 @@ async function fixture(t, overrides = {}) {
   const label = overrides.service === 'daily-report' ? DAILY_SERVICE_LABEL : SERVICE_LABEL;
   const target = `gui/${uid}/${label}`;
   const plistPath = path.join(homeDirectory, 'Library/LaunchAgents', `${label}.plist`);
-  const calls = [];
+  const calls: ServiceCall[] = [];
   const state = {
     loaded: false,
     disabled: false,
     origin: plistPath,
     pid: 9876,
     exitCode: 0,
-    failures: new Map(),
+    failures: new Map<string, Error>(),
   };
   await fs.mkdir(path.join(projectRoot, 'packages/core/src/whatsapp'), { recursive: true });
   await fs.mkdir(path.join(projectRoot, 'packages/core/src/commands'), { recursive: true });
@@ -108,7 +123,7 @@ async function fixture(t, overrides = {}) {
     'export {};\n'
   );
 
-  async function run(program, arguments_, options) {
+  const run: ServiceRunner = async (program, arguments_, options) => {
     calls.push({ program, arguments_: [...arguments_], options });
     const failure = state.failures.get(arguments_[0]);
     if (failure) throw failure;
@@ -118,7 +133,7 @@ async function fixture(t, overrides = {}) {
     if (program === '/usr/bin/plutil') {
       if (arguments_[0] === '-lint') return { stdout: 'OK\n', stderr: '' };
       return {
-        stdout: JSON.stringify(parseFixturePlist(await fs.readFile(arguments_.at(-1), 'utf8'))),
+        stdout: JSON.stringify(parseFixturePlist(await fs.readFile(arguments_.at(-1)!, 'utf8'))),
         stderr: '',
       };
     }
@@ -158,7 +173,7 @@ async function fixture(t, overrides = {}) {
       else assert.fail(`Unexpected launchctl subcommand: ${command}`);
     }
     return { stdout: '', stderr: '' };
-  }
+  };
   const options = {
     platform: 'darwin',
     uid,
@@ -168,7 +183,7 @@ async function fixture(t, overrides = {}) {
     environment: {},
     run,
     ...overrides,
-  };
+  } satisfies ServiceManagerOptions;
   return {
     temporary,
     projectRoot,
@@ -183,7 +198,7 @@ async function fixture(t, overrides = {}) {
   };
 }
 
-function lifecycleCalls(calls) {
+function lifecycleCalls(calls: readonly ServiceCall[]): string[][] {
   return calls
     .filter(({ program, arguments_ }) => program === '/bin/launchctl' && arguments_[0] !== 'print')
     .map(({ arguments_ }) => arguments_);
@@ -263,7 +278,7 @@ test('daily report installs an independent one-minute trigger without gateway ke
   ]);
   assert.equal(configuration.KeepAlive, false);
   assert.equal(configuration.StartInterval, 60);
-  assert.equal(configuration.StartCalendarInterval, undefined);
+  assert.equal(Reflect.get(configuration, 'StartCalendarInterval'), undefined);
   assert.equal(configuration.RunAtLoad, true);
   assert.deepEqual(configuration.EnvironmentVariables, { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' });
   assert.match(configuration.StandardOutPath, /daily-report\.stdout\.log$/);
@@ -297,10 +312,10 @@ test('daily stop/start/uninstall only controls its own label and preserves gatew
 
 test('daily configuration refuses an altered schedule or gateway task', async (t) => {
   for (const mutation of [
-    (configuration) => {
+    (configuration: ServiceConfiguration) => {
       configuration.StartInterval = 1;
     },
-    (configuration) => {
+    (configuration: ServiceConfiguration) => {
       configuration.ProgramArguments[3] = 'whatsapp:gateway';
     },
   ]) {
@@ -350,11 +365,14 @@ test('non-macOS and root sessions fail before filesystem or subprocess mutations
     { platform: 'linux', uid: 501 },
     { platform: 'darwin', uid: 0 },
   ]) {
-    const calls = [];
+    const calls: Parameters<ServiceRunner>[] = [];
     await assert.rejects(
       createServiceManager({
         ...options,
-        run: (...arguments_) => calls.push(arguments_),
+        run: async (...arguments_) => {
+          calls.push(arguments_);
+          return { stdout: '', stderr: '' };
+        },
       }).install(),
       { code: options.platform === 'linux' ? 'macos-required' : 'user-session-required' }
     );
@@ -606,7 +624,7 @@ test('a foreign installed agent is rejected without replacement or lifecycle com
   await fs.mkdir(path.dirname(setup.plistPath), { recursive: true });
   const foreign = renderPlist({ Label: SERVICE_LABEL, WorkingDirectory: '/another/repository' });
   await fs.writeFile(setup.plistPath, foreign, { mode: 0o600 });
-  for (const command of ['install', 'start', 'restart', 'stop', 'status', 'uninstall']) {
+  for (const command of ['install', 'start', 'restart', 'stop', 'status', 'uninstall'] as const) {
     await assert.rejects(setup.manager[command](), { code: 'unmanaged-service' });
   }
   assert.equal(await fs.readFile(setup.plistPath, 'utf8'), foreign);
@@ -637,7 +655,7 @@ test('owned markers cannot authorize an arbitrary executable, environment or uns
   setup.calls.length = 0;
   for (const variant of variants) {
     await fs.writeFile(setup.plistPath, renderPlist(variant), { mode: 0o600 });
-    for (const command of ['install', 'start', 'restart', 'stop', 'uninstall']) {
+    for (const command of ['install', 'start', 'restart', 'stop', 'uninstall'] as const) {
       await assert.rejects(setup.manager[command](), { code: 'unmanaged-service' });
     }
   }
@@ -661,7 +679,7 @@ test('loaded foreign or unknown-origin jobs cannot be stopped even with a matchi
   setup.calls.length = 0;
   for (const origin of ['/somewhere/foreign.plist', 'unknown']) {
     setup.state.origin = origin;
-    for (const command of ['install', 'start', 'restart', 'stop', 'uninstall']) {
+    for (const command of ['install', 'start', 'restart', 'stop', 'uninstall'] as const) {
       await assert.rejects(setup.manager[command](), { code: 'unmanaged-service' });
     }
   }
@@ -680,7 +698,7 @@ test('symlinked plist, log and service directories are refused without touching 
     const setup = await fixture(t);
     const protectedFile = path.join(setup.temporary, `protected-${kind}`);
     await fs.writeFile(protectedFile, 'untouched', { mode: 0o600 });
-    let destination;
+    let destination: string;
     if (kind === 'plist') {
       await fs.mkdir(path.dirname(setup.plistPath), { recursive: true });
       destination = setup.plistPath;
@@ -765,7 +783,7 @@ test('a stable mise launcher survives a package-manager version symlink replacem
   }
   await fs.unlink(setup.misePath);
   await fs.symlink(versions[0], setup.misePath);
-  const resolvedExecutables = [];
+  const resolvedExecutables: string[] = [];
   const manager = createServiceManager({
     ...setup.options,
     misePath: undefined,
@@ -808,6 +826,7 @@ test('unexpected launchctl inspection errors fail closed and never expose raw er
     Object.assign(new Error('private error'), { code: 1, stderr: 'PRIVATE_TOKEN=fixture-secret' })
   );
   await assert.rejects(setup.manager.install(), (error) => {
+    assert.ok(error instanceof ServiceError);
     assert.equal(error.code, 'service-inspection-failed');
     assert.doesNotMatch(error.message, /PRIVATE_TOKEN|fixture-secret/);
     return true;
@@ -828,4 +847,47 @@ test('main delegates only the requested lifecycle action and returns a safe resu
   const result = await main(['install', 'whatsapp', '--link'], setup.options);
   assert.equal(result.pairing, true);
   assert.equal(result.label, SERVICE_LABEL);
+});
+
+test('the direct ESM entry reports invalid commands without inspecting a real service', async () => {
+  const execute = promisify(execFile);
+  await assert.rejects(
+    execute(
+      process.execPath,
+      ['--import', 'tsx', fileURLToPath(new URL('./launchd.mts', import.meta.url)), 'reload'],
+      {
+        cwd: fileURLToPath(new URL('../../..', import.meta.url)),
+        encoding: 'utf8',
+        timeout: 5000,
+      }
+    ),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(Reflect.get(error, 'code'), 1);
+      assert.equal(Reflect.get(error, 'stdout'), '');
+      assert.deepEqual(JSON.parse(Reflect.get(error, 'stderr')), { error: 'invalid-command' });
+      return true;
+    }
+  );
+});
+
+test('the workspace default uses the repository root for its mocked lifecycle inspection', async (t) => {
+  const setup = await fixture(t);
+  const expectedRoot = await fs.realpath(fileURLToPath(new URL('../../..', import.meta.url)));
+  const inspections: string[] = [];
+  const manager = createServiceManager({
+    ...setup.options,
+    projectRoot: undefined,
+    run: async (program, arguments_, options) => {
+      assert.equal(program, '/bin/launchctl');
+      assert.deepEqual(arguments_, ['print', `gui/${setup.options.uid}/${SERVICE_LABEL}`]);
+      inspections.push(options.cwd);
+      throw Object.assign(new Error('missing fixture service'), {
+        code: 113,
+        stderr: 'Could not find service.',
+      });
+    },
+  });
+  assert.equal((await manager.status()).state, 'not-installed');
+  assert.deepEqual(inspections, [expectedRoot]);
 });

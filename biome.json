@@ -9,8 +9,8 @@
     "includes": [
       "apps/*/src/**",
       "packages/*/src/**",
-      "tools/services/**",
-      "tools/whatsapp/**",
+      "packages/automation/**",
+      ".github/scripts/**",
       "apps/*/package.json",
       "packages/*/package.json",
       "package.json",
@@ -63,8 +63,12 @@
     },
     {
       "includes": ["**/components/ui/**"],
-      "linter": { "enabled": false },
-      "assist": { "enabled": false }
+      "linter": {
+        "enabled": false
+      },
+      "assist": {
+        "enabled": false
+      }
     }
   ]
 }

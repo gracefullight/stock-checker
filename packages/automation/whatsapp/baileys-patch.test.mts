@@ -1,19 +1,55 @@
-'use strict';
+import assert from 'node:assert/strict';
+import * as crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { type TestContext, test } from 'node:test';
+import { pathToFileURL, URL } from 'node:url';
+import { promisify } from 'node:util';
+import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 
-const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
-const { EventEmitter } = require('node:events');
-const fs = require('node:fs/promises');
-const { createRequire } = require('node:module');
-const path = require('node:path');
-const { test } = require('node:test');
-const { pathToFileURL, URL } = require('node:url');
-const { promisify } = require('node:util');
-const { createContext, SourceTextModule, SyntheticModule } = require('node:vm');
-
-const coreRequire = createRequire(path.join(__dirname, '../../packages/core/package.json'));
+const coreRequire = createRequire(new URL('../../core/package.json', import.meta.url));
 const sdkRoot = path.resolve(coreRequire.resolve('@whiskeysockets/baileys'), '../..');
 const browser = ['Mac OS', 'Chrome', 'fixture-version'];
+
+interface FixtureNode {
+  tag: string;
+  attrs: Record<string, string>;
+  content?: FixtureNode[] | Uint8Array;
+}
+
+interface Credentials {
+  registered: boolean;
+  noiseKey: { public: Buffer };
+  signedIdentityKey: { public: Buffer };
+  advSecretKey: string;
+  me?: { id: string };
+}
+
+interface FakeTimer {
+  number: number;
+  delay: number;
+  callback: () => void;
+}
+
+interface PairingSocket {
+  ws: FakeWebSocket;
+  end(): void | Promise<void>;
+}
+
+interface PairingModule {
+  makeSocket(config: Record<string, unknown>): PairingSocket;
+}
+
+interface AcknowledgementSocket {
+  authState: { creds: Credentials };
+  sendMessageAck(node: FixtureNode): Promise<void>;
+}
+
+interface AcknowledgementModule {
+  makeMessagesRecvSocket(config: Record<string, unknown>): AcknowledgementSocket;
+}
 
 class FakeEvents extends EventEmitter {
   buffer() {}
@@ -22,6 +58,12 @@ class FakeEvents extends EventEmitter {
 }
 
 class FakeWebSocket extends EventEmitter {
+  isOpen: boolean;
+  isClosed: boolean;
+  isClosing: boolean;
+  sent: FixtureNode[];
+  pending: Promise<unknown>[];
+
   constructor() {
     super();
     this.isOpen = true;
@@ -31,7 +73,7 @@ class FakeWebSocket extends EventEmitter {
     this.pending = [];
   }
   connect() {}
-  send(node, callback) {
+  send(node: FixtureNode, callback?: (error: null) => void) {
     this.sent.push(node);
     callback?.(null);
     return true;
@@ -40,10 +82,11 @@ class FakeWebSocket extends EventEmitter {
     this.isOpen = false;
     this.isClosed = true;
   }
-  emit(event, ...arguments_) {
+  emit(event: string | symbol, ...arguments_: unknown[]) {
     const listeners = this.rawListeners(event);
     for (const listener of listeners) {
-      const result = listener.apply(this, arguments_);
+      const callback = listener as (...arguments_: unknown[]) => Promise<unknown> | undefined;
+      const result = callback.apply(this, arguments_);
       if (result?.then) {
         // Every SDK callback rejection remains observable by the offline test.
         this.pending.push(Promise.resolve(result));
@@ -52,7 +95,7 @@ class FakeWebSocket extends EventEmitter {
     }
     return listeners.length > 0;
   }
-  async receive(node) {
+  async receive(node: FixtureNode) {
     this.emit('message', node);
     await this.drain();
   }
@@ -62,19 +105,19 @@ class FakeWebSocket extends EventEmitter {
 }
 
 function fakeTimers() {
-  const active = new Map();
+  const active = new Map<FakeTimer, FakeTimer>();
   let scheduled = 0;
   return {
     active,
     get scheduled() {
       return scheduled;
     },
-    setTimeout(callback, delay) {
+    setTimeout(callback: () => void, delay: number) {
       const timer = { number: ++scheduled, delay, callback };
       active.set(timer, timer);
       return timer;
     },
-    clearTimeout(timer) {
+    clearTimeout(timer: FakeTimer) {
       active.delete(timer);
     },
     next() {
@@ -86,7 +129,11 @@ function fakeTimers() {
   };
 }
 
-async function evaluateInstalledModule(relativePath, supplied, globals = {}) {
+async function evaluateInstalledModule<Namespace>(
+  relativePath: string,
+  supplied: Record<string, Record<string, unknown>>,
+  globals: Record<string, unknown> = {}
+): Promise<Namespace> {
   const filename = path.join(sdkRoot, relativePath);
   const source = await fs.readFile(filename, 'utf8');
   const context = createContext({ Buffer, URL, process, console, ...globals });
@@ -96,7 +143,7 @@ async function evaluateInstalledModule(relativePath, supplied, globals = {}) {
   });
   // Mock external capabilities while executing the installed SDK source itself.
   // Import names are wiring metadata, never assertions about patch text.
-  const imports = new Map();
+  const imports = new Map<string, string[]>();
   for (const match of source.matchAll(/^import (.+?) from ['"](.+?)['"];?$/gm)) {
     const names = match[1].startsWith('{')
       ? match[1]
@@ -128,10 +175,10 @@ async function evaluateInstalledModule(relativePath, supplied, globals = {}) {
     );
   });
   await module.evaluate();
-  return module.namespace;
+  return module.namespace as Namespace;
 }
 
-function creds() {
+function creds(): Credentials {
   return {
     registered: false,
     noiseKey: { public: Buffer.alloc(32, 1) },
@@ -141,7 +188,7 @@ function creds() {
 }
 
 function logger() {
-  const errors = [];
+  const errors: unknown[] = [];
   return {
     level: 'silent',
     errors,
@@ -149,34 +196,36 @@ function logger() {
     debug() {},
     info() {},
     warn() {},
-    error(error) {
+    error(error: unknown) {
       errors.push(error);
     },
   };
 }
 
-function children(node, tag) {
+function children(node: FixtureNode | undefined, tag?: string): FixtureNode[] {
   return Array.isArray(node?.content)
     ? node.content.filter((child) => !tag || child.tag === tag)
     : [];
 }
 
-async function pairingHarness(t) {
+async function pairingHarness(t: TestContext) {
   const events = new FakeEvents();
   const timers = fakeTimers();
   const credentials = creds();
-  const updates = [];
-  const credentialUpdates = [];
-  const timeline = [];
+  const updates: string[] = [];
+  const credentialUpdates: Partial<Credentials>[] = [];
+  const timeline: string[] = [];
   const helpers = await import(
     pathToFileURL(path.join(sdkRoot, 'lib/Utils/companion-reg-client-utils.js')).href
   );
-  const namespace = await evaluateInstalledModule(
+  const namespace = await evaluateInstalledModule<PairingModule>(
     'lib/Socket/socket.js',
     {
       '@hapi/boom': {
         Boom: class extends Error {
-          constructor(message, options) {
+          output: { statusCode?: number };
+
+          constructor(message: string, options?: { statusCode?: number }) {
             super(message);
             this.output = { statusCode: options?.statusCode };
           }
@@ -196,16 +245,23 @@ async function pairingHarness(t) {
       '../Utils/index.js': {
         Curve: { generateKeyPair: () => ({ public: Buffer.alloc(32), private: Buffer.alloc(32) }) },
         makeNoiseHandler: () => ({
-          encodeFrame: (value) => value,
-          decodeFrame: async (value, callback) => callback(value),
+          encodeFrame: (value: FixtureNode) => value,
+          decodeFrame: async (value: FixtureNode, callback: (node: FixtureNode) => unknown) =>
+            callback(value),
         }),
         generateMdTagPrefix: () => 'fixture-',
         makeEventBuffer: () => events,
-        promiseTimeout: (_milliseconds, callback) =>
+        promiseTimeout: (
+          _milliseconds: number,
+          callback: (
+            resolve: (value: unknown) => void,
+            reject: (reason: unknown) => void
+          ) => unknown
+        ) =>
           new Promise((resolve, reject) => {
             Promise.resolve(callback(resolve, reject)).catch(reject);
           }),
-        addTransactionCapability: (keys) => keys,
+        addTransactionCapability: (keys: unknown) => keys,
         buildPairingQRData: helpers.buildPairingQRData,
         configureSuccessfulPairing: () => ({
           reply: { tag: 'iq', attrs: { id: 'fixture-pair-success' } },
@@ -214,8 +270,8 @@ async function pairingHarness(t) {
         bindWaitForConnectionUpdate: () => () => {},
       },
       '../WABinary/index.js': {
-        encodeBinaryNode: (node) => node,
-        getBinaryNodeChild: (node, tag) => children(node, tag)[0],
+        encodeBinaryNode: (node: FixtureNode) => node,
+        getBinaryNodeChild: (node: FixtureNode, tag: string) => children(node, tag)[0],
         getBinaryNodeChildren: children,
         S_WHATSAPP_NET: '@s.whatsapp.net',
       },
@@ -240,13 +296,13 @@ async function pairingHarness(t) {
     shouldSyncHistoryMessage: () => true,
     makeSignalRepository: () => ({ close() {} }),
   });
-  events.on('connection.update', (update) => {
+  events.on('connection.update', (update: { qr?: string }) => {
     if (update.qr) {
       updates.push(update.qr);
       timeline.push('qr');
     }
   });
-  events.on('creds.update', (update) => {
+  events.on('creds.update', (update: Partial<Credentials>) => {
     credentialUpdates.push(update);
     timeline.push('creds');
   });
@@ -254,7 +310,7 @@ async function pairingHarness(t) {
   return { socket, credentials, updates, credentialUpdates, timers, timeline };
 }
 
-function pairingRefs(refs = ['fixture-ref-1', 'fixture-ref-2']) {
+function pairingRefs(refs = ['fixture-ref-1', 'fixture-ref-2']): FixtureNode {
   return {
     tag: 'iq',
     attrs: { type: 'set', id: 'fixture-pair-id', from: '@s.whatsapp.net' },
@@ -268,7 +324,7 @@ function pairingRefs(refs = ['fixture-ref-1', 'fixture-ref-2']) {
   };
 }
 
-function refresh(child = 'companion_reg_refresh') {
+function refresh(child = 'companion_reg_refresh'): FixtureNode {
   return {
     tag: 'notification',
     attrs: { type: 'companion_reg_refresh', id: 'fixture-refresh-id', from: '@s.whatsapp.net' },
@@ -276,7 +332,7 @@ function refresh(child = 'companion_reg_refresh') {
   };
 }
 
-function qrFields(qr) {
+function qrFields(qr: string) {
   const prefix = 'https://wa.me/settings/linked_devices#';
   assert.ok(qr.startsWith(prefix));
   const fields = qr.slice(prefix.length).split(',');
@@ -301,7 +357,7 @@ test('refresh rotates an unpaired ADV secret, re-renders the same ref and preser
     assert.equal(next[4], original[4]);
     assert.notEqual(next[3], original[3]);
     assert.equal(Buffer.from(next[3], 'base64').length, 32);
-    assert.equal(setup.credentialUpdates.at(-1).advSecretKey, next[3]);
+    assert.equal(setup.credentialUpdates.at(-1)!.advSecretKey, next[3]);
     assert.equal(setup.credentials.advSecretKey, next[3]);
     assert.deepEqual(setup.timeline, ['creds', 'qr']);
     assert.equal(setup.credentials.registered, false);
@@ -319,8 +375,8 @@ test('future refs use the live secret and refresh bursts do not consume the boun
   const currentSecret = setup.credentials.advSecretKey;
   assert.notEqual(currentSecret, qrFields(setup.updates[0])[3]);
   setup.timers.next();
-  assert.equal(qrFields(setup.updates.at(-1))[0], 'fixture-ref-2');
-  assert.equal(qrFields(setup.updates.at(-1))[3], currentSecret);
+  assert.equal(qrFields(setup.updates.at(-1)!)[0], 'fixture-ref-2');
+  assert.equal(qrFields(setup.updates.at(-1)!)[3], currentSecret);
   assert.equal([...setup.timers.active.keys()][0].delay, 20000);
   const count = setup.updates.length;
   setup.timers.next();
@@ -430,33 +486,38 @@ async function acknowledgementHarness() {
     ev: new FakeEvents(),
     authState: { creds: creds(), keys: {} },
     signalRepository: { lidMapping: { getLIDForPN() {} } },
-    notificationMutex: { mutex: (callback) => callback() },
+    notificationMutex: { mutex: (callback: () => unknown) => callback() },
     registerSocketEndHandler() {},
-    sendNode: async (node) => {
+    sendNode: async (node: FixtureNode): Promise<void> => {
       socket.ws.sent.push(node);
     },
   };
   const ack = await import(pathToFileURL(path.join(sdkRoot, 'lib/Utils/stanza-ack.js')).href);
-  const namespace = await evaluateInstalledModule('lib/Socket/messages-recv.js', {
-    '@cacheable/node-cache': { default: class {} },
-    '../Defaults/index.js': { DEFAULT_CACHE_TTLS: { MSG_RETRY: 300, CALL_OFFER: 300 } },
-    '../Types/index.js': { ReachoutTimelockEnforcementType: {} },
-    '../Utils/make-mutex.js': { makeMutex: () => ({ mutex: (callback) => callback() }) },
-    '../Utils/offline-node-processor.js': {
-      makeOfflineNodeProcessor: () => ({
-        enqueue() {
-          throw new Error('Unexpected offline node');
-        },
-      }),
-    },
-    '../Utils/stanza-ack.js': { buildAckStanza: ack.buildAckStanza },
-    '../Utils/tc-token-utils.js': { readTcTokenIndex: async () => [] },
-    '../WABinary/index.js': {
-      S_WHATSAPP_NET: '@s.whatsapp.net',
-      getBinaryNodeChild: (node, tag) => children(node, tag)[0],
-    },
-    './messages-send.js': { makeMessagesSocket: () => socket },
-  });
+  const namespace = await evaluateInstalledModule<AcknowledgementModule>(
+    'lib/Socket/messages-recv.js',
+    {
+      '@cacheable/node-cache': { default: class {} },
+      '../Defaults/index.js': { DEFAULT_CACHE_TTLS: { MSG_RETRY: 300, CALL_OFFER: 300 } },
+      '../Types/index.js': { ReachoutTimelockEnforcementType: {} },
+      '../Utils/make-mutex.js': {
+        makeMutex: () => ({ mutex: (callback: () => unknown) => callback() }),
+      },
+      '../Utils/offline-node-processor.js': {
+        makeOfflineNodeProcessor: () => ({
+          enqueue() {
+            throw new Error('Unexpected offline node');
+          },
+        }),
+      },
+      '../Utils/stanza-ack.js': { buildAckStanza: ack.buildAckStanza },
+      '../Utils/tc-token-utils.js': { readTcTokenIndex: async () => [] },
+      '../WABinary/index.js': {
+        S_WHATSAPP_NET: '@s.whatsapp.net',
+        getBinaryNodeChild: (node: FixtureNode, tag: string) => children(node, tag)[0],
+      },
+      './messages-send.js': { makeMessagesSocket: () => socket },
+    }
+  );
   return {
     socket: namespace.makeMessagesRecvSocket({ logger: logger(), shouldIgnoreJid: () => true }),
     sent: socket.ws.sent,

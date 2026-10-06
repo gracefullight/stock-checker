@@ -2,6 +2,9 @@
   "name": "stock-checker",
   "version": "0.7.4",
   "private": true,
+  "imports": {
+    "#scripts/*": "./.github/scripts/*"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"

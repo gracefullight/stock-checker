@@ -1,3 +1,15 @@
+monorepo_root = true
+
+[settings]
+experimental = true
+task.auto_infer = ["node"]
+
+[monorepo]
+config_roots = ["apps/*", "packages/*"]
+
+[monorepo.task_defaults.build]
+depends = ["^build"]
+
 [tools]
 node = "26"
 bun = "1.4.2"
@@ -19,57 +31,50 @@ run = "bun outdated --recursive --no-cache"
 
 [tasks."deps:update"]
 description = "Update dependencies across all workspaces to the latest versions"
-run = """
-set -eu
-bun update --latest --no-cache
-(cd apps/api && bun update --latest --no-cache)
-(cd apps/web && bun update --latest --no-cache)
-(cd apps/mcp && bun update --latest --no-cache)
-(cd packages/core && bun update --latest --no-cache)
-"""
+run = "bun update --filter '*' --filter './' --latest --no-cache"
 
 # ── Python finance tools ──────────────────────────────────────
 [tasks."finance:install"]
 description = "Install the locked Python finance-tool dependencies"
-run = "uv sync --project tools/finance --locked --python 3.14"
+run = "uv sync --project packages/finance --locked --python 3.14"
 
 [tasks."finance:deps:outdated"]
 description = "Check outdated packages in the Python finance environment"
 depends = ["finance:install"]
-run = "uv pip list --python tools/finance/.venv/bin/python --outdated"
+run = "uv pip list --python packages/finance/.venv/bin/python --outdated"
 
 [tasks."finance:deps:update"]
 description = "Update and install the Python finance dependency lockfile"
 run = """
 set -eu
-uv lock --project tools/finance --upgrade
-uv sync --project tools/finance --locked --python 3.14
+uv lock --project packages/finance --upgrade
+uv sync --project packages/finance --locked --python 3.14
 """
 
 [tasks."finance:run"]
 description = "Run a Python finance script with the locked environment"
 env.PYTHONDONTWRITEBYTECODE = "1"
-run = 'uv run --project tools/finance --locked --python 3.14 python "$@"'
+run = 'uv run --project packages/finance --locked --python 3.14 python "$@"'
 
 [tasks."finance:typecheck"]
 description = "Type-check the Python financial analysis scripts with Pyrefly"
-run = "uv run --project tools/finance --locked --python 3.14 pyrefly check --config tools/finance/pyproject.toml --min-severity warn"
+run = "uv run --project packages/finance --locked --python 3.14 pyrefly check --config packages/finance/pyproject.toml --min-severity warn"
 
 [tasks."finance:lint"]
 description = "Lint the Python finance scripts and tests with Ruff"
-run = "uv run --project tools/finance --locked --python 3.14 ruff check --config tools/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts tools/finance/tests"
+run = "uv run --project packages/finance --locked --python 3.14 ruff check --config packages/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts packages/finance/tests"
 
 [tasks."finance:lint:fix"]
 description = "Apply safe Ruff fixes to the Python finance scripts and tests"
-run = "uv run --project tools/finance --locked --python 3.14 ruff check --fix --config tools/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts tools/finance/tests"
+run = "uv run --project packages/finance --locked --python 3.14 ruff check --fix --config packages/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts packages/finance/tests"
 
 [tasks."finance:format:check"]
 description = "Check Python finance formatting with Ruff"
-run = "uv run --project tools/finance --locked --python 3.14 ruff format --check --output-format concise --config tools/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts tools/finance/tests"
+run = "uv run --project packages/finance --locked --python 3.14 ruff format --check --output-format concise --config packages/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts packages/finance/tests"
 
 [tasks."finance:format"]
 description = "Format the Python finance scripts and tests with Ruff"
-run = "uv run --project tools/finance --locked --python 3.14 ruff format --config tools/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts tools/finance/tests"
+run = "uv run --project packages/finance --locked --python 3.14 ruff format --config packages/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts packages/finance/tests"
 
 [tasks."finance:fix"]
 description = "Fix Python lint and formatting sequentially"
@@ -82,7 +87,7 @@ mise run finance:format
 [tasks."finance:test"]
 description = "Run Python finance regression tests"
 env.PYTHONDONTWRITEBYTECODE = "1"
-run = "uv run --project tools/finance --locked --python 3.14 pytest tools/finance/tests"
+run = "uv run --project packages/finance --locked --python 3.14 pytest packages/finance/tests"
 
 # ── Dev Servers ──────────────────────────────────────────────
 [tasks.mcp]
@@ -103,32 +108,32 @@ run = "node packages/core/src/whatsapp/index.ts"
 [tasks."whatsapp:service:install"]
 description = "Install the macOS WhatsApp user service (add --link for initial QR pairing)"
 raw = true
-run = 'node tools/services/launchd.cjs install whatsapp "$@"'
+run = 'node --import tsx packages/automation/services/launchd.mts install whatsapp "$@"'
 
 [tasks."whatsapp:service:start"]
 description = "Start the installed macOS WhatsApp user service"
 raw = true
-run = "node tools/services/launchd.cjs start whatsapp"
+run = "node --import tsx packages/automation/services/launchd.mts start whatsapp"
 
 [tasks."whatsapp:service:restart"]
 description = "Restart the owned macOS WhatsApp service and renew pending QR pairing"
 raw = true
-run = "node tools/services/launchd.cjs restart whatsapp"
+run = "node --import tsx packages/automation/services/launchd.mts restart whatsapp"
 
 [tasks."whatsapp:service:stop"]
 description = "Stop the macOS WhatsApp user service"
 raw = true
-run = "node tools/services/launchd.cjs stop whatsapp"
+run = "node --import tsx packages/automation/services/launchd.mts stop whatsapp"
 
 [tasks."whatsapp:service:status"]
 description = "Inspect the installed macOS WhatsApp user service"
 raw = true
-run = "node tools/services/launchd.cjs status whatsapp"
+run = "node --import tsx packages/automation/services/launchd.mts status whatsapp"
 
 [tasks."whatsapp:service:uninstall"]
 description = "Remove the macOS WhatsApp user service while preserving linked sessions"
 raw = true
-run = "node tools/services/launchd.cjs uninstall whatsapp"
+run = "node --import tsx packages/automation/services/launchd.mts uninstall whatsapp"
 
 [tasks."daily-report"]
 description = "Run the Sydney 09:00 Finviz-first report; --dry-run and --status perform no scan or send"
@@ -139,139 +144,129 @@ run = 'bun src/commands/daily-report.ts "$@"'
 [tasks."daily-report:service:install"]
 description = "Install the macOS Sydney morning screening trigger"
 raw = true
-run = "node tools/services/launchd.cjs install daily-report"
+run = "node --import tsx packages/automation/services/launchd.mts install daily-report"
 
 [tasks."daily-report:service:start"]
 description = "Enable the installed Sydney morning screening trigger"
 raw = true
-run = "node tools/services/launchd.cjs start daily-report"
+run = "node --import tsx packages/automation/services/launchd.mts start daily-report"
 
 [tasks."daily-report:service:restart"]
 description = "Restart the owned morning trigger without bypassing its daily claim or time window"
 raw = true
-run = "node tools/services/launchd.cjs restart daily-report"
+run = "node --import tsx packages/automation/services/launchd.mts restart daily-report"
 
 [tasks."daily-report:service:stop"]
 description = "Disable the Sydney morning screening trigger across login"
 raw = true
-run = "node tools/services/launchd.cjs stop daily-report"
+run = "node --import tsx packages/automation/services/launchd.mts stop daily-report"
 
 [tasks."daily-report:service:status"]
 description = "Inspect the installed Sydney morning screening trigger"
 raw = true
-run = "node tools/services/launchd.cjs status daily-report"
+run = "node --import tsx packages/automation/services/launchd.mts status daily-report"
 
 [tasks."daily-report:service:uninstall"]
 description = "Remove the morning trigger while preserving reports and WhatsApp sessions"
 raw = true
-run = "node tools/services/launchd.cjs uninstall daily-report"
+run = "node --import tsx packages/automation/services/launchd.mts uninstall daily-report"
 
 [tasks."dev:api"]
 description = "Start Fastify API server (port 5101)"
-dir = "apps/api"
-run = "bun run dev"
+run = 'mise run //apps/api:dev "$@"'
 
 [tasks."dev:web"]
 description = "Start Next.js dev server (port 5100)"
-dir = "apps/web"
-run = "bun run dev"
+run = 'mise run //apps/web:dev "$@"'
 
 [tasks.dev]
 description = "Start API + Web dev servers in parallel"
-depends = ["dev:api", "dev:web"]
+depends = ["//apps/api:dev", "//apps/web:dev"]
 
 # ── Build ─────────────────────────────────────────────────────
 [tasks."build:core"]
-dir = "packages/core"
-run = "bun run build"
+run = 'mise run //packages/core:build "$@"'
 
 [tasks."build:api"]
-depends = ["build:core"]
-dir = "apps/api"
-run = "bun run build"
+run = 'mise run //apps/api:build "$@"'
 
 [tasks."build:web"]
-depends = ["build:core"]
-dir = "apps/web"
-run = "bun run build"
+run = 'mise run //apps/web:build "$@"'
 
 [tasks.build]
 description = "Build all apps"
-depends = ["build:api", "build:web"]
+depends = ["//apps/api:build", "//apps/web:build"]
 
 # ── Quality ───────────────────────────────────────────────────
 [tasks."release:test"]
 description = "Test release PR validation, lockfile synchronization, and merge guards"
-run = "node --test .github/scripts/release.test.cjs"
+run = "node --import tsx --test .github/scripts/release.test.mts"
 
 [tasks.lint]
 description = "Lint entire monorepo"
 depends = ["finance:lint", "finance:format:check"]
-run = "bunx biome check apps packages tools/services tools/whatsapp package.json tsconfig.json biome.json"
+run = "bunx biome check apps packages .github/scripts package.json tsconfig.json biome.json"
 
 [tasks."lint:fix"]
 description = "Lint + auto-fix"
 depends = ["finance:fix"]
-run = "bunx biome check --write --unsafe apps packages tools/services tools/whatsapp package.json tsconfig.json biome.json"
+run = "bunx biome check --write --unsafe apps packages .github/scripts package.json tsconfig.json biome.json"
 
 [tasks.format]
 description = "Format all files"
 depends = ["finance:format"]
-run = "bunx biome format --write apps packages tools/services tools/whatsapp package.json tsconfig.json biome.json"
+run = "bunx biome format --write apps packages .github/scripts package.json tsconfig.json biome.json"
 
 [tasks."typecheck:core"]
-dir = "packages/core"
-run = "bun run typecheck"
+run = 'mise run //packages/core:typecheck "$@"'
 
 [tasks."typecheck:api"]
-dir = "apps/api"
-run = "bun run typecheck"
+run = 'mise run //apps/api:typecheck "$@"'
 
 [tasks."typecheck:web"]
-dir = "apps/web"
-run = "bun run typecheck"
+run = 'mise run //apps/web:typecheck "$@"'
 
 [tasks."typecheck:mcp"]
-dir = "apps/mcp"
-run = "bun run typecheck"
+run = 'mise run //apps/mcp:typecheck "$@"'
 
 [tasks.typecheck]
-description = "Type-check all packages in parallel"
-depends = ["typecheck:core", "typecheck:api", "typecheck:web", "typecheck:mcp", "finance:typecheck"]
+description = "Type-check workspace packages, automation, and Python in parallel"
+depends = ["//apps/...:typecheck", "//packages/...:typecheck", "typecheck:release", "finance:typecheck"]
+
+[tasks."typecheck:release"]
+run = "bunx --no-install tsc --noEmit --project .github/scripts/tsconfig.json"
+
+[tasks."typecheck:automation"]
+run = 'mise run //packages/automation:typecheck "$@"'
 
 # ── Test ──────────────────────────────────────────────────────
 [tasks."test:core"]
-dir = "packages/core"
-run = "bun run test"
+run = 'mise run //packages/core:test "$@"'
 
 [tasks."test:api"]
-dir = "apps/api"
-run = "bun run test"
+run = 'mise run //apps/api:test "$@"'
 
 [tasks."test:web"]
-dir = "apps/web"
-run = "bun run test"
+run = 'mise run //apps/web:test "$@"'
 
 [tasks."test:mcp"]
-dir = "apps/mcp"
-run = "bun run test"
+run = 'mise run //apps/mcp:test "$@"'
 
 [tasks."services:test"]
 description = "Test local service installation and lifecycle without changing macOS services"
-run = "node --test tools/services/launchd.test.cjs"
+run = "node --import tsx --test packages/automation/services/launchd.test.mts"
 
 [tasks."whatsapp:test"]
 description = "Test the pinned WhatsApp SDK pairing fixes without network connections"
-run = "node --experimental-vm-modules --test tools/whatsapp/*.test.cjs"
+run = "node --import tsx --experimental-vm-modules --test packages/automation/whatsapp/*.test.mts"
 
 [tasks.test]
 description = "Run all tests in parallel"
-depends = ["test:core", "test:api", "test:web", "test:mcp", "finance:test", "release:test", "services:test", "whatsapp:test"]
+depends = ["//apps/...:test", "//packages/...:test", "finance:test", "release:test"]
 
 [tasks."test:watch"]
 description = "Run core tests in watch mode"
-dir = "packages/core"
-run = "bun run test:watch"
+run = 'mise run //packages/core:test:watch "$@"'
 
 # ── CLI (stock-checker commands) ─────────────────────────────
 [tasks.predict]

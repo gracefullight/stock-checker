@@ -8,7 +8,7 @@ trap 'rm -rf "$scratch_dir"' EXIT
 git diff --cached --name-only --diff-filter=ACMR -z |
   while IFS= read -r -d '' staged_file; do
     case "$staged_file" in
-      apps/*/src/*|packages/*/src/*|apps/*/package.json|packages/*/package.json|package.json|tsconfig.json|biome.json)
+      apps/*/src/*|packages/*/src/*|apps/*/package.json|packages/*/package.json|.github/scripts/*|packages/automation/*|package.json|tsconfig.json|biome.json)
         git show ":$staged_file" > "$scratch_dir/staged"
         # Biome's stdin mode needs --write; it writes only to stdout here.
         mise exec -- bunx --no-install biome check --write \

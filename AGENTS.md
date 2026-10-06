@@ -2,12 +2,13 @@
 
 ## Project Structure & Module Organization
 - `packages/core/src/`: Signal engine, backtest, persistence, and CLI entry (`index.ts`).
+- `packages/automation/`: TypeScript service tooling and offline WhatsApp SDK regressions.
 - `packages/core/public/`: Monthly CSV outputs (e.g., `stock_data_202610.csv`).
 - `apps/api/src/`: Fastify API for stock analysis, history, portfolio, and watchlist.
 - `apps/web/src/`: Next.js screener, charts, portfolio, and alerts.
 - `.github/workflows/daily-data.yml`: Nightly scheduler that runs the CLI and commits new CSVs.
 - `mise.toml`: Runtime versions and development, quality, and CLI tasks.
-- `tools/finance/`: Locked Python finance dependencies, Pyrefly settings, and pytest regressions.
+- `packages/finance/`: Locked Python finance dependencies, Pyrefly settings, and pytest regressions.
 - `tsconfig.json`: Shared TypeScript config (strict mode, ESNext modules, bundler resolution).
 
 ## Build, Test, and Development Commands
@@ -17,6 +18,8 @@
 - `mise run predict -- --ticker=TSLA,PLTR --sort=asc`: Run predictions and append monthly CSV rows.
 - `mise run strategy:validate -- --dataset=/absolute/raw-snapshot --output=/absolute/report.json`: Recompute BUY observations, non-overlapping five-session trades, costs, and drawdown from a frozen offline dataset.
 - `mise run lint`, `mise run typecheck`, `mise run test`: Run quality checks.
+- Bun workspace scripts are inferred by mise; `mise run //apps/web:typecheck` runs a package task.
+- `mise run typecheck:automation`: Check `.mts` automation scripts and tests, executed through `tsx`.
 - `mise run finance:typecheck`: Check the Python financial scripts with Pyrefly.
 - `mise run finance:lint`, `mise run finance:format:check`: Check Python lint and formatting with Ruff.
 - `mise run finance:fix`: Apply safe Ruff fixes, then format sequentially.
@@ -48,7 +51,7 @@
 
 ## Testing Guidelines
 - Vitest suites are colocated as `*.test.ts` / `*.test.tsx` in each workspace's `src/`.
-- Python finance regressions use pytest under `tools/finance/tests/`.
+- Python finance regressions use pytest under `packages/finance/tests/`.
 - Use `mise run test:core`, `mise run test:api`, or `mise run test:web` for scoped checks.
 - Add regression tests for behavior changes; use fixtures and mocks for external market data.
 

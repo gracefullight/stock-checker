@@ -77,6 +77,10 @@
         "shadcn": "^4.21.1",
       },
     },
+    "packages/automation": {
+      "name": "@stock-checker/automation",
+      "version": "0.7.4",
+    },
     "packages/core": {
       "name": "@stock-checker/core",
       "version": "0.7.4",
@@ -527,6 +531,8 @@
     "@standard-schema/utils": ["@standard-schema/utils@0.3.0", "", {}, "sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g=="],
 
     "@stock-checker/api": ["@stock-checker/api@workspace:apps/api"],
+
+    "@stock-checker/automation": ["@stock-checker/automation@workspace:packages/automation"],
 
     "@stock-checker/core": ["@stock-checker/core@workspace:packages/core"],
 

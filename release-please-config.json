@@ -25,6 +25,7 @@
         { "type": "revert", "section": "Reverts" }
       ],
       "extra-files": [
+        { "type": "json", "path": "packages/automation/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/core/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "apps/api/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "apps/web/package.json", "jsonpath": "$.version" },
