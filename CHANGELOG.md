@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/gracefullight/stock-checker/compare/v0.6.0...v0.7.0) (2026-10-06)
+
+
+### Features
+
+* unify leader-pullback analysis and validate win rates ([7f687c9](https://github.com/gracefullight/stock-checker/commit/7f687c92e1e701f1af0d0b8c457cae627ec0f7d5))
+
 ## [0.6.0](https://github.com/gracefullight/stock-checker/compare/v0.5.3...v0.6.0) (2026-10-06)
 
 
