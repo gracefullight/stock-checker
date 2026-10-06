@@ -68,7 +68,7 @@ export function renderStockAnalystMarkdown(report: StockAnalystReport): string {
     '## Current signal and execution',
     '',
     ...(current?.gateReasons.map((reason) => `- ${reason}`) ?? [
-      '- No usable completed-price / ATR analysis is available.',
+      '- Current signal analysis could not be completed.',
     ]),
     '- Entry: CONDITIONAL next-session open; the future entry price is unknown.',
     `- Entry eligibility: ${execution.entry.eligible ? 'BUY currently qualifies' : 'no qualifying BUY entry'}.`,
@@ -76,7 +76,7 @@ export function renderStockAnalystMarkdown(report: StockAnalystReport): string {
   if (execution.reference) {
     const reference = execution.reference;
     lines.push(
-      `- ATR references use the latest completed close ${price(reference.price)}, ATR ${price(reference.atr)}: stop ${price(reference.stopLoss)}, target ${price(reference.takeProfit)}.`,
+      `- Reference levels use the latest completed close ${price(reference.price)} and average daily price range ${price(reference.atr)} (including gaps): stop ${price(reference.stopLoss)}, target ${price(reference.takeProfit)}.`,
       '- These are latest-close reference prices. Recompute levels from the actual next-session fill; they are not known future execution prices.'
     );
   }
@@ -92,11 +92,11 @@ export function renderStockAnalystMarkdown(report: StockAnalystReport): string {
     `Eligible entry period: ${historical.period.from ?? 'N/A'} to ${historical.period.to ?? 'N/A'}; ${report.lookbackDays} calendar days requested, indicator warmup excluded.`,
     `Method: BUY at next-session open, exit at the fifth session close; ${historical.method.roundTripCostBps} bps total round-trip cost. Samples are completed BUY observations and may overlap; this is not a one-position portfolio simulation.`,
     `- Five-session net win rate: ${percentage(historical.fixedHold.winRatePct)} (${historical.fixedHold.wins}/${historical.fixedHold.samples}); average net return ${percentage(historical.fixedHold.averageNetReturnPct)}.`,
-    `- ATR stop touched: ${percentage(historical.atrBarriers.stopTouchRatePct)} (${historical.atrBarriers.stopTouched}/${historical.atrBarriers.samples}); target touched: ${percentage(historical.atrBarriers.targetTouchRatePct)} (${historical.atrBarriers.targetTouched}/${historical.atrBarriers.samples}).`,
+    `- Stop touched (based on average daily price range): ${percentage(historical.atrBarriers.stopTouchRatePct)} (${historical.atrBarriers.stopTouched}/${historical.atrBarriers.samples}); target touched: ${percentage(historical.atrBarriers.targetTouchRatePct)} (${historical.atrBarriers.targetTouched}/${historical.atrBarriers.samples}).`,
     `- Both barriers touched: ${historical.atrBarriers.bothTouched}; ambiguous first touch within one session: ${historical.atrBarriers.ambiguousFirstTouch}.`,
     `- First touches: stop ${historical.atrBarriers.stopFirst}, target ${historical.atrBarriers.targetFirst}, neither ${historical.atrBarriers.neitherTouched}; opening-gap first touches: stop ${historical.atrBarriers.gapStopFirst}, target ${historical.atrBarriers.gapTargetFirst}.`,
-    '- ATR barriers use each signal-session ATR and its actual next-session open. Touch rates include the entire five-session path, even after a first hit; they are separate diagnostics, not net win rates. Opens determine gap fills before intraday touches; unknown same-bar high/low order is left ambiguous.',
-    `- Excluded: incomplete horizons ${historical.excluded.incomplete}, invalid execution ${historical.excluded.invalidExecution}, unusable ATR / OHLC for barrier diagnostics ${historical.excluded.invalidAtrOrCandles}.`,
+    '- Stop and target levels use the average daily price range (including gaps) at each signal session and its actual next-session open. Touch rates include the entire five-session path, even after a first hit; they are separate diagnostics, not net win rates. Opens determine gap fills before intraday touches; unknown same-bar high/low order is left ambiguous.',
+    `- Excluded: incomplete horizons ${historical.excluded.incomplete}, invalid execution ${historical.excluded.invalidExecution}, unusable average daily price range or OHLC for barrier diagnostics ${historical.excluded.invalidAtrOrCandles}.`,
     '',
     '## Analyst price targets',
     ''

@@ -15,9 +15,9 @@ export function describeAnalysisUnavailable(
     case 'history-unavailable':
       return '완료된 거래일의 가격 이력을 가져올 수 없습니다.';
     case 'invalid-price-or-atr':
-      return '유효한 종가 또는 ATR 데이터를 확인할 수 없습니다.';
+      return '유효한 종가 또는 평균 가격 변동폭을 확인할 수 없습니다.';
     case 'risk-levels-infeasible':
-      return '유효한 ATR 기준 손절·목표 가격을 산정할 수 없습니다.';
+      return '평균 가격 변동폭 기준으로 유효한 손절·목표가를 산정할 수 없습니다.';
     default:
       return '완료된 거래일 기준 분석을 사용할 수 없습니다.';
   }

@@ -425,7 +425,7 @@ export async function generateStockScreen(
         : 'This screen covers only the provided tickers, not the entire market.',
       'Only the existing engine final decision determines a match; a high BUY score can remain HOLD when gates block entry.',
       'BUY and SELL scores are signal strengths, not probabilities of profit.',
-      'Entry remains conditional on the next session open; the future fill price is unknown. ATR levels are latest-completed-close references and require recalculation from the actual fill.',
+      'Entry remains conditional on the next session open; the future fill price is unknown. Risk levels based on average daily price range use the latest completed close and require recalculation from the actual fill.',
       'SELL is a long-holder exit warning, not a short-entry recommendation.',
       'Historical win rates, stop-touch rates, analyst targets and peer valuation are not computed by this screen. Use analyze_stock for a detailed ticker report.',
       'Snapshots use current metadata and may have different completed-session dates; inspect each ticker’s dataAsOf and availability.',

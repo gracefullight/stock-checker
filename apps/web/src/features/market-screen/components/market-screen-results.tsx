@@ -206,8 +206,8 @@ export function MarketScreenResults({
       </div>
       <p className="text-base text-muted-foreground sm:text-sm">
         Scores measure signal strength, not win or stop-loss probabilities. Future next-session
-        entry prices are unknown; price and ATR risk references are in USD and use the saved
-        completed close. SELL is a long-holder exit warning.
+        entry prices are unknown; price and average daily price range risk references are in USD and
+        use the saved completed close. SELL is a long-holder exit warning.
       </p>
       <p className="text-base text-muted-foreground sm:text-sm">
         Ticker links open live detail with current data and a 730-day history. It may differ from

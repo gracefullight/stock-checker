@@ -46,7 +46,7 @@ export function prepareFinvizScreen(input: unknown = {}) {
       priceUsd: options.price === 'over5' ? { greaterThan: 5 } : null,
     },
     secondPass: [
-      'Recompute completed-session SMA50, Gaussian trend, market/sector relative strength, ATR percentage, close location, volume participation, confluence and final scores using the existing Stock Checker engine.',
+      'Recompute completed-session SMA50, Gaussian trend, market/sector relative strength, average daily price range as a percentage of price, close location, volume participation, confluence and final scores using the existing Stock Checker engine.',
       'Liquidity and VWAP contribute to scores; they are not replaced by a Finviz share-volume threshold. Historical outcome rates and analyst targets are fetched only for selected detail reports.',
     ],
     collection: [

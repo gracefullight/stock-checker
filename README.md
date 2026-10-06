@@ -126,7 +126,7 @@ Public browser collection needs no Finviz key.
 
 Reports show the collected candidate count and evaluated count separately. A candidate
 limit is not an analysis failure. Unavailable results retain their cause, including
-missing history, invalid price/ATR, or infeasible ATR risk references; risk rejections
+missing history, invalid prices or average daily price ranges, or infeasible risk references; risk rejections
 do not pause the job as provider failures.
 
 Jobs accept up to 15,000 input rows and live in ignored `data/market-scans/`.

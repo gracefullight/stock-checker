@@ -892,7 +892,7 @@ export async function createMarketScreenJob(
       'Finviz filters select candidates; they do not determine the engine final BUY, SELL, or HOLD decision.',
       'This job covers only the frozen collected Finviz candidate list, not every US-listed stock or every filtered source candidate when collection is partial.',
       'Scores are signal strengths, not success probabilities. Repeated snapshots from the same completed session are not independent new opportunities.',
-      'Future next-session entry prices are unknown; ATR references use completed closes. SELL is a long-holder exit warning, not a short-entry recommendation.',
+      'Future next-session entry prices are unknown; risk references based on average daily price range use completed closes. SELL is a long-holder exit warning, not a short-entry recommendation.',
       'Analysis timestamps and completed-session dates can differ during a long scan. Current metadata is not a frozen point-in-time financial dataset.',
       'Provider failures are unavailable results, never HOLD. Historical outcome rates and analyst targets require analyze_stock.',
       ...(input.provenance.completeness === 'partial'

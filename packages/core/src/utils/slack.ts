@@ -20,7 +20,7 @@ export async function sendSlackNotification(item: TickerResult, webhook: string)
     `- Fear & Greed: ${item.fearGreed ?? 'N/A'}`,
     `- Patterns: ${item.patterns.length ? item.patterns.join(', ') : 'None'}`,
     `- Score: ${item.score.toFixed(2)}`,
-    `- ATR: ${item.atr.toFixed(2)}`,
+    `- Average daily price range (including gaps): ${item.atr.toFixed(2)}`,
     `- Stop Loss: ${item.stopLoss.toFixed(2)}`,
     `- Take Profit: ${item.takeProfit.toFixed(2)}`,
     `- Trailing Stop: ${item.trailingStop.toFixed(2)}`,

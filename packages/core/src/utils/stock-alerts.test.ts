@@ -26,7 +26,7 @@ describe('stock signal notification', () => {
       title: '주식 신호',
       asOf: '종가 2026-10-01',
       summary: [
-        'AAPL BUY · 종가 참고 100.00 · ATR 손절 참고 97.00 · 목표 참고 106.00',
+        'AAPL BUY · 종가 참고 100.00 · 변동폭 기준 손절 참고 97.00 · 목표 참고 106.00',
         'OII SELL · 종가 참고 100.00 · 보유 포지션 청산 경고',
       ].join('\n'),
     });

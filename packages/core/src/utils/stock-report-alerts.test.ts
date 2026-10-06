@@ -266,7 +266,7 @@ describe('stock report WhatsApp formatting', () => {
     expect(summary).toContain('관측기간: 2024-10-01 ~ 2026-09-25');
     expect(summary).toContain('다음 시가 진입→5거래일 종가 청산');
     expect(summary).toContain('손절 25.00% (1/4) · 목표 50.00% (2/4)');
-    expect(summary).toContain('ATR 도달률(체결률 아님)');
+    expect(summary).toContain('손절·목표선 도달 비율(체결률 아님)');
     expect(summary).toContain('합의: 평균 150.00 USD · 범위 120.00~180.00 · 8명');
     expect(summary).toContain('합의 조회: 2026-10-05 03:30 UTC');
     expect(summary).toContain('https://finance.yahoo.com/quote/AAPL/analysis/');

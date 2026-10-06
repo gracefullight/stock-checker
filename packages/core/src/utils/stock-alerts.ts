@@ -24,7 +24,7 @@ export function buildStockSignalNotification(
   const details = actionable.slice(0, 5).map((item) => {
     const price = `${item.ticker} ${item.opinion} · 종가 참고 ${item.close.toFixed(2)}`;
     return item.opinion === 'BUY'
-      ? `${price} · ATR 손절 참고 ${item.stopLoss.toFixed(2)} · 목표 참고 ${item.takeProfit.toFixed(2)}`
+      ? `${price} · 변동폭 기준 손절 참고 ${item.stopLoss.toFixed(2)} · 목표 참고 ${item.takeProfit.toFixed(2)}`
       : `${price} · 보유 포지션 청산 경고`;
   });
   return {

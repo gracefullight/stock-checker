@@ -209,7 +209,7 @@ export default async function TickerDetailPage({ params }: PageProps) {
                   threshold={{ buy: 1.5, sell: 0.5 }}
                 />
               )}
-              <IndicatorRow label="ATR" value={data.atr} />
+              <IndicatorRow label="평균 가격 변동폭" value={data.atr} />
             </tbody>
           </table>
         </Section>

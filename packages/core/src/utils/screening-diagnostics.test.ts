@@ -67,14 +67,14 @@ describe('screening diagnostics', () => {
         close: Number.NaN,
         atr: 0,
       })
-    ).toBe('유효한 종가 또는 ATR 데이터를 확인할 수 없습니다.');
+    ).toBe('유효한 종가 또는 평균 가격 변동폭을 확인할 수 없습니다.');
     const risk = describeAnalysisUnavailable({
       code: 'risk-levels-infeasible',
       rows: 1000,
       close: 4,
       atr: 8,
     });
-    expect(risk).toBe('유효한 ATR 기준 손절·목표 가격을 산정할 수 없습니다.');
+    expect(risk).toBe('평균 가격 변동폭 기준으로 유효한 손절·목표가를 산정할 수 없습니다.');
     expect(risk).not.toMatch(/이력|조회|부족|0 이하/);
   });
 

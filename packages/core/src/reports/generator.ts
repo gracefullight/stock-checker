@@ -20,7 +20,7 @@ export function generateMarkdownReport(ticker: string, result: TickerResult): Re
 
   sections.push({
     title: '## Technical Indicators',
-    content: `| Indicator | Value |\n|-----------|-------|\n| RSI | ${result.rsi.toFixed(2)} |\n| Stochastic %K | ${result.stochasticK.toFixed(2)} |\n| Bollinger Bands | ${result.bbLower.toFixed(2)} - ${result.bbUpper.toFixed(2)} |\n| Donchian Channels | ${result.donchLower.toFixed(2)} - ${result.donchUpper.toFixed(2)} |\n| Williams %R | ${result.williamsR.toFixed(2)} |\n| ATR | ${result.atr.toFixed(2)} |\n`,
+    content: `| Indicator | Value |\n|-----------|-------|\n| RSI | ${result.rsi.toFixed(2)} |\n| Stochastic %K | ${result.stochasticK.toFixed(2)} |\n| Bollinger Bands | ${result.bbLower.toFixed(2)} - ${result.bbUpper.toFixed(2)} |\n| Donchian Channels | ${result.donchLower.toFixed(2)} - ${result.donchUpper.toFixed(2)} |\n| Williams %R | ${result.williamsR.toFixed(2)} |\n| Average daily price range (including gaps) | ${result.atr.toFixed(2)} |\n`,
   });
 
   const riskRewardSection = `| Metric | Value |\n|--------|-------|\n| Stop Loss | $${result.stopLoss.toFixed(2)} |\n| Take Profit | $${result.takeProfit.toFixed(2)} |\n| Trailing Stop | $${result.trailingStop.toFixed(2)} |\n| Trailing Start | $${result.trailingStart.toFixed(2)} |\n`;

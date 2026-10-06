@@ -134,7 +134,7 @@ function historyLines(history: HistoricalOutcomesReport | null): string[] {
     `승률: ${frequency(fixedHold.winRatePct, fixedHold.wins, fixedHold.samples)}${fixedHold.samples > 0 && fixedHold.samples < 30 ? ' · 소표본' : ''}`,
     `관측기간: ${text(period.from ?? '자료 없음', 10)} ~ ${text(period.to ?? '자료 없음', 10)}`,
     `방식: 다음 시가 진입→5거래일 종가 청산 · 왕복비용 ${number(method.roundTripCostBps)}bps`,
-    `ATR 도달률(체결률 아님): 손절 ${frequency(atrBarriers.stopTouchRatePct, atrBarriers.stopTouched, atrBarriers.samples)} · 목표 ${frequency(atrBarriers.targetTouchRatePct, atrBarriers.targetTouched, atrBarriers.samples)}`,
+    `손절·목표선 도달 비율(체결률 아님): 손절 ${frequency(atrBarriers.stopTouchRatePct, atrBarriers.stopTouched, atrBarriers.samples)} · 목표 ${frequency(atrBarriers.targetTouchRatePct, atrBarriers.targetTouched, atrBarriers.samples)}`,
   ];
 }
 
@@ -260,7 +260,7 @@ function candidateSections(
       referenceLines.push(
         `손절: ${number(reference.stopLoss)} · 목표: ${number(reference.takeProfit)}`
       );
-      referenceOptional.push(`ATR: ${number(reference.atr)} · 진입 시가 미확정`);
+      referenceOptional.push(`평균 가격 변동폭: ${number(reference.atr)} · 진입 시가 미확정`);
     }
   } else {
     referenceLines.push('종가: 자료 없음');

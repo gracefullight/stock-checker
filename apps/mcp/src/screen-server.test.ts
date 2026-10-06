@@ -165,7 +165,7 @@ describe('screen_stocks MCP tool', () => {
       unavailable: [
         {
           ticker: 'NIVF',
-          reason: '유효한 ATR 기준 손절·목표 가격을 산정할 수 없습니다.',
+          reason: '평균 가격 변동폭 기준으로 유효한 손절·목표가를 산정할 수 없습니다.',
           diagnostics: {
             code: 'risk-levels-infeasible',
             rows: 500,
