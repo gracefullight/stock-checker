@@ -53,7 +53,9 @@ unused cash and does not represent the risk of an actively deployed strategy.
 Costs are charged at exit; these marks do not measure intraday drawdown.
 
 The current surviving ticker universe and sector mappings carry selection and
-survivorship bias. Historical point-in-time earnings and estimate revisions are
+survivorship bias. This evaluates SC BUY rules on the configured universe;
+historical Finviz volume rankings and its candidate cap were not reconstructed.
+Historical point-in-time earnings and estimate revisions are
 unavailable. Live earnings evidence applies only to the latest bar. Parity
 requires the same available history and benchmarks; shorter live histories use
 an unvalidated fallback. Fixed holds do not test ATR stop/target execution.
@@ -80,6 +82,8 @@ files, universe, configuration, requested session bounds, and working-tree sourc
 hashes before evaluation. Source changes during a run invalidate its result.
 No market requests or notifications occur.
 
+- Measured source commit: [7f687c9](https://github.com/gracefullight/stock-checker/commit/7f687c92e1e701f1af0d0b8c457cae627ec0f7d5).
+  Release commits can change the lockfile fingerprint without changing the signal engine.
 - Frozen at: `2026-10-06T04:03:00.408Z`; completed at: `2026-10-06T04:04:38.523Z`.
 - Config SHA-256: `9d15fbdaa4a0b607e6de440bf05d6584d3b855c2f93a53de5854b3a2fa5338cb`.
 - Input/universe/range fingerprint: `991287c9d112767aefbcbae9207248244e20f6cec86de32a6b02aba66958ff04`.

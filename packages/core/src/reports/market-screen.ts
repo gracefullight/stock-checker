@@ -559,6 +559,7 @@ async function notifyCompletion(
         asOf: `검색 완료 ${formatScreenTimestamp(runtime.job.finishedAt ?? runtime.job.updatedAt)}`,
         coverageSummary,
         lookbackDays: runtime.job.criteria.lookbackDays,
+        pipelineConfig: runtime.job.criteria.pipelineConfig,
         candidates,
       };
       const configured = await (

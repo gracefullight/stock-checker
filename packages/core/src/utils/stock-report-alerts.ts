@@ -6,6 +6,7 @@ import {
 import { gateReasons } from '@/reports/signal-reasons';
 import type { AnalystTargetsReport, getAnalystTargets } from '@/services/analyst-targets';
 import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/ticker-analysis';
+import type { PipelineConfig } from '@/types';
 import type { WhatsAppNotification } from '@/utils/whatsapp';
 
 export interface StockReportAlertCandidate {
@@ -27,6 +28,8 @@ export interface StockReportAlertInput {
   asOf: string;
   coverageSummary: string;
   lookbackDays: number;
+  /** Complete configuration frozen when the saved screening decisions were generated. */
+  pipelineConfig?: PipelineConfig;
   candidates: readonly StockReportAlertCandidate[];
 }
 
@@ -42,7 +45,11 @@ export interface StockReportAlertDetail {
 
 export type StockReportAlertGenerator = (
   ticker: string,
-  options: { lookbackDays: number; context?: TickerAnalysisContext }
+  options: {
+    lookbackDays: number;
+    context?: TickerAnalysisContext;
+    pipelineConfig?: PipelineConfig;
+  }
 ) => Promise<StockReportAlertDetail>;
 
 export interface StockReportAlertDependencies {
@@ -376,7 +383,11 @@ function contextMatches(candidate: StockReportAlertCandidate): boolean {
 
 async function loadDetail(
   ticker: string,
-  options: { lookbackDays: number; context?: TickerAnalysisContext },
+  options: {
+    lookbackDays: number;
+    context?: TickerAnalysisContext;
+    pipelineConfig?: PipelineConfig;
+  },
   dependencies: StockReportAlertDependencies
 ): Promise<StockReportAlertDetail> {
   const [context, analystTargets] = await Promise.all([
@@ -386,7 +397,10 @@ async function loadDetail(
           const analyze =
             dependencies.analyzeTickerContext ??
             (await import('@/services/ticker-analysis')).analyzeTickerContext;
-          return analyze(ticker, null, { lookbackDays: options.lookbackDays });
+          return analyze(ticker, null, {
+            lookbackDays: options.lookbackDays,
+            ...(options.pipelineConfig ? { pipelineConfig: options.pipelineConfig } : {}),
+          });
         })().catch(() => null),
     (async () => {
       const targets =
@@ -428,6 +442,7 @@ export async function buildStockReportWhatsAppNotification(
       ? Math.min(requestedBudget, TIME_BUDGET_MS)
       : TIME_BUDGET_MS;
   const deadline = Date.now() + budget;
+  const pipelineConfig = input.pipelineConfig ? structuredClone(input.pipelineConfig) : undefined;
   const details: StockReportAlertDetail[] = [];
   const generate =
     dependencies.generateReport ?? ((ticker, options) => loadDetail(ticker, options, dependencies));
@@ -452,7 +467,13 @@ export async function buildStockReportWhatsAppNotification(
     });
     const operation = Promise.resolve()
       .then(() =>
-        generate(candidate.ticker, { lookbackDays: input.lookbackDays, context: candidate.context })
+        generate(candidate.ticker, {
+          lookbackDays: input.lookbackDays,
+          context: candidate.context,
+          ...(!candidate.context && pipelineConfig
+            ? { pipelineConfig: structuredClone(pipelineConfig) }
+            : {}),
+        })
       )
       .catch(() => undefined);
     try {

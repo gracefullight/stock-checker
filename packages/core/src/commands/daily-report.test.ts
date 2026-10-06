@@ -9,6 +9,7 @@ import {
   readDailyReportStatus,
   runDailyReport,
 } from '@/commands/daily-report';
+import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@/constants';
 import type { FinvizCollectionResult } from '@/reports/finviz-collector';
 import type { MarketScreenDependencies, MarketScreenJobSnapshot } from '@/reports/market-screen';
 import type { StockScreenMatch } from '@/reports/stock-screen';
@@ -274,6 +275,8 @@ describe('daily screening dispatch', () => {
   it('a paused job claims dispatch before enriching saved BUYs and preserves the original reasons/date/reference', async () => {
     const dependencies = await fixture();
     const saved = snapshot('paused');
+    saved.job.criteria.pipelineConfig = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    saved.job.criteria.pipelineConfig.thresholds.buy = 230;
     saved.job.progress.analyzed = 1;
     saved.job.progress.matched = 1;
     saved.page.items = [
@@ -293,6 +296,7 @@ describe('daily screening dispatch', () => {
       ).toBeDefined();
       expect(input).toMatchObject({
         lookbackDays: 730,
+        pipelineConfig: saved.job.criteria.pipelineConfig,
         candidates: [
           {
             ticker: 'OII',

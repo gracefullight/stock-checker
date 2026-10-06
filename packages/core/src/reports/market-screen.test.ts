@@ -205,7 +205,17 @@ describe('durable Finviz candidate jobs', () => {
     const changed = structuredClone(first);
     changed.thresholds.buy = 250;
     const load = vi.fn().mockResolvedValueOnce(first).mockResolvedValue(changed);
-    const dependencies = { ...deps(), loadPipelineConfig: load };
+    const builder = vi.fn<typeof buildStockReportWhatsAppNotification>(async (input) => ({
+      title: input.title,
+      asOf: input.asOf,
+      summary: 'Saved configuration observations',
+    }));
+    const dependencies = {
+      ...deps(),
+      loadPipelineConfig: load,
+      isWhatsAppNotificationConfigured: async () => true,
+      buildStockReportWhatsAppNotification: builder,
+    };
     const created = await createMarketScreenJob(
       input(['ONE', 'TWO'], { autoStart: false }),
       dependencies
@@ -218,6 +228,8 @@ describe('durable Finviz candidate jobs', () => {
     expect(load).toHaveBeenCalledTimes(1);
     expect(complete.job.criteria.pipelineConfig).toEqual(first);
     expect(analyze.mock.calls.map((call) => call[2]?.pipelineConfig)).toEqual([first, first]);
+    expect(builder).toHaveBeenCalledOnce();
+    expect(builder.mock.calls[0][0].pipelineConfig).toEqual(first);
   });
 
   it('atomically publishes a frozen forward policy only alongside matched final BUY rows', async () => {
@@ -928,6 +940,9 @@ describe('durable Finviz candidate jobs', () => {
         });
         expect(await readMarketScreenLease(root)).toMatchObject({ jobId: id });
         expect(input.lookbackDays).toBe(2920);
+        expect(input.pipelineConfig).toEqual(
+          (await getMarketScreenJob(id, {}, deps())).job.criteria.pipelineConfig
+        );
         expect(input.candidates).toEqual([
           expect.objectContaining({
             ticker: 'ONE',

@@ -526,7 +526,13 @@ describe('bounded stock report enrichment', () => {
       dataAsOf: originalContext.result.date,
       context: originalContext,
     };
-    const message = await buildStockReportWhatsAppNotification(input([original]));
+    const message = await buildStockReportWhatsAppNotification({
+      ...input([original]),
+      pipelineConfig: {
+        ...structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG),
+        thresholds: { buy: 300, sell: 130 },
+      },
+    });
     expect(analyzeTickerContext).not.toHaveBeenCalled();
     expect(getAnalystTargets).toHaveBeenCalledExactlyOnceWith('AAPL');
     expect(runSignalsWithContext).toHaveBeenCalledWith(
@@ -562,6 +568,63 @@ describe('bounded stock report enrichment', () => {
     expect(analyzeTickerContext).not.toHaveBeenCalled();
     expect(getAnalystTargets).not.toHaveBeenCalled();
     expect(runSignalsWithContext).not.toHaveBeenCalled();
+  });
+
+  it('enriches saved screening history with its frozen complete config after active settings change', async () => {
+    const originalContext = context();
+    const savedConfig = structuredClone(originalContext.config);
+    const frozenCopy = structuredClone(savedConfig);
+    const activeConfig = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    activeConfig.thresholds.buy = 300;
+    vi.mocked(analyzeTickerContext).mockImplementation(async (_ticker, _sentiment, options) => ({
+      ...originalContext,
+      config: structuredClone(options?.pipelineConfig ?? activeConfig),
+    }));
+    vi.mocked(runSignalsWithContext).mockImplementation((_context, _ticker, config) =>
+      config.thresholds.buy === frozenCopy.thresholds.buy
+        ? [signal(originalContext.dailyPrices)]
+        : []
+    );
+    vi.mocked(getAnalystTargets).mockResolvedValue(targets());
+    const original = { ...candidate(), dataAsOf: originalContext.result.date };
+    const pending = buildStockReportWhatsAppNotification({
+      ...input([original]),
+      pipelineConfig: savedConfig,
+    });
+    // A caller or optimizer may change settings while bounded enrichment awaits providers.
+    savedConfig.thresholds.buy = 275;
+    activeConfig.institutional.weights.rsSpy = 0.9;
+    const message = await pending;
+
+    expect(analyzeTickerContext).toHaveBeenCalledExactlyOnceWith('AAPL', null, {
+      lookbackDays: 730,
+      pipelineConfig: frozenCopy,
+    });
+    expect(vi.mocked(analyzeTickerContext).mock.calls[0][2]?.pipelineConfig).not.toBe(savedConfig);
+    expect(runSignalsWithContext).toHaveBeenCalledWith(expect.anything(), 'AAPL', frozenCopy);
+    expect(message.summary).toContain('100.00% (1/1)');
+    expect(message.summary).not.toContain('표본 0');
+  });
+
+  it('isolates each generator snapshot without mutating the saved scan or the next candidate', async () => {
+    const savedConfig = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    const preserved = structuredClone(savedConfig);
+    const snapshots: number[] = [];
+    const generateReport = vi.fn<StockReportAlertGenerator>(async (ticker, options) => {
+      snapshots.push(options.pipelineConfig!.thresholds.buy);
+      options.pipelineConfig!.thresholds.buy = 333;
+      options.pipelineConfig!.institutional.weights.rsSpy = 0.9;
+      return detail(ticker);
+    });
+    await buildStockReportWhatsAppNotification(
+      { ...input([candidate('AAPL'), candidate('MSFT')]), pipelineConfig: savedConfig },
+      { generateReport }
+    );
+    expect(snapshots).toEqual([preserved.thresholds.buy, preserved.thresholds.buy]);
+    expect(savedConfig).toEqual(preserved);
+    expect(generateReport.mock.calls[0][1].pipelineConfig).not.toBe(
+      generateReport.mock.calls[1][1].pipelineConfig
+    );
   });
 
   it('starts only three sequential ticker jobs with the exact requested lookback', async () => {

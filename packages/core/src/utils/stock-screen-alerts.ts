@@ -52,6 +52,7 @@ export async function buildStockScreenReportNotification(
     asOf: `검색 완료 ${formatScreenTimestamp(screen.generatedAt)}`,
     coverageSummary: screenCoverage(screen),
     lookbackDays: criteria.lookbackDays,
+    pipelineConfig: criteria.pipelineConfig,
     candidates: screen.matches.map((candidate) => ({
       ticker: candidate.ticker,
       decision: candidate.decision,

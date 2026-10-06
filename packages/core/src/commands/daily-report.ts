@@ -402,6 +402,7 @@ export async function runDailyReport(
         title: `아침 스크리닝 · ${title}`,
         asOf: `${schedule.localDate} Sydney · 검색 중단 ${formatScreenTimestamp(now().toISOString())}`,
         lookbackDays: saved.job.criteria.lookbackDays,
+        pipelineConfig: saved.job.criteria.pipelineConfig,
         coverageSummary: '',
         candidates,
       };

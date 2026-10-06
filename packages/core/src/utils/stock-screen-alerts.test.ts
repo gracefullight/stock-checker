@@ -98,7 +98,10 @@ describe('buildStockScreenWhatsAppNotification', () => {
     }));
     const message = await buildStockScreenReportNotification(screen, { generateReport });
 
-    expect(generateReport).toHaveBeenCalledExactlyOnceWith('AAPL', { lookbackDays: 2920 });
+    expect(generateReport).toHaveBeenCalledExactlyOnceWith('AAPL', {
+      lookbackDays: 2920,
+      pipelineConfig: screen.criteria.pipelineConfig,
+    });
     expect(message.summary).toContain('*AAPL · BUY*');
     expect(message.summary).toContain('2026-10-02');
     expect(message.summary).toContain('Fixture gates passed');
