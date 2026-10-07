@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.6](https://github.com/gracefullight/stock-checker/compare/v0.7.5...v0.7.6) (2026-10-07)
+
+
+### Maintenance
+
+* daily stock data update ([59df56f](https://github.com/gracefullight/stock-checker/commit/59df56fa37385dd10a1a493e486a148ba85f505e))
+
 ## [0.7.5](https://github.com/gracefullight/stock-checker/compare/v0.7.4...v0.7.5) (2026-10-06)
 
 
