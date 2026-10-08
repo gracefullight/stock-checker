@@ -1,6 +1,6 @@
 {
   "name": "stock-checker",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "private": true,
   "imports": {
     "#scripts/*": "./.github/scripts/*"
