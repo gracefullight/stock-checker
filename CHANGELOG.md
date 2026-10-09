@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.8](https://github.com/gracefullight/stock-checker/compare/v0.7.7...v0.7.8) (2026-10-09)
+
+
+### Bug Fixes
+
+* clarify whatsapp screening results and exclusions ([126a8c7](https://github.com/gracefullight/stock-checker/commit/126a8c7348f04c99fded27b81cf5a61e6855d36a))
+
+
+### Maintenance
+
+* update oma hooks and skills to 16.0.1 ([82cc3cb](https://github.com/gracefullight/stock-checker/commit/82cc3cb0109cd69ca0f1c3583af96344677dc74f))
+
 ## [0.7.7](https://github.com/gracefullight/stock-checker/compare/v0.7.6...v0.7.7) (2026-10-08)
 
 
