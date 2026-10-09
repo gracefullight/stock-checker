@@ -90,7 +90,7 @@
   "ui": {
     "statusLine": {
       "type": "command",
-      "command": "'bun' \"$QWEN_PROJECT_DIR/.qwen/hooks/hud.ts\""
+      "command": "'bun' \"$QWEN_PROJECT_DIR/.qwen/hooks/oma/hud.ts\""
     }
   },
   "hooksConfig": {
