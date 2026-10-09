@@ -20,7 +20,7 @@ test('cold notification formatter imports after a partial market-provider mock w
   expect(JSON.parse(stdout)).toMatchObject({
     providerCalls: 0,
     message: {
-      title: '종목 스크리닝 · BUY · 평가 완료 1/1',
+      title: '종목 스크리닝 · BUY 1개 · 평가 완료 1/1',
       summary: expect.stringContaining('AAPL BUY · 종가일 2026-10-02 · 참고 100.00'),
     },
   });

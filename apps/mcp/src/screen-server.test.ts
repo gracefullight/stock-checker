@@ -294,19 +294,34 @@ describe('screen_stocks MCP tool', () => {
           expect(notifier).toHaveBeenCalledTimes(1);
           expect(notifier).toHaveBeenCalledWith({
             title: {
-              available: '종목 스크리닝 · BUY · 평가 완료 1/1',
-              partial: '종목 스크리닝 · BUY · 평가 1/2 · 분석 불가 1',
-              unavailable: '종목 스크리닝 · BUY · 평가 0/1 · 분석 불가 1',
-              'zero matches': '종목 스크리닝 · BUY · 평가 완료 1/1',
+              available: '종목 스크리닝 · BUY 1개 · 평가 완료 1/1',
+              partial: '종목 스크리닝 · BUY 1개 · 평가 1/2 · 미산정 1종목',
+              unavailable: '종목 스크리닝 · BUY 확인 불가 · 평가 0/1 · 미산정 1종목',
+              'zero matches': '종목 스크리닝 · BUY 0개 · 평가 완료 1/1',
             }[status],
             asOf: `검색 완료 ${screen.generatedAt.slice(0, 16).replace('T', ' ')} UTC`,
-            summary: expect.stringContaining(noMatches ? '일치 종목 없음.' : 'AAPL BUY'),
+            summary: expect.stringContaining(
+              status === 'unavailable'
+                ? '분석 결과가 없어 BUY 조건 충족 여부를 확인할 수 없습니다.'
+                : status === 'zero matches'
+                  ? 'BUY 조건 충족 0개 (분석 1개 기준).'
+                  : 'AAPL BUY'
+            ),
           });
           const payload = notifier.mock.calls[0]?.[0];
-          expect(payload?.summary).not.toMatch(/분석|반환|알림|해석 주의|결과 범위|승률/);
-          expect(payload?.summary).toContain(
-            noMatches ? '일치 종목 없음.' : 'AAPL BUY · 종가일 2026-10-02 · 참고 100.00'
+          expect(payload?.summary).not.toMatch(
+            /반환|알림|해석 주의|결과 범위|승률|Fixture missing data/
           );
+          if (!noMatches) {
+            expect(payload?.summary).toContain('AAPL BUY · 종가일 2026-10-02 · 참고 100.00');
+          }
+          if (unavailable) {
+            expect(payload?.summary).toContain('데이터 확인 불가 1종목: BAD.');
+          }
+          if (status === 'unavailable') {
+            expect(payload?.title).not.toContain('BUY 0개');
+            expect(payload?.summary).not.toContain('BUY 조건 충족 0개');
+          }
           expect(payload?.summary.length).toBeLessThanOrEqual(700);
         },
         notifier

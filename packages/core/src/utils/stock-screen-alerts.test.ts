@@ -128,6 +128,45 @@ describe('buildStockScreenWhatsAppNotification', () => {
     expect(message.summary).toContain('Fixture gates passed');
   });
 
+  it('explains saved risk and price-data exclusions in both empty screen notification paths', async () => {
+    const screen = fixture({
+      status: 'partial',
+      matches: [],
+      coverage: {
+        requested: 200,
+        analyzed: 198,
+        unavailable: 2,
+        matched: 0,
+        returned: 0,
+        truncated: false,
+      },
+      unavailable: [
+        {
+          ticker: 'NIVF',
+          reason: 'private risk inputs',
+          diagnostics: { code: 'risk-levels-infeasible', rows: 502, close: 0.1, atr: 0.2 },
+        },
+        {
+          ticker: 'GCDT',
+          reason: 'private price inputs',
+          diagnostics: { code: 'invalid-price-or-atr', rows: 8, close: 0.2, atr: 0 },
+        },
+      ],
+    });
+    const generateReport = vi.fn<StockReportAlertGenerator>();
+    const cheap = buildStockScreenWhatsAppNotification(screen);
+    const rich = await buildStockScreenReportNotification(screen, { generateReport });
+
+    expect(cheap.title).toContain('BUY 0개 · 평가 198/200 · 미산정 2종목');
+    expect(rich.title).toBe(cheap.title);
+    expect(rich.summary).toBe(cheap.summary);
+    expect(rich.summary).toContain('BUY 조건 충족 0개 (분석 198개 기준).');
+    expect(rich.summary).toContain('손절·목표가 미산정 1종목: NIVF.');
+    expect(rich.summary).toContain('GCDT');
+    expect(rich.summary).not.toMatch(/상세 후보 없음|private|분석 불가/);
+    expect(generateReport).not.toHaveBeenCalled();
+  });
+
   it('distinguishes scan completion from per-ticker completed bars and reference prices', () => {
     const first = candidate('AAPL');
     const second = candidate('OII', { dataAsOf: '2026-10-01' });
@@ -135,7 +174,7 @@ describe('buildStockScreenWhatsAppNotification', () => {
     const original = structuredClone(screen);
     const message = buildStockScreenWhatsAppNotification(screen);
 
-    expect(message.title).toBe('종목 스크리닝 · BUY · 평가 완료 1/1');
+    expect(message.title).toBe('종목 스크리닝 · BUY 1개 · 평가 완료 1/1');
     expect(message.asOf).toBe('검색 완료 2026-10-05 03:30 UTC');
     expect(message.summary).toContain('AAPL BUY · 종가일 2026-10-02 · 참고 123.46');
     expect(message.summary).toContain('OII BUY · 종가일 2026-10-01 · 참고 123.46');
@@ -170,7 +209,7 @@ describe('buildStockScreenWhatsAppNotification', () => {
       truncated: true,
     });
     expect(screen.criteria.limit).toBe(5);
-    expect(title).toBe('종목 스크리닝 · BUY · 평가 19/20 · 분석 불가 1');
+    expect(title).toBe('종목 스크리닝 · BUY 8개 · 평가 19/20 · 미산정 1종목');
     expect(summary).not.toMatch(/필터|분석|알림|반환|생략|해석 주의|결과 범위/);
     expect(summary).toContain('AAPL BUY');
     expect(summary).toContain('MSFT BUY');
@@ -195,13 +234,30 @@ describe('buildStockScreenWhatsAppNotification', () => {
             returned: 0,
             truncated: false,
           },
+          unavailable:
+            status === 'unavailable'
+              ? ['FAIL1', 'FAIL2'].map((ticker) => ({
+                  ticker,
+                  reason: 'private provider error',
+                  diagnostics: { code: 'history-unavailable' as const, rows: 0 },
+                }))
+              : [],
         })
       );
       const { summary } = message;
       expect(message.title).toContain(
-        status === 'available' ? '평가 완료 2/2' : '평가 0/2 · 분석 불가 2'
+        status === 'available'
+          ? 'BUY 0개 · 평가 완료 2/2'
+          : 'BUY 확인 불가 · 평가 0/2 · 미산정 2종목'
       );
-      expect(summary).toBe('일치 종목 없음.');
+      if (status === 'available') {
+        expect(summary).toBe('BUY 조건 충족 0개 (분석 2개 기준).');
+      } else {
+        expect(summary).toContain('BUY');
+        expect(summary).toContain('확인할 수 없습니다');
+        expect(summary).toContain('가격 이력');
+        expect(summary).not.toMatch(/조건 충족 0개|일치 종목 없음|private/);
+      }
       expect(summary).not.toMatch(/win rate|%/i);
     }
   );
@@ -215,7 +271,7 @@ describe('buildStockScreenWhatsAppNotification', () => {
         matches: [base],
       })
     );
-    expect(message.title).toBe('종목 스크리닝 · ALL · 평가 완료 1/1');
+    expect(message.title).toBe('종목 스크리닝 · ALL · 일치 1개 · 평가 완료 1/1');
     expect(message.summary).toContain('OII HOLD · 종가일 자료 없음 · 참고 자료 없음');
     expect(message.summary).not.toContain('USD 0.00');
   });
@@ -233,7 +289,7 @@ describe('buildStockScreenWhatsAppNotification', () => {
     }));
     const cheap = buildStockScreenWhatsAppNotification(screen);
     const rich = await buildStockScreenReportNotification(screen, { generateReport });
-    expect(cheap.title).toBe('종목 스크리닝 · BUY · 평가 완료 1/1');
+    expect(cheap.title).toBe('종목 스크리닝 · BUY 1개 · 평가 완료 1/1');
     expect(rich.title).toBe(cheap.title);
     expect(cheap.title).not.toMatch(/일부 누락|자료 없음/);
     expect(screen.status).toBe('partial');
@@ -261,5 +317,33 @@ describe('buildStockScreenWhatsAppNotification', () => {
     }
     expect(message.summary).toContain(`${'C'.repeat(32)} BUY`);
     expect(message.summary.split('\n')).toHaveLength(3);
+  });
+
+  it('reserves all grouped exclusion causes alongside three long ticker rows', () => {
+    const screen = fixture({
+      matches: ['A', 'B', 'C'].map((letter) => candidate(letter.repeat(32))),
+      unavailable: Array.from({ length: 80 }, (_, index) => ({
+        ticker: `LONGTICKER${index}`,
+        reason: 'private error',
+        diagnostics:
+          index % 4 === 3
+            ? undefined
+            : {
+                code: (
+                  ['risk-levels-infeasible', 'invalid-price-or-atr', 'history-unavailable'] as const
+                )[index % 4],
+                rows: 10,
+              },
+      })),
+    });
+    const message = buildStockScreenWhatsAppNotification(screen);
+
+    expect(message.summary.length).toBeLessThanOrEqual(700);
+    for (const letter of ['A', 'B', 'C']) expect(message.summary).toContain(letter.repeat(32));
+    expect(message.summary).toContain('손절·목표가 미산정 20종목');
+    expect(message.summary).toContain('종가·변동폭 확인 불가 20종목');
+    expect(message.summary).toContain('가격 이력 미확보 20종목');
+    expect(message.summary).toContain('데이터 확인 불가 20종목');
+    expect(message.summary).not.toContain('private');
   });
 });

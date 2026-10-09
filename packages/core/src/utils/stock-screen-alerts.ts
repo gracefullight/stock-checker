@@ -1,5 +1,10 @@
 import type { StockScreenResult } from '@/reports/stock-screen';
-import { formatScreenEvaluation } from '@/utils/screening-diagnostics';
+import {
+  formatScreenDecision,
+  formatScreenEvaluation,
+  formatScreeningOutcome,
+  type ScreeningNotificationContext,
+} from '@/utils/screening-diagnostics';
 import {
   buildStockReportWhatsAppNotification,
   formatStockReportWhatsAppNotification,
@@ -19,6 +24,23 @@ function oneLine(value: string, maximumLength: number): string {
 
 function screenEvaluation(screen: StockScreenResult): string {
   return formatScreenEvaluation({ total: screen.coverage.requested, ...screen.coverage });
+}
+
+function screenContext(screen: StockScreenResult): ScreeningNotificationContext {
+  return {
+    decision: screen.criteria.decision,
+    analyzed: screen.coverage.analyzed,
+    matched: screen.coverage.matched,
+    unavailable: screen.unavailable,
+  };
+}
+
+function screenTitle(screen: StockScreenResult): string {
+  const decision = formatScreenDecision({
+    ...screenContext(screen),
+    total: screen.coverage.requested,
+  });
+  return `종목 스크리닝 · ${decision} · ${screenEvaluation(screen)}`;
 }
 
 /** Display a known UTC instant to minute precision without using the host timezone. */
@@ -49,11 +71,12 @@ export async function buildStockScreenReportNotification(
 ): Promise<WhatsAppNotification> {
   const { criteria } = screen;
   const input: StockReportAlertInput = {
-    title: `종목 스크리닝 · ${criteria.decision} · ${screenEvaluation(screen)}`,
+    title: screenTitle(screen),
     asOf: `검색 완료 ${formatScreenTimestamp(screen.generatedAt)}`,
     coverageSummary: screenCoverage(screen),
     lookbackDays: criteria.lookbackDays,
     pipelineConfig: criteria.pipelineConfig,
+    screening: screenContext(screen),
     candidates: screen.matches.map((candidate) => ({
       ticker: candidate.ticker,
       decision: candidate.decision,
@@ -80,16 +103,24 @@ export function buildStockScreenWhatsAppNotification(
   screen: StockScreenResult
 ): WhatsAppNotification {
   const candidates = screen.matches.slice(0, 3);
-  const { criteria } = screen;
   const rows = candidates.map((candidate) => {
     const price = candidate.execution.reference?.price;
     const reference =
       price !== undefined && Number.isFinite(price) ? price.toFixed(2) : '자료 없음';
     return `${oneLine(candidate.ticker, 32)} ${candidate.decision} · 종가일 ${oneLine(candidate.dataAsOf ?? '자료 없음', 10)} · 참고 ${reference}`;
   });
-  const summary = rows.length ? rows.join('\n') : '일치 종목 없음.';
+  const outcome = formatScreeningOutcome(screenContext(screen));
+  const diagnostics = outcome.split('\n').slice(1).join('\n');
+  const rowBudget = rows.length
+    ? Math.floor((700 - (diagnostics ? diagnostics.length + 1 : 0) - rows.length + 1) / rows.length)
+    : 0;
+  const summary = rows.length
+    ? [...rows.map((row) => oneLine(row, rowBudget)), ...(diagnostics ? [diagnostics] : [])].join(
+        '\n'
+      )
+    : outcome;
   return {
-    title: oneLine(`종목 스크리닝 · ${criteria.decision} · ${screenEvaluation(screen)}`, 80),
+    title: oneLine(screenTitle(screen), 80),
     asOf: oneLine(`검색 완료 ${formatScreenTimestamp(screen.generatedAt)}`, 60),
     summary: summary.slice(0, 700).toWellFormed(),
   };

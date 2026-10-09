@@ -27,7 +27,7 @@ import { readMarketScreenLease, writeMarketScreenJson } from '@/reports/market-s
 import { projectMatch } from '@/reports/stock-screen';
 import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/ticker-analysis';
 import type { PipelineResult } from '@/types';
-import type { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alerts';
+import { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alerts';
 import type { sendWhatsAppNotification } from '@/utils/whatsapp';
 
 const storeHooks = vi.hoisted(() => ({
@@ -652,7 +652,7 @@ describe('durable Finviz candidate jobs', () => {
       });
       expect(item).not.toHaveProperty('decision');
     }
-    expect(notify.mock.calls[0][0].title).toContain('평가 1/7 · 분석 불가 6');
+    expect(notify.mock.calls[0][0].title).toContain('BUY 0개 · 평가 1/7 · 미산정 6종목');
     expect(notify.mock.calls[0][0].title).not.toMatch(/자료 없음|일부 누락/);
   });
 
@@ -998,6 +998,12 @@ describe('durable Finviz candidate jobs', () => {
         expect(input.pipelineConfig).toEqual(
           (await getMarketScreenJob(id, {}, deps())).job.criteria.pipelineConfig
         );
+        expect(input.screening).toEqual({
+          decision: 'BUY',
+          analyzed: 1,
+          matched: 1,
+          unavailable: [],
+        });
         expect(input.candidates).toEqual([
           expect.objectContaining({
             ticker: 'ONE',
@@ -1095,7 +1101,7 @@ describe('durable Finviz candidate jobs', () => {
 
       expect(notify).toHaveBeenCalledOnce();
       const message = notify.mock.calls[0][0];
-      expect(message.title).toContain('평가 7/8 · 분석 불가 1');
+      expect(message.title).toContain('BUY 6개 · 평가 7/8 · 미산정 1종목');
       expect(message.title).not.toContain('일부 누락');
       expect(complete.job.progress).toMatchObject({
         total: 8,
@@ -1104,7 +1110,7 @@ describe('durable Finviz candidate jobs', () => {
         excluded: 1,
         unavailable: 1,
       });
-      expect(message.summary).not.toMatch(/필터|분석|알림|해석 주의|결과 범위|승률/);
+      expect(message.summary).not.toMatch(/필터|알림|해석 주의|결과 범위|승률/);
       expect(message.summary).toContain('P5 BUY · 참고 105.00 · BUY 점수 300.0');
       expect(message.summary.indexOf('P5 BUY')).toBeLessThan(message.summary.indexOf('P4 BUY'));
       expect(message.summary.indexOf('P4 BUY')).toBeLessThan(message.summary.indexOf('P3 BUY'));
@@ -1136,6 +1142,58 @@ describe('durable Finviz candidate jobs', () => {
       expect(summary.indexOf('MID SELL')).toBeLessThan(summary.indexOf('LOW SELL'));
     });
 
+    it('reserves the disabled sender fallback limit for every diagnostic cause', async () => {
+      const matches = Array.from({ length: 3 }, (_, index) => `MATCH${index}`.padEnd(32, 'X'));
+      const failures = Array.from({ length: 6 }, (_, index) =>
+        ['RISK', 'HIST', 'PRIC', 'UNKN'].map(
+          (prefix) => `${prefix}${String(index).padStart(8, '0')}`
+        )
+      ).flat();
+      analyze.mockImplementation(async (ticker, _fearGreed, options) => {
+        if (ticker.startsWith('MATCH')) {
+          const value = context(ticker, 'BUY', 1e20);
+          value.result.close = 1e20;
+          return value;
+        }
+        if (!ticker.startsWith('UNKN')) {
+          options?.onUnavailable?.({
+            code: ticker.startsWith('RISK')
+              ? 'risk-levels-infeasible'
+              : ticker.startsWith('HIST')
+                ? 'history-unavailable'
+                : 'invalid-price-or-atr',
+            rows: 500,
+          });
+        }
+        return null;
+      });
+      const builder = vi.fn<typeof buildStockReportWhatsAppNotification>(async () => {
+        throw new Error('Disabled notifications must not enrich reports');
+      });
+      const created = await createMarketScreenJob(
+        input([...matches, ...failures], { autoStart: false }),
+        deps()
+      );
+      ids.push(created.job.id);
+      await runMarketScreenJob(created.job.id, {
+        ...deps(),
+        buildStockReportWhatsAppNotification: builder,
+      });
+      const complete = await settled(created.job.id);
+
+      expect(complete.job.progress).toMatchObject({ analyzed: 3, matched: 3, unavailable: 24 });
+      expect(notify).toHaveBeenCalledOnce();
+      const { summary } = notify.mock.calls[0][0];
+      expect(summary).toHaveLength(700);
+      expect(summary).toContain(`${matches[0]} BUY`);
+      expect(summary).toContain('손절·목표가 미산정 6종목');
+      expect(summary).toContain('가격 이력 미확보 6종목');
+      expect(summary).toContain('종가·변동폭 확인 불가 6종목');
+      expect(summary).toContain('데이터 확인 불가 6종목');
+      expect(summary.endsWith('UNKN00000004 외 1종목.')).toBe(true);
+      expect(builder).not.toHaveBeenCalled();
+    });
+
     it('sends a completed zero-match summary and distinguishes excluded HOLDs from failures', async () => {
       analyze.mockImplementation(async (ticker) => context(ticker, 'HOLD'));
       const started = await create();
@@ -1151,14 +1209,115 @@ describe('durable Finviz candidate jobs', () => {
         excluded: 2,
         unavailable: 0,
       });
-      expect(message.summary).toBe('일치 종목 없음.');
+      expect(message.summary).toBe('BUY 조건 충족 0개 (분석 2개 기준).');
     });
+
+    it.each([true, false])(
+      'reports zero BUY matches with saved risk and price causes when the sender is configured=%s',
+      async (configured) => {
+        analyze.mockImplementation(async (ticker, _fearGreed, options) => {
+          if (ticker === 'HOLD1') return context(ticker, 'HOLD');
+          options?.onUnavailable?.(
+            ticker === 'PRICE'
+              ? { code: 'invalid-price-or-atr', rows: 500 }
+              : { code: 'risk-levels-infeasible', rows: 500, close: 0.1, atr: 0.2 }
+          );
+          throw new Error('provider-private-token private-phone');
+        });
+        const generateReport = vi.fn(async () => {
+          throw new Error('Empty candidates must not request report data');
+        });
+        const builder = vi.fn<typeof buildStockReportWhatsAppNotification>((input) =>
+          buildStockReportWhatsAppNotification(input, { generateReport })
+        );
+        const created = await createMarketScreenJob(
+          input(['HOLD1', 'RISK1', 'PRICE', 'RISK2'], { autoStart: false }),
+          deps()
+        );
+        ids.push(created.job.id);
+        await runMarketScreenJob(created.job.id, {
+          ...deps(),
+          isWhatsAppNotificationConfigured: async () => configured,
+          buildStockReportWhatsAppNotification: builder,
+        });
+        const complete = await settled(created.job.id);
+
+        expect(complete.job.status).toBe('partial');
+        expect(complete.job.progress).toMatchObject({ analyzed: 1, matched: 0, unavailable: 3 });
+        expect(notify).toHaveBeenCalledOnce();
+        const message = notify.mock.calls[0][0];
+        expect(message.title).toContain('BUY 0개 · 평가 1/4 · 미산정 3종목');
+        expect(message.summary).toContain('BUY 조건 충족 0개 (분석 1개 기준).');
+        expect(message.summary).toContain('손절·목표가');
+        expect(message.summary).toContain('2종목');
+        expect(message.summary).toContain('RISK1');
+        expect(message.summary).toContain('RISK2');
+        expect(message.summary).toContain('PRICE');
+        expect(message.summary).not.toMatch(/상세 후보 없음|일치 종목 없음|private/);
+        expect(message.summary.length).toBeLessThanOrEqual(configured ? 3_000 : 700);
+        expect(generateReport).not.toHaveBeenCalled();
+        expect(builder).toHaveBeenCalledTimes(configured ? 1 : 0);
+        if (configured) {
+          expect(builder.mock.calls[0][0].screening?.unavailable).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                ticker: 'PRICE',
+                diagnostics: { code: 'invalid-price-or-atr', rows: 500 },
+              }),
+              expect.objectContaining({
+                ticker: 'RISK1',
+                diagnostics: { code: 'risk-levels-infeasible', rows: 500, close: 0.1, atr: 0.2 },
+              }),
+            ])
+          );
+        }
+      }
+    );
+
+    it.each([true, false])(
+      'does not claim zero BUY matches when every saved analysis failed and configured=%s',
+      async (configured) => {
+        analyze.mockImplementation(async (_ticker, _fearGreed, options) => {
+          options?.onUnavailable?.({ code: 'history-unavailable', rows: 0 });
+          return null;
+        });
+        const generateReport = vi.fn(async () => {
+          throw new Error('Empty candidates must not request report data');
+        });
+        const builder = vi.fn<typeof buildStockReportWhatsAppNotification>((input) =>
+          buildStockReportWhatsAppNotification(input, { generateReport })
+        );
+        const created = await createMarketScreenJob(input(undefined, { autoStart: false }), deps());
+        ids.push(created.job.id);
+        await runMarketScreenJob(created.job.id, {
+          ...deps(),
+          isWhatsAppNotificationConfigured: async () => configured,
+          buildStockReportWhatsAppNotification: builder,
+        });
+        const complete = await settled(created.job.id);
+
+        expect(complete.job.status).toBe('unavailable');
+        expect(complete.job.progress).toMatchObject({ analyzed: 0, matched: 0, unavailable: 2 });
+        expect(notify).toHaveBeenCalledOnce();
+        const message = notify.mock.calls[0][0];
+        expect(message.title).toContain('BUY 확인 불가 · 평가 0/2 · 미산정 2종목');
+        expect(message.summary).toContain(
+          '분석 결과가 없어 BUY 조건 충족 여부를 확인할 수 없습니다.'
+        );
+        expect(message.summary).toContain('가격 이력');
+        expect(message.summary).toContain('ONE');
+        expect(message.summary).toContain('TWO');
+        expect(message.summary).not.toMatch(/BUY 조건 충족 0개|상세 후보 없음|일치 종목 없음/);
+        expect(generateReport).not.toHaveBeenCalled();
+        expect(builder).toHaveBeenCalledTimes(configured ? 1 : 0);
+      }
+    );
 
     it('explicitly identifies unavailable runs and partial Finviz collection', async () => {
       analyze.mockResolvedValue(null);
       const unavailable = await create();
       const unavailableSnapshot = await settled(unavailable.job.id);
-      expect(notify.mock.calls[0][0].title).toContain('평가 0/2 · 분석 불가 2');
+      expect(notify.mock.calls[0][0].title).toContain('BUY 확인 불가 · 평가 0/2 · 미산정 2종목');
       expect(unavailableSnapshot.job.progress).toMatchObject({
         total: 2,
         analyzed: 0,
@@ -1166,14 +1325,17 @@ describe('durable Finviz candidate jobs', () => {
         excluded: 0,
         unavailable: 2,
       });
-      expect(notify.mock.calls[0][0].summary).toBe('일치 종목 없음.');
+      expect(notify.mock.calls[0][0].summary).toContain(
+        '분석 결과가 없어 BUY 조건 충족 여부를 확인할 수 없습니다.'
+      );
+      expect(notify.mock.calls[0][0].summary).not.toContain('일치 종목 없음');
 
       analyze.mockImplementation(async (ticker) => context(ticker));
       const options = input();
       options.provenance = { ...options.provenance, sourceTotal: 1669, completeness: 'partial' };
       const partial = await create(options);
       const partialSnapshot = await settled(partial.job.id);
-      expect(notify.mock.calls[1][0].title).toContain('평가 완료 2/2');
+      expect(notify.mock.calls[1][0].title).toContain('BUY 2개 · 평가 완료 2/2');
       expect(notify.mock.calls[1][0].title).toContain('Finviz 후보 2/1669');
       expect(notify.mock.calls[1][0].title).not.toMatch(/누락|분석 불가|자료 없음/);
       expect(partialSnapshot.job.universe).toMatchObject({

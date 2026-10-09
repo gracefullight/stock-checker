@@ -205,7 +205,7 @@ describe('daily screening dispatch', () => {
     });
     dependencies.send = vi.fn(async (notification) => {
       expect(notification.title).toBe(
-        '아침 스크리닝 · BUY · 평가 1/2 · 분석 불가 1 · Finviz 후보 2/3916'
+        '아침 스크리닝 · BUY 0개 · 평가 1/2 · 미산정 1종목 · Finviz 후보 2/3916'
       );
       expect(notification.title).not.toMatch(/일부 누락|자료 없음|\(부분\)/);
       return { status: 'accepted' as const, messageId: 'offline-id' };

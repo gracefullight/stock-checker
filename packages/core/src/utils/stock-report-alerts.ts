@@ -7,6 +7,10 @@ import { gateReasons } from '@/reports/signal-reasons';
 import type { AnalystTargetsReport, getAnalystTargets } from '@/services/analyst-targets';
 import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/ticker-analysis';
 import type { PipelineConfig } from '@/types';
+import {
+  formatScreeningOutcome,
+  type ScreeningNotificationContext,
+} from '@/utils/screening-diagnostics';
 import type { WhatsAppNotification } from '@/utils/whatsapp';
 
 export interface StockReportAlertCandidate {
@@ -31,6 +35,7 @@ export interface StockReportAlertInput {
   /** Complete configuration frozen when the saved screening decisions were generated. */
   pipelineConfig?: PipelineConfig;
   candidates: readonly StockReportAlertCandidate[];
+  screening?: ScreeningNotificationContext;
 }
 
 export interface StockReportAlertDetail {
@@ -329,9 +334,14 @@ export function formatStockReportWhatsAppNotification(
   details: readonly StockReportAlertDetail[]
 ): WhatsAppNotification {
   const candidates = input.candidates.slice(0, MAX_DETAILS);
+  const outcome = input.screening ? formatScreeningOutcome(input.screening) : '';
+  const footer = candidates.length ? outcome.split('\n').slice(1).join('\n') : outcome;
   const blocks: string[] = [];
   const budget = candidates.length
-    ? Math.floor((MAX_SUMMARY_LENGTH - (candidates.length - 1) * 2) / candidates.length)
+    ? Math.floor(
+        (MAX_SUMMARY_LENGTH - (candidates.length - 1) * 2 - (footer ? footer.length + 2 : 0)) /
+          candidates.length
+      )
     : 0;
   for (const candidate of candidates) {
     const detail = details.find(
@@ -367,7 +377,7 @@ export function formatStockReportWhatsAppNotification(
   return {
     title: text(input.title, 80),
     asOf: text(input.asOf, 60),
-    summary: blocks.length ? blocks.join('\n\n') : '상세 후보 없음.',
+    summary: [...blocks, ...(footer ? [footer] : [])].join('\n\n') || '상세 후보 없음.',
   };
 }
 

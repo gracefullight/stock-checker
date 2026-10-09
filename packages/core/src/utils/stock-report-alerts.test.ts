@@ -249,6 +249,48 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.useRealTimers());
 
 describe('stock report WhatsApp formatting', () => {
+  it('reports zero BUY matches and the affected tickers without loading candidate details', async () => {
+    const generateReport = vi.fn<StockReportAlertGenerator>();
+    const screening = {
+      decision: 'BUY' as const,
+      analyzed: 197,
+      matched: 0,
+      unavailable: ['NIVF', 'SXTC', 'DKI'].map((ticker) => ({
+        ticker,
+        reason: 'Saved risk rejection',
+        diagnostics: { code: 'risk-levels-infeasible' as const, rows: 502, close: 0.1, atr: 0.2 },
+      })),
+    };
+    const notification = await buildStockReportWhatsAppNotification(
+      { ...input([]), screening },
+      { generateReport }
+    );
+
+    expect(notification.summary).toContain('BUY 조건 충족 0개 (분석 197개 기준).');
+    expect(notification.summary).toContain('손절·목표가 미산정 3종목: DKI, NIVF, SXTC.');
+    expect(notification.summary).not.toMatch(/상세 후보 없음|분석 불가|Saved risk/);
+    expect(generateReport).not.toHaveBeenCalled();
+  });
+
+  it('keeps the decision unknown when none of the requested tickers could be analyzed', () => {
+    const notification = formatStockReportWhatsAppNotification(
+      {
+        ...input([]),
+        screening: {
+          decision: 'BUY',
+          analyzed: 0,
+          matched: 0,
+          unavailable: [{ ticker: 'FAIL', reason: 'private token=secret' }],
+        },
+      },
+      []
+    );
+
+    expect(notification.summary).toContain('BUY');
+    expect(notification.summary).toContain('확인할 수 없습니다');
+    expect(notification.summary).not.toMatch(/조건 충족 0개|상세 후보 없음|secret/);
+  });
+
   it('leads with the bold stock judgment and groups the financial details', () => {
     const { summary } = formatStockReportWhatsAppNotification(input(), [detail()]);
     expect(summary.split('\n')[0]).toBe('*AAPL · BUY*');
@@ -495,10 +537,28 @@ describe('stock report WhatsApp formatting', () => {
     const original = {
       ...input(candidates),
       coverageSummary: `${'전체 분석 범위 기록 '.repeat(100)}\n${'추가 수집 범위 기록 '.repeat(100)}`,
+      screening: {
+        decision: 'BUY' as const,
+        analyzed: 3,
+        matched: 3,
+        unavailable: Array.from({ length: 60 }, (_, index) => ({
+          ticker: `UNAVAILABLE${index}`,
+          reason: 'private provider response',
+          diagnostics: {
+            code: (
+              ['risk-levels-infeasible', 'invalid-price-or-atr', 'history-unavailable'] as const
+            )[index % 3],
+            rows: 100,
+          },
+        })),
+      },
     };
     const { summary } = formatStockReportWhatsAppNotification(original, reports);
     expect(summary.length).toBeLessThanOrEqual(3000);
     expect(summary).not.toContain('전체 분석 범위 기록');
+    expect(summary).toContain('손절·목표가 미산정 20종목');
+    expect(summary).toContain('가격 이력');
+    expect(summary).not.toContain('private provider response');
     for (const ticker of symbols) {
       const block = stockBlock(summary, ticker);
       expect(block).toContain('원판정 근거*\n• 필수원판정근거');

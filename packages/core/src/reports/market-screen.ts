@@ -22,6 +22,8 @@ import { loadPipelineConfig } from '@/utils/config-loader';
 import {
   describeAnalysisUnavailable,
   formatMarketScreenTitle,
+  formatScreeningOutcome,
+  type ScreeningNotificationContext,
 } from '@/utils/screening-diagnostics';
 import { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alerts';
 import { formatScreenTimestamp } from '@/utils/stock-screen-alerts';
@@ -543,6 +545,17 @@ async function notifyCompletion(
       };
     });
     const { progress, universe } = runtime.job;
+    const screening: ScreeningNotificationContext = {
+      decision: runtime.job.criteria.decision,
+      analyzed: progress.analyzed,
+      matched: progress.matched,
+      unavailable:
+        progress.unavailable > 0
+          ? (await results(runtime.root, runtime.jobId, 'unavailable')).map(
+              ({ item }) => item as MarketScreenError
+            )
+          : [],
+    };
     const coverageSummary = [
       `필터 ${runtime.job.criteria.decision} · 분석 ${progress.analyzed}/${progress.total} · 일치 ${progress.matched} · 제외 ${progress.excluded} · 분석 불가 ${progress.unavailable} · 알림 ${candidates.length}/${progress.matched}개`,
       `Finviz 후보 수집 ${universe.collectedCount}/${universe.sourceTotal} · ${universe.completeness === 'complete' ? '완전 수집' : '부분 수집'}`,
@@ -563,6 +576,7 @@ async function notifyCompletion(
         title: formatMarketScreenTitle(runtime.job),
         asOf: `검색 완료 ${formatScreenTimestamp(runtime.job.finishedAt ?? runtime.job.updatedAt)}`,
         coverageSummary,
+        screening,
         lookbackDays: runtime.job.criteria.lookbackDays,
         pipelineConfig: runtime.job.criteria.pipelineConfig,
         candidates,
@@ -570,27 +584,31 @@ async function notifyCompletion(
       const configured = await (
         dependencies.isWhatsAppNotificationConfigured ?? isWhatsAppNotificationConfigured
       )();
-      const notification = configured
-        ? await (
-            dependencies.buildStockReportWhatsAppNotification ??
-            buildStockReportWhatsAppNotification
-          )(input)
-        : {
-            title: input.title,
-            asOf: input.asOf,
-            summary: [
-              ...(rows.length
-                ? [
-                    ...rows.slice(0, 3).map(({ item }) => {
-                      const match = item as StockScreenMatch;
-                      return `${match.ticker} ${match.decision} · 참고 ${match.execution.reference?.price.toFixed(2) ?? '자료 없음'} · ${metric === 'sellScore' ? 'SELL' : 'BUY'} 점수 ${match[metric].toFixed(1)} · 종가일 ${match.dataAsOf ?? '자료 없음'}`;
-                    }),
-                  ]
-                : ['일치 종목 없음.']),
-            ]
-              .join('\n')
-              .slice(0, 700),
-          };
+      let notification: Awaited<ReturnType<typeof buildStockReportWhatsAppNotification>>;
+      if (configured) {
+        notification = await (
+          dependencies.buildStockReportWhatsAppNotification ?? buildStockReportWhatsAppNotification
+        )(input);
+      } else {
+        const outcome = formatScreeningOutcome(screening);
+        const causes = outcome.split('\n').slice(1).join('\n');
+        const ranked = rows
+          .slice(0, 3)
+          .map(({ item }) => {
+            const match = item as StockScreenMatch;
+            return `${match.ticker} ${match.decision} · 참고 ${match.execution.reference?.price.toFixed(2) ?? '자료 없음'} · ${metric === 'sellScore' ? 'SELL' : 'BUY'} 점수 ${match[metric].toFixed(1)} · 종가일 ${match.dataAsOf ?? '자료 없음'}`;
+          })
+          .join('\n');
+        const rankedBudget = Math.max(0, 700 - (causes.length > 0 ? causes.length + 1 : 0));
+        notification = {
+          title: input.title,
+          asOf: input.asOf,
+          summary: (rows.length
+            ? [ranked.slice(0, rankedBudget), ...(causes ? [causes] : [])].join('\n')
+            : outcome
+          ).slice(0, 700),
+        };
+      }
       result = await (dependencies.sendWhatsAppNotification ?? sendWhatsAppNotification)(
         notification
       );
