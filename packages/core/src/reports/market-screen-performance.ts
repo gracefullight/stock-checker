@@ -11,6 +11,12 @@ import {
   writeMarketScreenJson,
 } from '@/reports/market-screen-store';
 import type { StockScreenMatch } from '@/reports/stock-screen';
+import {
+  isSession,
+  isSupportedDate,
+  sessionCloseAt,
+  sessionTimeAt,
+} from '@/utils/us-market-calendar';
 
 export interface MarketScreenPerformancePolicy {
   id: 'us-buy-next-open-five-session-v1';
@@ -124,46 +130,11 @@ const DEFAULT_ROOT = fileURLToPath(new URL('../../../../data/market-scans/', imp
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const REFRESH_PURPOSE = 'forward-paper-performance';
 
-// Published NYSE calendar, not the proximity helper that counts only weekdays.
-// https://www.nyse.com/trade/hours-calendars (2026–2028). Unknown years fail closed.
-const HOLIDAYS = new Set([
-  '2026-01-01',
-  '2026-01-19',
-  '2026-02-16',
-  '2026-04-03',
-  '2026-05-25',
-  '2026-06-19',
-  '2026-07-03',
-  '2026-09-07',
-  '2026-11-26',
-  '2026-12-25',
-  '2027-01-01',
-  '2027-01-18',
-  '2027-02-15',
-  '2027-03-26',
-  '2027-05-31',
-  '2027-06-18',
-  '2027-07-05',
-  '2027-09-06',
-  '2027-11-25',
-  '2027-12-24',
-  '2028-01-17',
-  '2028-02-21',
-  '2028-04-14',
-  '2028-05-29',
-  '2028-06-19',
-  '2028-07-04',
-  '2028-09-04',
-  '2028-11-23',
-  '2028-12-25',
-]);
-const EARLY_CLOSE = new Set(['2026-11-27', '2026-12-24', '2027-11-26', '2028-07-03', '2028-11-24']);
-const at = (date: string, hour: number, minute = 0) =>
-  DateTime.fromISO(date, { zone: POLICY.timezone }).set({ hour, minute }).toMillis();
-const closeAt = (date: string) => at(date, EARLY_CLOSE.has(date) ? 13 : 16);
-const supported = (date: DateTime) => date.isValid && date.year >= 2026 && date.year <= 2028;
-const session = (date: DateTime) =>
-  supported(date) && date.weekday <= 5 && !HOLIDAYS.has(date.toISODate() as string);
+// The published NYSE calendar lives in utils/us-market-calendar (2026–2028, fails closed).
+const at = sessionTimeAt;
+const closeAt = sessionCloseAt;
+const supported = isSupportedDate;
+const session = (date: DateTime) => isSession(date);
 
 /** Frozen alongside the newly published BUY row; existing rows never receive this marker. */
 export function registerMarketScreenRecommendation(
