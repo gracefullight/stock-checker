@@ -29,9 +29,11 @@ out/
 
 # Optimization config + feedback data (generated at runtime)
 data/config/
+data/feedback/
 packages/core/data/config/
 packages/core/data/feedback/
 data/market-scans/
+data/positions/
 data/daily-reports/
 data/strategy-validation/
 
