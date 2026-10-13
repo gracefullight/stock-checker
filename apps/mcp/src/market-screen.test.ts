@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
+import type { DailyReportState } from '@mcp/daily-report.ts';
 import {
   controlMarketScreenInput,
   createMarketScreenInput,
@@ -224,6 +225,7 @@ describe('Finviz candidate input', () => {
       kind: 'matches',
       offset: 0,
       limit: 20,
+      format: 'detailed',
     });
     for (const override of [
       { jobId: '../../job.json' },
@@ -256,7 +258,30 @@ describe('durable market-screen MCP tools', () => {
         'control_market_screen',
         'get_market_screen_performance',
         'refresh_market_screen_performance',
+        'list_market_screens',
+        'get_daily_report',
       ]);
+      expect(tools[5]).toMatchObject({
+        annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            offset: { minimum: 0, maximum: 15000, default: 0 },
+            limit: { minimum: 1, maximum: 50, default: 10 },
+          },
+        },
+      });
+      expect(tools[6]).toMatchObject({
+        annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            date: { type: 'string' },
+            limit: { minimum: 1, maximum: 50, default: 10 },
+            format: { enum: ['detailed', 'compact'], default: 'compact' },
+          },
+        },
+      });
       expect(tools[0]).toMatchObject({
         annotations: {
           readOnlyHint: false,
@@ -662,6 +687,255 @@ describe('durable market-screen MCP tools', () => {
       expect(service.getPerformance).not.toHaveBeenCalled();
       expect(service.refreshPerformance).not.toHaveBeenCalled();
       expect(service.resume).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('read-only market-screen discovery tools', () => {
+  const DAILY_JOB_ID = '0f2c6a1e-6c3b-4f1a-9c2d-2b1f7e8a9d10';
+  const textOf = (result: Awaited<ReturnType<Client['callTool']>>) =>
+    (result.content as Array<{ text: string }>)[0].text;
+  function dailyState(overrides: Partial<DailyReportState> = {}): DailyReportState {
+    return {
+      localDate: '2026-10-13',
+      status: 'partial',
+      reason: null,
+      startedAt: '2026-10-12T22:00:49.323Z',
+      updatedAt: '2026-10-12T22:04:46.714Z',
+      jobId: DAILY_JOB_ID,
+      collectedCount: 200,
+      sourceTotal: 4013,
+      completeness: 'partial',
+      analyzedCount: 194,
+      matchedCount: 0,
+      notificationStatus: 'accepted',
+      ...overrides,
+    };
+  }
+  function discoveryService(options: {
+    jobs?: Snapshot['job'][];
+    daily?: DailyReportState | null;
+    pages?: Partial<Record<'matches' | 'excluded', Snapshot['page']>>;
+  }) {
+    const base = snapshot();
+    const list = mock(async (listOptions?: { offset?: number; limit?: number }) => ({
+      jobs: options.jobs ?? [base.job],
+      offset: listOptions?.offset ?? 0,
+      limit: listOptions?.limit ?? 10,
+      total: options.jobs?.length ?? 1,
+      hasMore: false,
+    }));
+    const dailyReport = mock(async (date?: string) =>
+      date !== undefined && date !== options.daily?.localDate ? null : (options.daily ?? null)
+    );
+    const get = mock(async (jobId: string, pageOptions?: { kind?: string; limit?: number }) => {
+      const kind = (pageOptions?.kind ?? 'matches') as 'matches' | 'excluded';
+      const page = options.pages?.[kind] ?? {
+        ...base.page,
+        kind,
+        total: 0,
+        items: [],
+        limit: pageOptions?.limit ?? 20,
+      };
+      return { job: { ...base.job, id: jobId }, page };
+    });
+    const service = { ...serviceFor(), list, dailyReport, get };
+    return service as unknown as MarketScreenService & typeof service;
+  }
+
+  test('lists saved jobs newest first with origin, status, counts and the US session date', async () => {
+    const manual = snapshot().job;
+    const daily = { ...snapshot().job, id: DAILY_JOB_ID, createdAt: '2026-10-12T22:01:00.000Z' };
+    const service = discoveryService({ jobs: [daily, manual], daily: dailyState() });
+    await withMarketClient(service, async (client) => {
+      const result = await client.callTool({ name: 'list_market_screens', arguments: {} });
+      expect(result.isError).toBe(false);
+      expect(service.list).toHaveBeenCalledWith({ offset: 0, limit: 10 });
+      expect(service.get).not.toHaveBeenCalled();
+      expect(service.resume).not.toHaveBeenCalled();
+      const text = textOf(result);
+      expect(text).toContain(
+        `${DAILY_JOB_ID} · origin daily-report · source finviz-candidates · partial`
+      );
+      expect(text).toContain(`${JOB_ID} · origin manual`);
+      expect(text).toContain('1 matched / 2 analyzed of 2 (0 unavailable, 0 remaining)');
+      expect(text).toContain('created 2026-10-12 (US session date)');
+      expect(text).toContain('created 2026-10-03 (US session date)');
+      expect(result.structuredContent).toMatchObject({ total: 2, dailyJobId: DAILY_JOB_ID });
+    });
+  });
+
+  test('prefers an explicit origin label when core supplies one', async () => {
+    const labelled = { ...snapshot().job, origin: 'validated-universe' } as Snapshot['job'];
+    const service = discoveryService({ jobs: [labelled], daily: null });
+    await withMarketClient(service, async (client) => {
+      const result = await client.callTool({ name: 'list_market_screens', arguments: {} });
+      expect(textOf(result)).toContain('origin validated-universe');
+    });
+  });
+
+  test('reports an actionable error when listing is unavailable or fails', async () => {
+    await withMarketClient(serviceFor(), async (client) => {
+      const result = await client.callTool({ name: 'list_market_screens', arguments: {} });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('get_market_screen with a known job id');
+    });
+    const failing = discoveryService({ daily: null });
+    failing.list.mockImplementation(async () => {
+      throw new Error(
+        'Saved market-screen jobs could not be listed. /Users/private/data/market-scans'
+      );
+    });
+    await withMarketClient(failing, async (client) => {
+      const result = await client.callTool({ name: 'list_market_screens', arguments: {} });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('could not be listed');
+      expect(textOf(result)).not.toContain('/Users/private');
+    });
+  });
+
+  test('opens the latest daily run with its saved job and lists near misses on a zero-match day', async () => {
+    const excluded = {
+      ...snapshot().page,
+      kind: 'excluded' as const,
+      total: 2,
+      items: [fixtureScreenMatch('MSFT', 'HOLD'), fixtureScreenMatch('NVDA', 'HOLD')],
+    };
+    const service = discoveryService({ daily: dailyState(), pages: { excluded } });
+    await withMarketClient(service, async (client) => {
+      const result = await client.callTool({ name: 'get_daily_report', arguments: {} });
+      expect(result.isError).toBe(false);
+      expect(service.dailyReport).toHaveBeenCalledWith(undefined);
+      expect(service.get).toHaveBeenCalledWith(DAILY_JOB_ID, {
+        kind: 'matches',
+        offset: 0,
+        limit: 10,
+      });
+      expect(service.get).toHaveBeenCalledWith(DAILY_JOB_ID, {
+        kind: 'excluded',
+        offset: 0,
+        limit: 10,
+      });
+      expect(service.resume).not.toHaveBeenCalled();
+      const text = textOf(result);
+      expect(text).toContain('# Daily report — 2026-10-13 (Australia/Sydney)');
+      expect(text).toContain('200/4013 Finviz candidates, partial coverage');
+      expect(text).toContain('WhatsApp: accepted');
+      expect(text).toContain(`/market-screen?job=${DAILY_JOB_ID}`);
+      expect(text).toContain('No BUY candidates passed the final engine decision');
+      expect(text).toContain('## Nearest misses (2 excluded, top 2 by BUY score)');
+      expect(text).toContain(
+        '- MSFT · HOLD · session 2026-10-02 · buy 500.00 · sell 10.00 · Fixture trend gate blocked entry'
+      );
+      expect(text).not.toContain('| Ticker |');
+      expect(result.structuredContent).toMatchObject({
+        report: { localDate: '2026-10-13', jobId: DAILY_JOB_ID },
+        nearMisses: { kind: 'excluded', total: 2 },
+      });
+    });
+  });
+
+  test('reads a dated run with matches in detailed format and skips near misses', async () => {
+    const matches = { ...snapshot().page, items: [fixtureScreenMatch('AAPL')], total: 1 };
+    const service = discoveryService({
+      daily: dailyState({ localDate: '2026-10-10', matchedCount: 1 }),
+      pages: { matches },
+    });
+    await withMarketClient(service, async (client) => {
+      const result = await client.callTool({
+        name: 'get_daily_report',
+        arguments: { date: '2026-10-10', format: 'detailed', limit: 5 },
+      });
+      expect(result.isError).toBe(false);
+      expect(service.dailyReport).toHaveBeenCalledWith('2026-10-10');
+      expect(service.get).toHaveBeenCalledTimes(1);
+      const text = textOf(result);
+      expect(text).toContain('## BUY matches (1)');
+      expect(text).toContain('| AAPL | 2026-10-02 | BUY | 300.00 | 10.00 |');
+      expect(text).toContain('### AAPL');
+      expect(text).not.toContain('Nearest misses');
+    });
+  });
+
+  test('explains a missing daily run and rejects malformed dates before reading the store', async () => {
+    const service = discoveryService({ daily: dailyState() });
+    await withMarketClient(service, async (client) => {
+      const missing = await client.callTool({
+        name: 'get_daily_report',
+        arguments: { date: '2026-01-01' },
+      });
+      expect(missing.isError).toBe(true);
+      expect(textOf(missing)).toContain('no daily run is saved for 2026-01-01');
+      expect(service.get).not.toHaveBeenCalled();
+      const malformed = await client.callTool({
+        name: 'get_daily_report',
+        arguments: { date: '13/10/2026' },
+      });
+      expect(malformed.isError).toBe(true);
+      expect(service.dailyReport).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test('renders excluded pages one line per ticker in compact format', async () => {
+    const value = snapshot();
+    value.page = {
+      ...value.page,
+      kind: 'excluded',
+      total: 1,
+      items: [fixtureScreenMatch('MSFT', 'HOLD')],
+    };
+    await withMarketClient(serviceFor(value), async (client) => {
+      const compact = await client.callTool({
+        name: 'get_market_screen',
+        arguments: { jobId: JOB_ID, kind: 'excluded', format: 'compact' },
+      });
+      const text = textOf(compact);
+      expect(text).toContain('compact format (first blocking reason only)');
+      expect(text).toContain(
+        '- MSFT · HOLD · session 2026-10-02 · buy 500.00 · sell 10.00 · Fixture trend gate blocked entry'
+      );
+      expect(text).not.toContain('| Ticker |');
+      expect(text).not.toContain('### MSFT');
+      const detailed = await client.callTool({
+        name: 'get_market_screen',
+        arguments: { jobId: JOB_ID, kind: 'excluded' },
+      });
+      expect(textOf(detailed)).toContain('### MSFT');
+    });
+  });
+
+  test('passes core validation and not-found errors through with recovery hints', async () => {
+    const service = serviceFor();
+    service.get.mockImplementation(async () => {
+      const error = new Error('Market-screen job was not found.');
+      error.name = 'MarketScreenJobNotFoundError';
+      throw error;
+    });
+    service.pause.mockImplementation(async () => {
+      throw new TypeError('Invalid result pagination');
+    });
+    service.resume.mockImplementation(async () => {
+      throw new Error('lock held by https://runner.invalid/?token=secret-token');
+    });
+    await withMarketClient(service, async (client) => {
+      const missing = await client.callTool({
+        name: 'get_market_screen',
+        arguments: { jobId: JOB_ID },
+      });
+      expect(missing.isError).toBe(true);
+      expect(textOf(missing)).toContain('Use list_market_screens to find saved job IDs');
+      const invalid = await client.callTool({
+        name: 'control_market_screen',
+        arguments: { jobId: JOB_ID, action: 'pause' },
+      });
+      expect(textOf(invalid)).toContain('Invalid result pagination. Fix the arguments and retry.');
+      const generic = await client.callTool({
+        name: 'control_market_screen',
+        arguments: { jobId: JOB_ID, action: 'resume' },
+      });
+      expect(generic.isError).toBe(true);
+      expect(textOf(generic)).toContain('lock held by [url]');
+      expect(textOf(generic)).not.toContain('secret-token');
     });
   });
 });

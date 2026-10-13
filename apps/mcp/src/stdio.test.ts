@@ -47,7 +47,7 @@ describe('MCP stdio', () => {
         await client.connect(transport);
         expect(client.getServerVersion()?.name).toBe('stock-checker');
         const { tools } = await client.listTools();
-        expect(tools).toHaveLength(10);
+        expect(tools).toHaveLength(12);
         expect(tools.find((tool) => tool.name === 'screen_stocks')).toMatchObject({
           inputSchema: { properties: { notifyWhatsApp: { type: 'boolean', default: false } } },
         });
@@ -75,7 +75,7 @@ describe('MCP stdio', () => {
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(10);
+      expect(tools).toHaveLength(12);
       expect(tools[0]?.name).toBe('analyze_stock');
       expect(tools[1]?.name).toBe('open_stock_dashboard');
       expect(tools[3]?.name).toBe('screen_stocks');
@@ -238,6 +238,8 @@ describe('MCP stdio', () => {
               { name: 'control_market_screen' },
               { name: 'get_market_screen_performance' },
               { name: 'refresh_market_screen_performance' },
+              { name: 'list_market_screens' },
+              { name: 'get_daily_report' },
             ],
           },
         });

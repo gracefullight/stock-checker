@@ -1,8 +1,16 @@
+import {
+  DAILY_REPORT_DATE_PATTERN,
+  type DailyReportReader,
+  type DailyReportState,
+  readDailyReport,
+} from '@mcp/daily-report.ts';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type {
   createMarketScreenJob,
   getMarketScreenJob,
   getMarketScreenPerformance,
+  listMarketScreenJobs,
+  MarketScreenJob,
   pauseMarketScreenJob,
   refreshMarketScreenPerformance,
   runMarketScreenJob,
@@ -16,6 +24,9 @@ export interface MarketScreenService {
   pause: typeof pauseMarketScreenJob;
   getPerformance: typeof getMarketScreenPerformance;
   refreshPerformance: typeof refreshMarketScreenPerformance;
+  /** Optional read-only readers; tools report an actionable error when absent. */
+  list?: typeof listMarketScreenJobs;
+  dailyReport?: DailyReportReader;
 }
 
 const FINVIZ_PARAMETERS = new Set(['v', 'f', 'ft', 'o', 'r', 't', 's', 'c', 'ar', 'p', 'ta']);
@@ -27,6 +38,11 @@ const tickerInput = z
   .max(32)
   .regex(/^\^?[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*(?:=[A-Za-z0-9]+)?$/);
 const jobIdInput = z.string().uuid().describe('The UUID returned by create_market_screen.');
+const formatInput = z
+  .enum(['detailed', 'compact'])
+  .describe(
+    'detailed renders a table plus every gate reason per ticker; compact renders one line per ticker with the first blocking reason to save tokens.'
+  );
 
 export function isFinvizScreenSource(value: string): boolean {
   try {
@@ -151,6 +167,36 @@ export const getMarketScreenInput = z.strictObject({
   kind: z.enum(['matches', 'excluded', 'unavailable']).default('matches'),
   offset: z.number().int().min(0).max(15000).default(0),
   limit: z.number().int().min(1).max(100).default(20),
+  format: formatInput.default('detailed'),
+});
+
+export const listMarketScreensInput = z.strictObject({
+  offset: z.number().int().min(0).max(15000).default(0),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(10)
+    .describe('Maximum saved jobs to list, newest first; default 10, maximum 50.'),
+});
+
+export const getDailyReportInput = z.strictObject({
+  date: z
+    .string()
+    .regex(DAILY_REPORT_DATE_PATTERN)
+    .optional()
+    .describe(
+      'Australia/Sydney local date (YYYY-MM-DD) of the 09:00 daily run; omit for the latest saved run.'
+    ),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(10)
+    .describe('Maximum matched rows, and near-miss rows on zero-match days; default 10.'),
+  format: formatInput.default('compact'),
 });
 
 export const controlMarketScreenInput = z.strictObject({
@@ -200,15 +246,82 @@ const defaultService: MarketScreenService = {
     const core = await import('@stock-checker/core/src/reports/market-screen.ts');
     return core.refreshMarketScreenPerformance(...args);
   },
+  async list(...args) {
+    const core = await import('@stock-checker/core/src/reports/market-screen.ts');
+    return core.listMarketScreenJobs(...args);
+  },
+  dailyReport: readDailyReport,
 };
 
 type MarketScreenSnapshot = Awaited<ReturnType<MarketScreenService['get']>>;
 type MarketScreenPerformanceSnapshot = Awaited<ReturnType<MarketScreenService['getPerformance']>>;
+type MarketScreenPage = MarketScreenSnapshot['page'];
+type ResultFormat = z.infer<typeof formatInput>;
 
 const escapeMarkdown = (value: string): string => value.replace(/[\\`*_{}[\]()#+.!|<>-]/g, '\\$&');
 const numeric = (value: number): string => (Number.isFinite(value) ? value.toFixed(2) : 'N/A');
+/** US exchange session date (America/New_York) of a timestamp; sessions per ticker may differ. */
+const usSessionDate = (timestamp: string): string => {
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed)
+    ? new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(parsed)
+    : 'N/A';
+};
 
-function renderSnapshot(snapshot: MarketScreenSnapshot): string {
+/** Optional job labels another core change may add; absent fields fall back safely. */
+function jobOrigin(job: MarketScreenJob, dailyJobId: string | null): string {
+  const labelled = job as MarketScreenJob & { origin?: unknown; label?: unknown };
+  if (typeof labelled.origin === 'string' && labelled.origin) return labelled.origin;
+  if (dailyJobId && job.id === dailyJobId) return 'daily-report';
+  return 'manual';
+}
+
+function renderPageRows(page: MarketScreenPage, format: ResultFormat): string[] {
+  const lines: string[] = [];
+  if (page.kind === 'unavailable') {
+    for (const item of page.items) {
+      if ('reason' in item)
+        lines.push(`- ${escapeMarkdown(item.ticker)}: ${escapeMarkdown(item.reason)}`);
+    }
+    return lines;
+  }
+  if (format === 'compact') {
+    for (const item of page.items) {
+      if (!('decision' in item)) continue;
+      const reason = item.gateReasons[0];
+      lines.push(
+        `- ${escapeMarkdown(item.ticker)} · ${item.decision} · session ${item.dataAsOf ?? 'N/A'} · buy ${numeric(item.buyScore)} · sell ${numeric(item.sellScore)}${reason ? ` · ${escapeMarkdown(reason)}` : ''}`
+      );
+    }
+    return lines;
+  }
+  lines.push(
+    '| Ticker | Session | Final decision | BUY score | SELL score |',
+    '|---|---|---|---:|---:|'
+  );
+  for (const item of page.items) {
+    if (!('decision' in item)) continue;
+    lines.push(
+      `| ${escapeMarkdown(item.ticker)} | ${item.dataAsOf ?? 'N/A'} | ${item.decision} | ${numeric(item.buyScore)} | ${numeric(item.sellScore)} |`
+    );
+  }
+  for (const item of page.items) {
+    if (!('decision' in item)) continue;
+    lines.push(
+      '',
+      `### ${escapeMarkdown(item.ticker)}`,
+      ...item.gateReasons.map((reason) => `- ${escapeMarkdown(reason)}`)
+    );
+  }
+  return lines;
+}
+
+function renderSnapshot(snapshot: MarketScreenSnapshot, format: ResultFormat = 'detailed'): string {
   const { job, page } = snapshot;
   const universe = job.universe;
   const lines = [
@@ -219,38 +332,13 @@ function renderSnapshot(snapshot: MarketScreenSnapshot): string {
     `Source filters: ${universe.filters.join(', ') || 'none'}. Captured: ${universe.capturedAt}.`,
     `[Finviz source filters](<${universe.url}>)${universe.overallTotal === null ? '' : `; reported unfiltered total: ${universe.overallTotal}.`}`,
     `Progress: ${job.progress.analyzed}/${job.progress.total} analyzed; ${job.progress.unavailable} unavailable; ${job.progress.pending} pending; ${job.progress.inFlight} in flight; ${job.progress.matched} matched.`,
-    `Result page: ${page.kind}, offset ${page.offset}, limit ${page.limit}; ${page.total} total rows${page.hasMore ? '; more pages available' : ''}.`,
+    `Result page: ${page.kind}, offset ${page.offset}, limit ${page.limit}; ${page.total} total rows${page.hasMore ? '; more pages available' : ''}${format === 'compact' ? '; compact format (first blocking reason only)' : ''}.`,
     ...(job.pauseReason ? [`Pause reason: ${job.pauseReason}`] : []),
     '',
     'The Finviz filtered candidate list is separate from Stock Checker’s final engine decisions. Scores are not win probabilities. Use get_market_screen to read progress and further result pages. Pass the same lookbackDays when inspecting a candidate with analyze_stock or show_stock_dashboard.',
   ];
   if (page.items.length) {
-    lines.push('', '## Result page', '');
-    if (page.kind === 'unavailable') {
-      for (const item of page.items) {
-        if ('reason' in item)
-          lines.push(`- ${escapeMarkdown(item.ticker)}: ${escapeMarkdown(item.reason)}`);
-      }
-    } else {
-      lines.push(
-        '| Ticker | Session | Final decision | BUY score | SELL score |',
-        '|---|---|---|---:|---:|'
-      );
-      for (const item of page.items) {
-        if (!('decision' in item)) continue;
-        lines.push(
-          `| ${escapeMarkdown(item.ticker)} | ${item.dataAsOf ?? 'N/A'} | ${item.decision} | ${numeric(item.buyScore)} | ${numeric(item.sellScore)} |`
-        );
-      }
-      for (const item of page.items) {
-        if (!('decision' in item)) continue;
-        lines.push(
-          '',
-          `### ${escapeMarkdown(item.ticker)}`,
-          ...item.gateReasons.map((reason) => `- ${escapeMarkdown(reason)}`)
-        );
-      }
-    }
+    lines.push('', '## Result page', '', ...renderPageRows(page, format));
   } else {
     lines.push(
       '',
@@ -269,12 +357,83 @@ function renderSnapshot(snapshot: MarketScreenSnapshot): string {
   return lines.join('\n');
 }
 
-function snapshotResult(snapshot: MarketScreenSnapshot) {
+function snapshotResult(snapshot: MarketScreenSnapshot, format: ResultFormat = 'detailed') {
   return {
-    content: [{ type: 'text' as const, text: renderSnapshot(snapshot) }],
+    content: [{ type: 'text' as const, text: renderSnapshot(snapshot, format) }],
     structuredContent: { ...snapshot },
     isError: false,
   };
+}
+
+type JobList = Awaited<ReturnType<typeof listMarketScreenJobs>>;
+
+function renderJobList(list: JobList, dailyJobId: string | null): string {
+  const lines = [
+    '# Saved market-screen jobs',
+    '',
+    `${list.total} saved jobs, newest first; showing offset ${list.offset}, limit ${list.limit}${list.hasMore ? '; more pages available' : ''}. Reading this list starts no analysis.`,
+    'Created date is the US exchange session date (America/New_York) of job creation; per-ticker session dates inside a job may differ. Status completed/partial describes the supplied candidate list, not whole-market coverage.',
+    '',
+  ];
+  if (!list.jobs.length) {
+    lines.push(
+      'No saved jobs on this page. Create one with prepare_finviz_screen and create_market_screen, or run the daily report.'
+    );
+    return lines.join('\n');
+  }
+  for (const job of list.jobs) {
+    const progress = job.progress;
+    lines.push(
+      `- ${job.id} · origin ${jobOrigin(job, dailyJobId)} · source ${job.universe.source} · ${job.status} · ${job.criteria.decision} filter · ${progress.matched} matched / ${progress.analyzed} analyzed of ${progress.total} (${progress.unavailable} unavailable, ${progress.pending + progress.inFlight} remaining) · created ${usSessionDate(job.createdAt)} (US session date) · updated ${job.updatedAt}`
+    );
+  }
+  lines.push(
+    '',
+    'Use get_market_screen with a job id for results; get_daily_report opens the latest 09:00 run directly.'
+  );
+  return lines.join('\n');
+}
+
+function renderDailyReport(
+  state: DailyReportState,
+  matches: MarketScreenSnapshot | null,
+  nearMisses: MarketScreenSnapshot | null,
+  format: ResultFormat
+): string {
+  const lines = [
+    `# Daily report — ${state.localDate} (Australia/Sydney)`,
+    '',
+    `Run status: ${state.status}${state.reason ? ` (${escapeMarkdown(state.reason)})` : ''}; started ${state.startedAt}; updated ${state.updatedAt}.`,
+    `Collection: ${state.collectedCount}${state.sourceTotal === null ? '' : `/${state.sourceTotal}`} Finviz candidates, ${state.completeness ?? 'unknown'} coverage. Analysis: ${state.analyzedCount} analyzed, ${state.matchedCount} BUY matched. WhatsApp: ${state.notificationStatus ?? 'not attempted'}.`,
+    state.jobId
+      ? `Saved job: ${state.jobId} (get_market_screen for further pages; web: /market-screen?job=${state.jobId}).`
+      : 'No market-screen job was saved for this run.',
+  ];
+  if (matches) {
+    const job = matches.job;
+    lines.push(
+      `Job status: ${job.status}; ${job.progress.analyzed}/${job.progress.total} analyzed; ${job.progress.matched} matched; ${job.progress.unavailable} unavailable.`
+    );
+    lines.push('', `## BUY matches (${matches.page.total})`, '');
+    if (matches.page.items.length) lines.push(...renderPageRows(matches.page, format));
+    else lines.push('No BUY candidates passed the final engine decision on this run.');
+  }
+  if (nearMisses) {
+    lines.push(
+      '',
+      `## Nearest misses (${nearMisses.page.total} excluded, top ${nearMisses.page.items.length} by BUY score)`,
+      '',
+      'Excluded candidates ordered by raw BUY score. These are blocked setups, not weaker BUYs; the first gate reason explains the block.',
+      ''
+    );
+    if (nearMisses.page.items.length) lines.push(...renderPageRows(nearMisses.page, 'compact'));
+    else lines.push('No excluded rows were saved.');
+  }
+  lines.push(
+    '',
+    'Scores are not win probabilities. A matched BUY is a conditional next-open entry with a fifth-session close exit in the validated rule.'
+  );
+  return lines.join('\n');
 }
 
 function renderPerformance(snapshot: MarketScreenPerformanceSnapshot): string {
@@ -330,15 +489,33 @@ function performanceResult(snapshot: MarketScreenPerformanceSnapshot) {
   };
 }
 
-const failure = () => ({
-  content: [
-    {
-      type: 'text' as const,
-      text: 'The market-screen job request could not be completed. Check the job ID and candidate metadata, then try again.',
-    },
-  ],
-  isError: true,
-});
+/** Error text without provider URLs or local paths; validation messages pass through. */
+function safeMessage(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const redacted = message
+    .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s)'"]+/gi, '[url]')
+    .replace(/(?:^|\s)(?:\/[\w.@-]+){2,}/g, ' [path]')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return redacted ? redacted.slice(0, 300) : null;
+}
+
+/**
+ * Turns a core failure into an actionable tool error. Core validation errors are
+ * TypeErrors with safe messages; a missing job names the recovery tool.
+ */
+const failure = (error: unknown, context: string) => {
+  const name = error instanceof Error ? error.name : '';
+  let text: string;
+  if (name === 'MarketScreenJobNotFoundError') {
+    text = `${context}: the job was not found. Use list_market_screens to find saved job IDs, or get_daily_report for the latest 09:00 run.`;
+  } else if (error instanceof TypeError) {
+    text = `${context}: ${safeMessage(error) ?? 'invalid request'}. Fix the arguments and retry.`;
+  } else {
+    text = `${context}: the job request could not be completed${safeMessage(error) ? ` (${safeMessage(error)})` : ''}. Check the job ID and candidate metadata, then try again.`;
+  }
+  return { content: [{ type: 'text' as const, text }], isError: true };
+};
 
 export function registerMarketScreenTools(
   server: McpServer,
@@ -366,8 +543,8 @@ export function registerMarketScreenTools(
             tickers: input.tickers.map((ticker) => ticker.toUpperCase()),
           })
         );
-      } catch {
-        return failure();
+      } catch (error) {
+        return failure(error, 'create_market_screen');
       }
     }
   );
@@ -377,7 +554,7 @@ export function registerMarketScreenTools(
     {
       title: 'Read market-screen progress and a result page',
       description:
-        'Read a durable market-screen job’s progress, Finviz collection coverage and a bounded page of matched, excluded or unavailable tickers. Defaults to matches offset 0, limit 20; maximum 100 rows. Does not start or resume analysis. Completed job status describes the supplied candidate list, not independently verified whole-market coverage.',
+        'Read a durable market-screen job’s progress, Finviz collection coverage and a bounded page of matched, excluded or unavailable tickers. Defaults to matches offset 0, limit 20; maximum 100 rows. format "compact" prints one line per ticker with the first blocking reason (use it for excluded near-miss pages); "detailed" (default) adds a table and every gate reason. Does not start or resume analysis. Completed job status describes the supplied candidate list, not independently verified whole-market coverage.',
       inputSchema: getMarketScreenInput,
       annotations: {
         readOnlyHint: true,
@@ -386,11 +563,11 @@ export function registerMarketScreenTools(
         openWorldHint: false,
       },
     },
-    async ({ jobId, kind, offset, limit }) => {
+    async ({ jobId, kind, offset, limit, format }) => {
       try {
-        return snapshotResult(await service.get(jobId, { kind, offset, limit }));
-      } catch {
-        return failure();
+        return snapshotResult(await service.get(jobId, { kind, offset, limit }), format);
+      } catch (error) {
+        return failure(error, 'get_market_screen');
       }
     }
   );
@@ -414,8 +591,8 @@ export function registerMarketScreenTools(
         return snapshotResult(
           await (action === 'resume' ? service.resume(jobId) : service.pause(jobId))
         );
-      } catch {
-        return failure();
+      } catch (error) {
+        return failure(error, 'control_market_screen');
       }
     }
   );
@@ -439,8 +616,8 @@ export function registerMarketScreenTools(
         return performanceResult(
           await service.getPerformance(jobId.toLowerCase(), { offset, limit })
         );
-      } catch {
-        return failure();
+      } catch (error) {
+        return failure(error, 'get_market_screen_performance');
       }
     }
   );
@@ -462,8 +639,123 @@ export function registerMarketScreenTools(
     async ({ jobId, limit }) => {
       try {
         return performanceResult(await service.refreshPerformance(jobId.toLowerCase(), { limit }));
-      } catch {
-        return failure();
+      } catch (error) {
+        return failure(error, 'refresh_market_screen_performance');
+      }
+    }
+  );
+
+  server.registerTool(
+    'list_market_screens',
+    {
+      title: 'List saved market-screen jobs',
+      description:
+        'List saved market-screen jobs newest first with origin (daily-report or manual), candidate source, status, matched/analyzed/unavailable counts and the US session date of creation. Default 10 jobs, maximum 50 per page. Reads saved state only; never starts, resumes or refreshes a job. Use the returned job id with get_market_screen or get_market_screen_performance.',
+      inputSchema: listMarketScreensInput,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ offset, limit }) => {
+      if (!service.list) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'list_market_screens: saved-job listing is unavailable in this server configuration. Use get_market_screen with a known job id.',
+            },
+          ],
+          isError: true,
+        };
+      }
+      try {
+        const list = await service.list({ offset, limit });
+        let dailyJobId: string | null = null;
+        try {
+          dailyJobId = (await service.dailyReport?.())?.jobId ?? null;
+        } catch {
+          // The daily-report label is informational; listing still succeeds without it.
+        }
+        return {
+          content: [{ type: 'text' as const, text: renderJobList(list, dailyJobId) }],
+          structuredContent: { ...list, dailyJobId },
+          isError: false,
+        };
+      } catch (error) {
+        return failure(error, 'list_market_screens');
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_daily_report',
+    {
+      title: 'Open the saved 09:00 daily report',
+      description:
+        'Read the latest saved daily screening run (09:00 Australia/Sydney) or the run for a given local date, with its collection coverage, analysis status, WhatsApp status, saved job id and the BUY matches. On zero-match days it also lists the nearest misses (excluded candidates by BUY score) in compact one-line form. Reads saved state only; never scans or notifies. Default format compact; limit 10 rows per section.',
+      inputSchema: getDailyReportInput,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ date, limit, format }) => {
+      if (!service.dailyReport) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'get_daily_report: daily-report state is unavailable in this server configuration. Use list_market_screens and get_market_screen instead.',
+            },
+          ],
+          isError: true,
+        };
+      }
+      try {
+        const state = await service.dailyReport(date);
+        if (!state) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: date
+                  ? `get_daily_report: no daily run is saved for ${date} (Australia/Sydney). Omit date for the latest run, or run mise run daily-report -- --status to inspect the store.`
+                  : 'get_daily_report: no daily run has been saved yet. Install the schedule with mise run daily-report:service:install, or use list_market_screens for manual jobs.',
+              },
+            ],
+            isError: true,
+          };
+        }
+        let matches: MarketScreenSnapshot | null = null;
+        let nearMisses: MarketScreenSnapshot | null = null;
+        if (state.jobId) {
+          matches = await service.get(state.jobId, { kind: 'matches', offset: 0, limit });
+          if (matches.page.total === 0 && matches.job.progress.excluded > 0) {
+            nearMisses = await service.get(state.jobId, { kind: 'excluded', offset: 0, limit });
+          }
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: renderDailyReport(state, matches, nearMisses, format),
+            },
+          ],
+          structuredContent: {
+            report: state,
+            job: matches?.job ?? null,
+            matches: matches?.page ?? null,
+            nearMisses: nearMisses?.page ?? null,
+          },
+          isError: false,
+        };
+      } catch (error) {
+        return failure(error, 'get_daily_report');
       }
     }
   );

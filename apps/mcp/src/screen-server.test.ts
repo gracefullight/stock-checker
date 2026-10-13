@@ -191,7 +191,7 @@ describe('screen_stocks MCP tool', () => {
     });
     await withScreenClient(generator, async (client) => {
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(10);
+      expect(tools).toHaveLength(12);
       const tool = tools.find((item) => item.name === 'screen_stocks');
       expect(tool).toMatchObject({
         annotations: {
