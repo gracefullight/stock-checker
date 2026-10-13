@@ -36,6 +36,7 @@ data/market-scans/
 data/positions/
 data/daily-reports/
 data/strategy-validation/
+data/positions/
 
 # WhatsApp Web linked-device session and local gateway token
 data/whatsapp/

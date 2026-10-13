@@ -290,6 +290,12 @@ description = "Measure the active leader-pullback strategy against a frozen hist
 dir = "packages/core"
 run = 'bun src/commands/validate-strategy.ts "$@"'
 
+[tasks.positions]
+description = "Position ledger: list, digest, sync, record-fill, close  [usage: mise run positions -- list]"
+dir = "packages/core"
+raw = true
+run = 'bun src/commands/positions.ts "$@"'
+
 # ── CI Pipeline ───────────────────────────────────────────────
 [tasks.ci]
 description = "Full CI gate: lint → typecheck → test → build"
