@@ -12,7 +12,6 @@ import {
   buildEquityCurve,
   buildTickerContext,
   type Candle,
-  type EquityCurveResult,
   type EvaluationWindow,
   measure5DayWinRate,
   runSignalsWithContext,
@@ -20,11 +19,15 @@ import {
 } from '@/optimization/engine';
 import { writeMarketScreenJson } from '@/reports/market-screen-store';
 import type { PipelineConfig } from '@/types';
+import { stableJson, strategyConfigFingerprint } from '@/utils/config-fingerprint';
 import {
   CANONICAL_STRATEGY_ID,
   loadPipelineConfig,
   PIPELINE_CONFIG_VERSION,
 } from '@/utils/config-loader';
+import { bootstrapMeanInterval, mean, percentile, wilsonInterval } from '@/utils/statistics';
+
+export { strategyConfigFingerprint } from '@/utils/config-fingerprint';
 
 const PROJECT_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SOURCE_FILES = [
@@ -44,19 +47,6 @@ const SOURCE_FILES = [
   'packages/core/src/reports/strategy-validation-worker.ts',
   'bun.lock',
 ] as const;
-
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  return `{${Object.entries(value)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-    .join(',')}}`;
-}
-
-export function strategyConfigFingerprint(config: PipelineConfig): string {
-  return createHash('sha256').update(stableJson(config)).digest('hex');
-}
 
 function freezeConfig(config: PipelineConfig): PipelineConfig {
   const copy = structuredClone(config);
@@ -132,7 +122,7 @@ interface ExecutedTrade extends BacktestTrade {
   ticker: string;
 }
 
-function tradeStatistics(trades: ExecutedTrade[]) {
+function tradeStatistics(trades: Array<{ returnPct: number }>) {
   const wins = trades.filter((trade) => trade.returnPct > 0).length;
   return {
     trades: trades.length,
@@ -144,47 +134,160 @@ function tradeStatistics(trades: ExecutedTrade[]) {
   };
 }
 
-function portfolioCurve(curves: EquityCurveResult[], initialCapitalPerTicker = 10_000) {
-  const dates = [
-    ...new Set(curves.flatMap((curve) => curve.points.map((point) => point.date))),
-  ].sort();
-  const cursors = curves.map(() => 0);
-  const balances = curves.map(() => initialCapitalPerTicker);
-  const initialCapital = initialCapitalPerTicker * curves.length;
-  let peak = initialCapital,
-    maxDrawdownPct = 0;
-  const points = dates.map((date) => {
-    curves.forEach((curve, index) => {
-      while (cursors[index] < curve.points.length && curve.points[cursors[index]].date <= date) {
-        balances[index] = curve.points[cursors[index]++].equity;
-      }
-    });
-    const equity = balances.reduce((sum, balance) => sum + balance, 0);
-    peak = Math.max(peak, equity);
-    if (peak > 0) maxDrawdownPct = Math.max(maxDrawdownPct, ((peak - equity) / peak) * 100);
-    return { date, equity };
-  });
+const ENTRY_PRICE_TIERS: Array<{ tier: string; from: number; to: number }> = [
+  { tier: '<10', from: 0, to: 10 },
+  { tier: '10-50', from: 10, to: 50 },
+  { tier: '50-200', from: 50, to: 200 },
+  { tier: '>=200', from: 200, to: Infinity },
+];
+const DOLLAR_VOLUME_TIERS: Array<{ tier: string; from: number; to: number }> = [
+  { tier: '<50M', from: 0, to: 50e6 },
+  { tier: '50M-200M', from: 50e6, to: 200e6 },
+  { tier: '200M-1B', from: 200e6, to: 1e9 },
+  { tier: '>=1B', from: 1e9, to: Infinity },
+];
+
+function tierBreakdown(
+  trades: Array<ExecutedTrade & { tierValue: number | null }>,
+  tiers: Array<{ tier: string; from: number; to: number }>
+) {
+  const rows = tiers.map(({ tier, from, to }) => ({
+    tier,
+    ...tradeStatistics(
+      trades.filter(
+        (trade) => trade.tierValue !== null && trade.tierValue >= from && trade.tierValue < to
+      )
+    ),
+  }));
   return {
-    capitalAllocation:
-      'Fixed equal-capital ticker sleeves; cash when flat; no reallocation or leverage',
-    initialCapitalPerTicker,
-    sleeves: curves.length,
-    initialCapital,
-    totalReturnPct: initialCapital
-      ? ((points.at(-1)?.equity ?? initialCapital) / initialCapital - 1) * 100
-      : null,
-    maxDrawdownPct: curves.length ? maxDrawdownPct : null,
-    maxTickerDrawdownPct: curves.length
-      ? Math.max(...curves.map((curve) => curve.maxDrawdown))
-      : null,
-    points,
+    tiers: rows,
+    unavailable: trades.filter((trade) => trade.tierValue === null).length,
+  };
+}
+
+export interface StrategyMeasurementOptions {
+  /** Benchmark bars for matched windows, the exposure calendar and buy-and-hold. */
+  spy?: Candle[];
+  /** Round-trip costs to re-price every executed trade with (bps). */
+  costSensitivityBps?: number[];
+  bootstrapResamples?: number;
+  bootstrapSeed?: number;
+  /** Slot counts for the single-account simulation. */
+  accountSlots?: number[];
+  initialCapital?: number;
+}
+
+/**
+ * One account with K equal cash slots following the executed trades in entry
+ * order (ties by ticker). A trade is taken only if a slot is free at its entry
+ * open; idle slots hold cash. Positions are marked at each session close.
+ */
+function simulateAccount(
+  trades: ExecutedTrade[],
+  prices: Map<string, Candle[]>,
+  calendar: string[],
+  slots: number,
+  initialCapital: number
+) {
+  const closes = new Map<string, Map<string, number>>();
+  for (const [ticker, rows] of prices)
+    closes.set(
+      ticker,
+      new Map(rows.map((row) => [row.date.toISOString().slice(0, 10), row.close]))
+    );
+  const ordered = [...trades].sort(
+    (left, right) =>
+      left.entryDate.localeCompare(right.entryDate) || left.ticker.localeCompare(right.ticker)
+  );
+  const slotCash = Array.from({ length: slots }, () => initialCapital / slots);
+  const holding: Array<(ExecutedTrade & { lastMark: number }) | null> = Array.from(
+    { length: slots },
+    () => null
+  );
+  let cursor = 0;
+  let taken = 0,
+    skipped = 0,
+    peak = initialCapital,
+    maxDrawdownPct = 0,
+    equity = initialCapital;
+  for (const date of calendar) {
+    while (cursor < ordered.length && ordered[cursor].entryDate <= date) {
+      const trade = ordered[cursor++];
+      if (trade.entryDate !== date) {
+        skipped++;
+        continue;
+      }
+      const free = holding.indexOf(null);
+      if (free === -1) {
+        skipped++;
+        continue;
+      }
+      holding[free] = { ...trade, lastMark: slotCash[free] };
+      taken++;
+    }
+    equity = 0;
+    for (let slot = 0; slot < slots; slot++) {
+      const position = holding[slot];
+      if (!position) {
+        equity += slotCash[slot];
+        continue;
+      }
+      if (position.exitDate === date) {
+        slotCash[slot] *= 1 + position.returnPct / 100;
+        holding[slot] = null;
+        equity += slotCash[slot];
+        continue;
+      }
+      const close = closes.get(position.ticker)?.get(date);
+      if (close !== undefined) position.lastMark = slotCash[slot] * (close / position.entryPrice);
+      equity += position.lastMark;
+    }
+    peak = Math.max(peak, equity);
+    maxDrawdownPct = Math.max(maxDrawdownPct, ((peak - equity) / peak) * 100);
+  }
+  const years = calendar.length
+    ? (Date.parse(calendar.at(-1) as string) - Date.parse(calendar[0])) / 31_557_600_000
+    : 0;
+  const totalReturnPct = (equity / initialCapital - 1) * 100;
+  return {
+    slots,
+    tradesTaken: taken,
+    tradesSkipped: skipped,
+    totalReturnPct,
+    cagrPct: years > 0 ? ((equity / initialCapital) ** (1 / years) - 1) * 100 : null,
+    maxDrawdownPct,
+  };
+}
+
+function buyAndHold(rows: Candle[], calendar: string[], costPct: number) {
+  const byDate = new Map(rows.map((row) => [row.date.toISOString().slice(0, 10), row]));
+  const first = byDate.get(calendar[0]);
+  const last = byDate.get(calendar.at(-1) as string);
+  if (!first || !last) return null;
+  let peak = first.open,
+    maxDrawdownPct = 0;
+  for (const date of calendar) {
+    const close = byDate.get(date)?.close;
+    if (close === undefined) continue;
+    peak = Math.max(peak, close);
+    maxDrawdownPct = Math.max(maxDrawdownPct, ((peak - close) / peak) * 100);
+  }
+  const years = (Date.parse(calendar.at(-1) as string) - Date.parse(calendar[0])) / 31_557_600_000;
+  const totalReturnPct = (last.close / first.open - 1) * 100 - costPct;
+  return {
+    entryDate: calendar[0],
+    exitDate: calendar.at(-1) as string,
+    totalReturnPct,
+    cagrPct: years > 0 ? ((1 + totalReturnPct / 100) ** (1 / years) - 1) * 100 : null,
+    maxDrawdownPct,
   };
 }
 
 export function measureStrategyValidation(
   signals: BacktestSignal[],
   prices: Map<string, Candle[]>,
-  costPct = DEFAULT_ROUND_TRIP_COST_PCT
+  costPct = DEFAULT_ROUND_TRIP_COST_PCT,
+  options: StrategyMeasurementOptions = {}
 ) {
   const buys = signals.filter((signal) => signal.decision === 'BUY');
   const curves = [...prices].map(([ticker, rows]) => ({
@@ -197,7 +300,7 @@ export function measureStrategyValidation(
       costPct
     ),
   }));
-  const executed = curves.flatMap(({ ticker, curve }) =>
+  const executed: ExecutedTrade[] = curves.flatMap(({ ticker, curve }) =>
     curve.trades.map((trade) => ({ ticker, ...trade }))
   );
   const boundary = new Date('2025-01-01T00:00:00Z');
@@ -238,23 +341,195 @@ export function measureStrategyValidation(
   );
   const entryDates = executed.map((trade) => trade.entryDate).sort();
   const exitDates = executed.map((trade) => trade.exitDate).sort();
+  const firstEntry = entryDates[0] ?? null;
+  const lastExit = exitDates.at(-1) ?? null;
+  const iso = (row: Candle) => row.date.toISOString().slice(0, 10);
+
+  // Session calendar for exposure and the account: SPY when supplied, else the union of tickers.
+  const spy = options.spy?.length ? options.spy : null;
+  const calendarSource = spy
+    ? spy.map(iso)
+    : [...new Set([...prices.values()].flatMap((rows) => rows.map(iso)))].sort();
+  const calendar =
+    firstEntry && lastExit
+      ? calendarSource.filter((date) => date >= firstEntry && date <= lastExit)
+      : [];
+
+  // Per-trade context: bar indexes, excursions and liquidity at the signal.
+  const indexByTicker = new Map(
+    [...prices].map(([ticker, rows]) => [
+      ticker,
+      new Map(rows.map((row, index) => [iso(row), index])),
+    ])
+  );
+  const enriched = executed.map((trade) => {
+    const rows = prices.get(trade.ticker) ?? [];
+    const entryIdx = indexByTicker.get(trade.ticker)?.get(trade.entryDate);
+    const exitIdx = indexByTicker.get(trade.ticker)?.get(trade.exitDate);
+    let maePct: number | null = null,
+      mfePct: number | null = null,
+      averageDollarVolume20: number | null = null;
+    if (entryIdx !== undefined && exitIdx !== undefined && exitIdx >= entryIdx) {
+      const held = rows.slice(entryIdx, exitIdx + 1);
+      maePct = Math.min(0, (Math.min(...held.map((row) => row.low)) / trade.entryPrice - 1) * 100);
+      mfePct = Math.max(0, (Math.max(...held.map((row) => row.high)) / trade.entryPrice - 1) * 100);
+      const window = rows.slice(Math.max(0, entryIdx - 21), entryIdx - 1);
+      averageDollarVolume20 = mean(window.map((row) => row.dollarVolume ?? row.close * row.volume));
+    }
+    return { ...trade, maePct, mfePct, averageDollarVolume20 };
+  });
+
+  // Matched SPY windows: SPY open on the entry session to SPY close on the exit session, same cost.
+  const spyByDate = spy ? new Map(spy.map((row) => [iso(row), row])) : null;
+  const matched = spyByDate
+    ? executed.flatMap((trade) => {
+        const entry = spyByDate.get(trade.entryDate);
+        const exit = spyByDate.get(trade.exitDate);
+        if (!entry || !exit) return [];
+        const spyGrossReturnPct = (exit.close / entry.open - 1) * 100;
+        const spyNetReturnPct = spyGrossReturnPct - costPct;
+        return [
+          {
+            ...trade,
+            spyGrossReturnPct,
+            spyNetReturnPct,
+            excessReturnPct: trade.returnPct - spyNetReturnPct,
+          },
+        ];
+      })
+    : [];
+  const excess = matched.map((trade) => trade.excessReturnPct);
+  const benchmarks = {
+    method:
+      'SPY bought at the open of each trade entry session and sold at the close of its exit session, charged the same round-trip cost; excess = trade net − SPY net',
+    spy: spyByDate
+      ? {
+          matchedWindows: {
+            ...tradeStatistics(matched.map((trade) => ({ returnPct: trade.spyNetReturnPct }))),
+            meanGrossReturnPct: mean(matched.map((trade) => trade.spyGrossReturnPct)),
+            unmatched: executed.length - matched.length,
+          },
+          excess: {
+            samples: excess.length,
+            meanPct: mean(excess),
+            meanVsGrossSpyPct: mean(
+              matched.map((trade) => trade.returnPct - trade.spyGrossReturnPct)
+            ),
+            tradesBeatingSpy: excess.filter((value) => value > 0).length,
+            tradesBeatingSpyPct: excess.length
+              ? (excess.filter((value) => value > 0).length / excess.length) * 100
+              : null,
+            bootstrap95: bootstrapMeanInterval(excess, {
+              resamples: options.bootstrapResamples,
+              seed: options.bootstrapSeed,
+            }),
+          },
+        }
+      : null,
+  };
+
+  // Exposure on the session calendar between the first entry and the last exit.
+  const concurrent = new Map<string, number>();
+  for (const trade of executed)
+    for (const date of calendar)
+      if (date >= trade.entryDate && date <= trade.exitDate)
+        concurrent.set(date, (concurrent.get(date) ?? 0) + 1);
+  const exposure = {
+    calendar: spy ? 'SPY sessions' : 'union of evaluated ticker sessions',
+    sessions: calendar.length,
+    sessionsWithPosition: concurrent.size,
+    exposurePct: calendar.length ? (concurrent.size / calendar.length) * 100 : null,
+    maxConcurrentPositions: concurrent.size ? Math.max(...concurrent.values()) : 0,
+    distinctEntrySessions: new Set(entryDates).size,
+  };
+
+  const costSensitivity = (options.costSensitivityBps ?? [10, 20, 30]).map((costBps) => ({
+    costBps,
+    ...tradeStatistics(
+      executed.map((trade) => ({ returnPct: trade.returnPct + costPct - costBps / 100 }))
+    ),
+  }));
+
+  const mae = enriched.flatMap((trade) => (trade.maePct === null ? [] : [trade.maePct]));
+  const mfe = enriched.flatMap((trade) => (trade.mfePct === null ? [] : [trade.mfePct]));
+  const excursions = {
+    method:
+      'Lowest low and highest high from the entry session through the exit session, relative to the entry open; gross of costs',
+    samples: mae.length,
+    unavailable: executed.length - mae.length,
+    maePct: { mean: mean(mae), median: percentile(mae, 0.5), worstDecile: percentile(mae, 0.1) },
+    mfePct: { mean: mean(mfe), median: percentile(mfe, 0.5), bestDecile: percentile(mfe, 0.9) },
+  };
+
+  const tiers = {
+    entryPrice: {
+      basis: 'Adjusted entry open on the fetched series (today’s share basis)',
+      ...tierBreakdown(
+        enriched.map((trade) => ({ ...trade, tierValue: trade.entryPrice })),
+        ENTRY_PRICE_TIERS
+      ),
+    },
+    averageDollarVolume20: {
+      basis: 'Mean dollar volume over the 20 sessions before the signal session',
+      ...tierBreakdown(
+        enriched.map((trade) => ({ ...trade, tierValue: trade.averageDollarVolume20 })),
+        DOLLAR_VOLUME_TIERS
+      ),
+    },
+  };
+
+  const initialCapital = options.initialCapital ?? 10_000;
+  const account = {
+    capitalAllocation:
+      'One account split into K equal cash slots; a trade is taken only when a slot is free at its entry open, in entry-date then ticker order; idle slots hold cash; marks use session closes; costs are charged at exit',
+    initialCapital,
+    span: {
+      start: calendar[0] ?? null,
+      end: calendar.at(-1) ?? null,
+      sessions: calendar.length,
+    },
+    slots: (options.accountSlots ?? [1, 3, 5]).map((slots) =>
+      simulateAccount(executed, prices, calendar, slots, initialCapital)
+    ),
+    spyBuyAndHold: spy && calendar.length ? buyAndHold(spy, calendar, costPct) : null,
+  };
+
+  const full = period(buys);
   return {
     rawBuySetups: buys.length,
-    full: period(buys),
+    full,
     before2025: period(split.train, { end: new Date(boundary.getTime() - 1) }, true),
     since2025: period(split.holdout, { start: boundary }),
     boundaryPurged: split.purged.length,
     annual,
-    portfolio: portfolioCurve(curves.map(({ curve }) => curve)),
-    executionRange: {
-      firstEntry: entryDates[0] ?? null,
-      lastEntry: entryDates.at(-1) ?? null,
-      lastExit: exitDates.at(-1) ?? null,
+    confidence: {
+      winRateWilson95: wilsonInterval(
+        full.nonOverlappingTrades.wins,
+        full.nonOverlappingTrades.trades
+      ),
+      meanNetBootstrap95: bootstrapMeanInterval(
+        executed.map((trade) => trade.returnPct),
+        { resamples: options.bootstrapResamples, seed: options.bootstrapSeed }
+      ),
+      note: 'Trades are resampled as independent; same-day entries share a market window, so the true intervals are wider.',
     },
-    executedTrades: executed.sort(
-      (left, right) =>
-        left.entryDate.localeCompare(right.entryDate) || left.ticker.localeCompare(right.ticker)
-    ),
+    benchmarks,
+    exposure,
+    costSensitivity,
+    excursions,
+    tiers,
+    account,
+    executionRange: {
+      firstEntry,
+      lastEntry: entryDates.at(-1) ?? null,
+      lastExit,
+    },
+    executedTrades: enriched
+      .map(({ averageDollarVolume20: _adv, ...trade }) => trade)
+      .sort(
+        (left, right) =>
+          left.entryDate.localeCompare(right.entryDate) || left.ticker.localeCompare(right.ticker)
+      ),
   };
 }
 
@@ -581,7 +856,9 @@ export async function validateStrategyDataset(
     .map((input) => input.lastSession)
     .filter((date): date is string => date !== null)
     .sort();
-  const measurement = measureStrategyValidation(allSignals, prices);
+  const measurement = measureStrategyValidation(allSignals, prices, DEFAULT_ROUND_TRIP_COST_PCT, {
+    spy: data.get('SPY'),
+  });
   const report = {
     ...frozen,
     generatedAt: new Date().toISOString(),
@@ -610,8 +887,13 @@ export async function validateStrategyDataset(
       'Historical point-in-time earnings and analyst estimate revisions are unavailable.',
       'Fixed five-session exits do not simulate ATR stop/target exits or future execution probabilities.',
       'Annual groups use entry-session cohorts; pre-2025 split purges trades whose exits cross the boundary.',
-      'Portfolio drawdown uses fixed equal-capital evaluated ticker sleeves and completed-close marking; round-trip costs are charged at exit.',
+      'The account simulation follows executed trades with K equal cash slots and marks them at session closes; it is a capital-constrained replay, not a trading record.',
+      'Matched SPY windows and the bootstrap interval treat trades as independent; same-day entries share one market window.',
     ],
+    selection: {
+      trialsEvaluated: 1,
+      note: 'One frozen configuration was measured; no parameter search ran. The shipped gate was chosen earlier from a 544,320-config filter grid ranked by train win rate, so in-sample numbers cannot establish an edge.',
+    },
     failures,
     tickerCoverage: [...prices].map(([ticker, rows]) => ({
       ticker,
