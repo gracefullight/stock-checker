@@ -35,11 +35,9 @@ pythonpath = ["../../.agents/skills/stock-analysis/scripts"]
 preset = "default"
 python-version = "3.14"
 disable-project-excludes-heuristics = true
-project-includes = [
-  "tests/**/*.py",
-  "../../.agents/skills/stock-analysis/scripts/*.py",
-  "../../.agents/skills/backtesting-trading-strategies/scripts/*.py",
-]
+# Only repo-owned files are checked; the oma-managed skill scripts under
+# .agents/ are resolved through search-path for imports but never reported on.
+project-includes = ["tests/**/*.py"]
 search-path = [
   "../../.agents/skills/backtesting-trading-strategies/scripts",
   "../../.agents/skills/stock-analysis/scripts",

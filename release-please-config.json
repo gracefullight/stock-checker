@@ -11,6 +11,7 @@
       "initial-version": "0.1.0",
       "bump-minor-pre-major": false,
       "bump-patch-for-minor-pre-major": false,
+      "exclude-paths": ["packages/core/public"],
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Bug Fixes" },

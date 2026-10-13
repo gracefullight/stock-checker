@@ -62,19 +62,19 @@ run = "uv run --project packages/finance --locked --python 3.14 pyrefly check --
 
 [tasks."finance:lint"]
 description = "Lint the Python finance scripts and tests with Ruff"
-run = "uv run --project packages/finance --locked --python 3.14 ruff check --config packages/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts packages/finance/tests"
+run = "uv run --project packages/finance --locked --python 3.14 ruff check --config packages/finance/pyproject.toml packages/finance"
 
 [tasks."finance:lint:fix"]
 description = "Apply safe Ruff fixes to the Python finance scripts and tests"
-run = "uv run --project packages/finance --locked --python 3.14 ruff check --fix --config packages/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts packages/finance/tests"
+run = "uv run --project packages/finance --locked --python 3.14 ruff check --fix --config packages/finance/pyproject.toml packages/finance"
 
 [tasks."finance:format:check"]
 description = "Check Python finance formatting with Ruff"
-run = "uv run --project packages/finance --locked --python 3.14 ruff format --check --output-format concise --config packages/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts packages/finance/tests"
+run = "uv run --project packages/finance --locked --python 3.14 ruff format --check --output-format concise --config packages/finance/pyproject.toml packages/finance"
 
 [tasks."finance:format"]
 description = "Format the Python finance scripts and tests with Ruff"
-run = "uv run --project packages/finance --locked --python 3.14 ruff format --config packages/finance/pyproject.toml .agents/skills/stock-analysis/scripts .agents/skills/backtesting-trading-strategies/scripts packages/finance/tests"
+run = "uv run --project packages/finance --locked --python 3.14 ruff format --config packages/finance/pyproject.toml packages/finance"
 
 [tasks."finance:fix"]
 description = "Fix Python lint and formatting sequentially"
@@ -261,8 +261,8 @@ description = "Test the pinned WhatsApp SDK pairing fixes without network connec
 run = "node --import tsx --experimental-vm-modules --test packages/automation/whatsapp/*.test.mts"
 
 [tasks.test]
-description = "Run all tests in parallel"
-depends = ["//apps/...:test", "//packages/...:test", "finance:test", "release:test"]
+description = "Run all tests in parallel; a failing suite does not cancel its siblings"
+run = 'mise run --continue-on-error "//apps/...:test" ::: "//packages/...:test" ::: finance:test ::: release:test'
 
 [tasks."test:watch"]
 description = "Run core tests in watch mode"

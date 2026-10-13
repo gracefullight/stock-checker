@@ -232,3 +232,5 @@ Main pushes run [Release Please](.github/workflows/release.yml): synchronize
 versions and `bun.lock`, validate the release PR, then merge and create the release.
 Use Conventional Commits: `feat` bumps minor, `fix` and configured maintenance
 types bump patch, and breaking changes bump major. Failed checks leave the PR open.
+Nightly `chore(data)` CSV commits touch only `packages/core/public/`, which is
+excluded from release calculation, so they never cut a release on their own.

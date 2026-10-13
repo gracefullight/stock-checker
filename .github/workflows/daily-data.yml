@@ -2,7 +2,6 @@ name: Daily stock data
 
 permissions:
   contents: write
-  actions: write
 
 on:
   schedule:
@@ -33,17 +32,9 @@ jobs:
         # --autostash: the predict step leaves updated CSVs unstaged, which a
         # plain pull --rebase refuses to run on.
         run: git pull --rebase --autostash origin main
+      # Data-only commits are excluded from releases through `exclude-paths`
+      # in release-please-config.json, so no release workflow dispatch follows.
       - uses: stefanzweifel/git-auto-commit-action@v7
-        id: commit
         with:
-          commit_message: "chore: daily stock data update"
+          commit_message: "chore(data): daily stock data update"
           file_pattern: "packages/core/public/*.csv"
-      # GITHUB_TOKEN pushes do not trigger the release workflow's push event.
-      - name: Run Release Please after a generated main push
-        if: steps.commit.outputs.changes_detected == 'true'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              ...context.repo, workflow_id: 'release.yml', ref: 'main'
-            });

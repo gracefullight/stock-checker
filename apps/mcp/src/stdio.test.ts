@@ -14,6 +14,8 @@ import {
 const fixturePath = fileURLToPath(new URL('./test-fixtures/stdio-server.ts', import.meta.url));
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const PERFORMANCE_JOB_ID = 'bd6128e1-d410-4a61-a90e-dfbd6a86167e';
+// Spawning Bun/mise child processes is slow under parallel CI load; Bun's 5 s default is too tight.
+const SPAWN_TEST_TIMEOUT_MS = 30_000;
 const configuration = JSON.parse(
   await readFile(new URL('../../../.mcp.json', import.meta.url), 'utf8')
 ) as {
@@ -57,117 +59,121 @@ describe('MCP stdio', () => {
         await client.close();
       }
     },
-    15000
+    SPAWN_TEST_TIMEOUT_MS
   );
 
-  test('SDK client discovers and calls the tool while console logs stay on stderr', async () => {
-    const client = new Client({ name: 'stdio-test', version: '1.0.0' });
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [fixturePath],
-      cwd: repositoryRoot,
-      stderr: 'pipe',
-    });
-    let stderr = '';
-    transport.stderr?.on('data', (data) => {
-      stderr += String(data);
-    });
-    try {
-      await client.connect(transport);
-      const { tools } = await client.listTools();
-      expect(tools).toHaveLength(10);
-      expect(tools[0]?.name).toBe('analyze_stock');
-      expect(tools[1]?.name).toBe('open_stock_dashboard');
-      expect(tools[3]?.name).toBe('screen_stocks');
-      expect(tools[8]?.name).toBe('get_market_screen_performance');
-      expect(tools[9]?.name).toBe('refresh_market_screen_performance');
-      expect(
-        await client.callTool({
-          name: 'get_market_screen_performance',
-          arguments: { jobId: PERFORMANCE_JOB_ID },
-        })
-      ).toMatchObject({
-        isError: false,
-        structuredContent: {
-          jobId: PERFORMANCE_JOB_ID,
-          policy: { mode: 'forward-paper', horizonSessions: 5 },
-          summary: { completed: 1, pending: 1, open: 1, unavailable: 1 },
-        },
+  test(
+    'SDK client discovers and calls the tool while console logs stay on stderr',
+    async () => {
+      const client = new Client({ name: 'stdio-test', version: '1.0.0' });
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: [fixturePath],
+        cwd: repositoryRoot,
+        stderr: 'pipe',
       });
-      expect(
-        await client.callTool({
-          name: 'refresh_market_screen_performance',
-          arguments: { jobId: PERFORMANCE_JOB_ID, limit: 50 },
-        })
-      ).toMatchObject({
-        isError: false,
-        structuredContent: { refresh: { status: 'running', selected: 3, processed: 0 } },
+      let stderr = '';
+      transport.stderr?.on('data', (data) => {
+        stderr += String(data);
       });
-      const result = await client.callTool({
-        name: 'analyze_stock',
-        arguments: { ticker: 'AAPL' },
-      });
-      expect(result).toMatchObject({
-        isError: false,
-        structuredContent: { report: { ticker: 'AAPL', status: 'available', valuation: null } },
-      });
-      expect(JSON.stringify(result)).not.toContain('fixture-secret');
-      expect(
-        await client.callTool({
-          name: 'screen_stocks',
-          arguments: { tickers: [' aapl ', 'AAPL'] },
-        })
-      ).toMatchObject({
-        isError: false,
-        structuredContent: {
-          screen: {
-            status: 'available',
-            universe: { tickers: ['AAPL'] },
-            criteria: { decision: 'BUY', lookbackDays: 730, limit: 20, timeBudgetMs: 45000 },
-            coverage: { requested: 1, analyzed: 1, matched: 1 },
-            matches: [{ ticker: 'AAPL', decision: 'BUY' }],
+      try {
+        await client.connect(transport);
+        const { tools } = await client.listTools();
+        expect(tools).toHaveLength(10);
+        expect(tools[0]?.name).toBe('analyze_stock');
+        expect(tools[1]?.name).toBe('open_stock_dashboard');
+        expect(tools[3]?.name).toBe('screen_stocks');
+        expect(tools[8]?.name).toBe('get_market_screen_performance');
+        expect(tools[9]?.name).toBe('refresh_market_screen_performance');
+        expect(
+          await client.callTool({
+            name: 'get_market_screen_performance',
+            arguments: { jobId: PERFORMANCE_JOB_ID },
+          })
+        ).toMatchObject({
+          isError: false,
+          structuredContent: {
+            jobId: PERFORMANCE_JOB_ID,
+            policy: { mode: 'forward-paper', horizonSessions: 5 },
+            summary: { completed: 1, pending: 1, open: 1, unavailable: 1 },
           },
-        },
-      });
-      const failedScreen = await client.callTool({
-        name: 'screen_stocks',
-        arguments: { tickers: ['FAIL'] },
-      });
-      expect(failedScreen).toMatchObject({ isError: true });
-      expect(JSON.stringify(failedScreen)).not.toContain('fixture-secret');
-      expect(
-        await client.callTool({ name: 'open_stock_dashboard', arguments: { ticker: '^gspc' } })
-      ).toMatchObject({
-        isError: false,
-        structuredContent: {
-          ticker: '^GSPC',
-          url: 'http://localhost:5100/%5EGSPC',
-          opened: true,
-          readiness: 'listening',
-        },
-      });
-      expect(
-        await client.callTool({ name: 'analyze_stock', arguments: { ticker: 'FAIL' } })
-      ).toMatchObject({ isError: true });
-      for (
-        let retry = 0;
-        retry < 100 && !stderr.includes('Failed to fetch historical prices from Yahoo');
-        retry++
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+        expect(
+          await client.callTool({
+            name: 'refresh_market_screen_performance',
+            arguments: { jobId: PERFORMANCE_JOB_ID, limit: 50 },
+          })
+        ).toMatchObject({
+          isError: false,
+          structuredContent: { refresh: { status: 'running', selected: 3, processed: 0 } },
+        });
+        const result = await client.callTool({
+          name: 'analyze_stock',
+          arguments: { ticker: 'AAPL' },
+        });
+        expect(result).toMatchObject({
+          isError: false,
+          structuredContent: { report: { ticker: 'AAPL', status: 'available', valuation: null } },
+        });
+        expect(JSON.stringify(result)).not.toContain('fixture-secret');
+        expect(
+          await client.callTool({
+            name: 'screen_stocks',
+            arguments: { tickers: [' aapl ', 'AAPL'] },
+          })
+        ).toMatchObject({
+          isError: false,
+          structuredContent: {
+            screen: {
+              status: 'available',
+              universe: { tickers: ['AAPL'] },
+              criteria: { decision: 'BUY', lookbackDays: 730, limit: 20, timeBudgetMs: 45000 },
+              coverage: { requested: 1, analyzed: 1, matched: 1 },
+              matches: [{ ticker: 'AAPL', decision: 'BUY' }],
+            },
+          },
+        });
+        const failedScreen = await client.callTool({
+          name: 'screen_stocks',
+          arguments: { tickers: ['FAIL'] },
+        });
+        expect(failedScreen).toMatchObject({ isError: true });
+        expect(JSON.stringify(failedScreen)).not.toContain('fixture-secret');
+        expect(
+          await client.callTool({ name: 'open_stock_dashboard', arguments: { ticker: '^gspc' } })
+        ).toMatchObject({
+          isError: false,
+          structuredContent: {
+            ticker: '^GSPC',
+            url: 'http://localhost:5100/%5EGSPC',
+            opened: true,
+            readiness: 'listening',
+          },
+        });
+        expect(
+          await client.callTool({ name: 'analyze_stock', arguments: { ticker: 'FAIL' } })
+        ).toMatchObject({ isError: true });
+        for (
+          let retry = 0;
+          retry < 100 && !stderr.includes('Failed to fetch historical prices from Yahoo');
+          retry++
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      } finally {
+        await client.close();
       }
-    } finally {
-      await client.close();
-    }
-    expect(stderr).toContain('fixture report log on stderr');
-    expect(stderr).toContain('fixture saved performance read on stderr');
-    expect(stderr).toContain('fixture performance refresh on stderr');
-    expect(stderr).toContain('fixture Bun console.write on stderr');
-    expect(stderr).toContain('fixture screen log on stderr');
-    expect(stderr).toContain('fixture Yahoo logger on stderr');
-    expect(stderr).toContain('Failed to fetch historical prices from Yahoo');
-    expect(stderr).not.toContain('fixture-secret');
-  });
+      expect(stderr).toContain('fixture report log on stderr');
+      expect(stderr).toContain('fixture saved performance read on stderr');
+      expect(stderr).toContain('fixture performance refresh on stderr');
+      expect(stderr).toContain('fixture Bun console.write on stderr');
+      expect(stderr).toContain('fixture screen log on stderr');
+      expect(stderr).toContain('fixture Yahoo logger on stderr');
+      expect(stderr).toContain('Failed to fetch historical prices from Yahoo');
+      expect(stderr).not.toContain('fixture-secret');
+    },
+    SPAWN_TEST_TIMEOUT_MS
+  );
 
   test.each(['2024-11-05', '2025-11-25'])(
     'supports local clients using protocol %s with only JSON-RPC on stdout',
@@ -201,7 +207,10 @@ describe('MCP stdio', () => {
       });
       function request(id: number, method: string, params?: object): Promise<JSONRPCResponse> {
         return new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error(`Timed out awaiting ${method}`)), 5000);
+          const timeout = setTimeout(
+            () => reject(new Error(`Timed out awaiting ${method}`)),
+            SPAWN_TEST_TIMEOUT_MS
+          );
           pending.set(id, (message) => {
             clearTimeout(timeout);
             pending.delete(id);
@@ -352,6 +361,7 @@ describe('MCP stdio', () => {
       }
       expect(stderr).toContain('fixture report log on stderr');
       expect(stderr).not.toContain('fixture-secret');
-    }
+    },
+    SPAWN_TEST_TIMEOUT_MS
   );
 });
