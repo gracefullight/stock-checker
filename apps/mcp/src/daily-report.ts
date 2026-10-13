@@ -4,11 +4,24 @@ import { fileURLToPath } from 'node:url';
 /** Saved state of one 09:00 Australia/Sydney daily screening run. */
 export interface DailyReportState {
   localDate: string;
-  status: 'running' | 'completed' | 'partial' | 'unavailable' | 'paused' | 'failed' | 'disabled';
+  status:
+    | 'running'
+    | 'completed'
+    | 'partial'
+    | 'unavailable'
+    | 'paused'
+    | 'failed'
+    | 'disabled'
+    | 'skipped';
   reason: string | null;
-  startedAt: string;
-  updatedAt: string;
+  startedAt: string | null;
+  updatedAt: string | null;
   jobId: string | null;
+  /** Latest completed NYSE session the run evaluated; absent in older state files. */
+  usSession?: string | null;
+  window?: string;
+  source?: string;
+  universeSource?: string | null;
   collectedCount: number;
   sourceTotal: number | null;
   completeness: 'complete' | 'partial' | null;
@@ -32,8 +45,8 @@ function isDailyReportState(value: unknown): value is DailyReportState {
   return (
     typeof state.localDate === 'string' &&
     typeof state.status === 'string' &&
-    typeof state.startedAt === 'string' &&
-    typeof state.updatedAt === 'string' &&
+    (state.startedAt === null || typeof state.startedAt === 'string') &&
+    (state.updatedAt === null || typeof state.updatedAt === 'string') &&
     (state.jobId === null || typeof state.jobId === 'string') &&
     typeof state.collectedCount === 'number' &&
     typeof state.analyzedCount === 'number' &&

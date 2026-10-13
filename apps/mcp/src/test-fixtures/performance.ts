@@ -29,6 +29,10 @@ export function fixturePerformance(): MarketScreenPerformanceSnapshot {
       legacyUntracked: 0,
       winRatePct: 100,
       averageNetReturnPct: 1.9,
+      winRateWilson95: null,
+      spyMatched: 1,
+      averageSpyNetReturnPct: null,
+      averageExcessReturnPct: null,
     },
     page: {
       offset: 0,
@@ -50,6 +54,8 @@ export function fixturePerformance(): MarketScreenPerformanceSnapshot {
           grossReturnPct: 2,
           netReturnPct: 1.9,
           outcome: 'win',
+          spyNetReturnPct: null,
+          excessReturnPct: null,
           updatedAt: '2026-10-13T21:00:00.000Z',
         },
         ...(['pending', 'open', 'unavailable'] as const).map((status, index) => ({
@@ -67,6 +73,8 @@ export function fixturePerformance(): MarketScreenPerformanceSnapshot {
           grossReturnPct: null,
           netReturnPct: null,
           outcome: null,
+          spyNetReturnPct: null,
+          excessReturnPct: null,
           updatedAt: '2026-10-13T21:00:00.000Z',
         })),
       ],
