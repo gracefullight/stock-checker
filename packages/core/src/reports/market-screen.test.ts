@@ -16,6 +16,7 @@ import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@/constants';
 import {
   type CreateMarketScreenOptions,
   createMarketScreenJob,
+  type FinvizScreenProvenance,
   getMarketScreenJob,
   listMarketScreenJobs,
   MarketScreenJobNotFoundError,
@@ -110,10 +111,12 @@ function context(
   };
 }
 
+type FinvizCreateOptions = CreateMarketScreenOptions & { provenance: FinvizScreenProvenance };
+
 function input(
   tickers = ['ONE', 'TWO'],
   overrides: Partial<CreateMarketScreenOptions> = {}
-): CreateMarketScreenOptions {
+): FinvizCreateOptions {
   const count = new Set(tickers.map((ticker) => ticker.trim().toUpperCase())).size;
   return {
     tickers,
@@ -128,7 +131,7 @@ function input(
       completeness: 'complete',
     },
     ...overrides,
-  };
+  } as FinvizCreateOptions;
 }
 
 const delay = (milliseconds = 5) =>
@@ -896,53 +899,53 @@ describe('durable Finviz candidate jobs', () => {
   );
 
   it.each([
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.tickers = [];
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.tickers = Array(15001).fill('ONE');
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.tickers = ['ONE', '../BAD'];
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.tickers = ['A'.repeat(33)];
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.tickers = ['ONE', 'one'];
       value.provenance.sourceTotal = 2;
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.provenance.sourceTotal = 1669;
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.provenance.sourceTotal = 1;
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.provenance.url = 'https://finviz.com/screener?token=private-key';
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.provenance.url = 'https://finviz.com.attacker.example/screener';
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.provenance.url = 'https://finviz.com/screener?f=cap_largeover';
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.provenance.filters = ['ind_stocksonly', 'cap_largeover'];
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.provenance.capturedAt = '2026-02-30T12:00:00Z';
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.provenance.capturedAt = new Date(Date.now() + 86_400_000).toISOString();
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.provenance.overallTotal = 1;
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.lookbackDays = 729;
     },
-    (value: CreateMarketScreenOptions) => {
+    (value: FinvizCreateOptions) => {
       value.lookbackDays = 3651;
     },
   ])('rejects inconsistent inputs before saving a job or starting network work', async (mutate) => {

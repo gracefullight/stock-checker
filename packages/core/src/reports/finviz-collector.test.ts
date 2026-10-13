@@ -99,6 +99,7 @@ describe('Finviz public Tickers collection', () => {
         capturedAt: '2026-10-05T03:30:00.000Z',
         completeness: 'complete',
         pages: 2,
+        collectionReason: null,
       },
     });
     expect(fixture.readPage.mock.calls).toHaveLength(2);

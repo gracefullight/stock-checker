@@ -1,4 +1,5 @@
 import type { MarketScreenJob } from '@/reports/market-screen';
+import { describeUniverseCoverage } from '@/reports/market-screen-universe';
 import type { TickerAnalysisUnavailable } from '@/services/ticker-analysis';
 
 export interface ScreenAnalysisUnavailable {
@@ -121,5 +122,5 @@ export function formatMarketScreenTitle(
   job: MarketScreenJob,
   prefix = '시장 후보 스크리닝'
 ): string {
-  return `${prefix} · ${formatScreenDecision({ decision: job.criteria.decision, ...job.progress })} · ${formatScreenEvaluation(job.progress)} · Finviz 후보 ${job.universe.collectedCount}/${job.universe.sourceTotal}`;
+  return `${prefix} · ${formatScreenDecision({ decision: job.criteria.decision, ...job.progress })} · ${formatScreenEvaluation(job.progress)} · ${describeUniverseCoverage(job.universe)}`;
 }

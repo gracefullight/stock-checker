@@ -5,7 +5,11 @@ import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@/constants';
-import type { FinvizScreenProvenance } from '@/reports/market-screen';
+import {
+  FINVIZ_COLLECTION_REASONS,
+  type FinvizCollectionReason,
+  type FinvizScreenProvenance,
+} from '@/reports/market-screen-universe';
 
 export interface FinvizCollectionPlan {
   url: string;
@@ -21,16 +25,9 @@ export interface FinvizCollectorOptions {
   asideExecutable?: string;
 }
 
-export type FinvizCollectionReason =
-  | 'candidate-limit'
-  | 'page-limit'
-  | 'deadline'
-  | 'access-blocked'
-  | 'unsupported-page'
-  | 'source-changed'
-  | 'incomplete-collection'
-  | 'browser-unavailable'
-  | 'browser-error';
+export type { FinvizCollectionReason };
+/** Collection outcomes are shared with saved-job provenance so readers classify them alike. */
+export const COLLECTION_REASONS = FINVIZ_COLLECTION_REASONS;
 
 export interface FinvizCollectionResult {
   status: 'available' | 'partial' | 'unavailable';
@@ -432,6 +429,7 @@ export async function collectFinvizCandidates(
             capturedAt,
             completeness: reason ? 'partial' : 'complete',
             pages,
+            collectionReason: reason,
           },
     reason,
   };

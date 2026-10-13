@@ -22,6 +22,8 @@ function marketJob(): MarketScreenJob {
     pauseReason: null,
     universe: {
       source: 'finviz-candidates',
+      validated: false,
+      collectionReason: 'candidate-limit',
       url: 'https://finviz.com/screener.ashx',
       filters: ['stocks-only', 'below-SMA50'],
       sourceTotal: 4000,

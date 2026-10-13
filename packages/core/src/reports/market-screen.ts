@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DateTime } from 'luxon';
 import {
   type MarketScreenPerformanceRegistration,
   registerMarketScreenRecommendation,
@@ -15,6 +14,15 @@ import {
   readMarketScreenLease,
   writeMarketScreenJson,
 } from '@/reports/market-screen-store';
+import {
+  buildMarketScreenUniverse,
+  classifyCollection,
+  describeUniverseCollection,
+  type MarketScreenCollectionStatus,
+  type MarketScreenProvenance,
+  type MarketScreenUniverse,
+  universeWarnings,
+} from '@/reports/market-screen-universe';
 import { projectMatch, type StockScreenMatch } from '@/reports/stock-screen';
 import type { analyzeTickerContext, TickerAnalysisUnavailable } from '@/services/ticker-analysis';
 import type { PipelineConfig } from '@/types';
@@ -39,28 +47,66 @@ export {
   type MarketScreenPerformanceSummary,
   refreshMarketScreenPerformance,
 } from '@/reports/market-screen-performance';
+export type {
+  ConfiguredUniverse,
+  ConfiguredUniverseProvenance,
+  FinvizCandidateUniverse,
+  FinvizScreenProvenance,
+  MarketScreenProvenance,
+  MarketScreenUniverse,
+  MarketScreenUniverseSource,
+} from '@/reports/market-screen-universe';
 
 type Decision = 'BUY' | 'SELL' | 'HOLD' | 'ALL';
 type PageKind = 'matches' | 'excluded' | 'unavailable';
-type JobStatus = 'queued' | 'running' | 'paused' | 'completed' | 'partial' | 'unavailable';
+export type MarketScreenJobStatus =
+  | 'queued'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'partial'
+  | 'unavailable';
+type JobStatus = MarketScreenJobStatus;
 
-export interface FinvizScreenProvenance {
-  source: 'Finviz';
-  url: string;
-  filters: string[];
-  sourceTotal: number;
-  capturedAt: string;
-  completeness: 'complete' | 'partial';
-  overallTotal?: number;
-  pages?: number;
+/** Statuses after which a job never evaluates again; readers must not resume them. */
+export const MARKET_SCREEN_TERMINAL_STATUSES: ReadonlySet<MarketScreenJobStatus> = new Set([
+  'completed',
+  'partial',
+  'unavailable',
+]);
+
+export function isMarketScreenJobTerminal(status: MarketScreenJobStatus): boolean {
+  return MARKET_SCREEN_TERMINAL_STATUSES.has(status);
+}
+
+/** Pause reasons written when the single global runner lease belongs to other work. */
+export const MARKET_SCREEN_LEASE_BUSY_REASONS = Object.freeze({
+  screen: 'Another market-screen job is active; resume after its workers finish.',
+  performance: 'A paper performance refresh is active; resume after its worker finishes.',
+});
+
+export function isMarketScreenLeaseBusy(pauseReason: string | null | undefined): boolean {
+  return (
+    pauseReason === MARKET_SCREEN_LEASE_BUSY_REASONS.screen ||
+    pauseReason === MARKET_SCREEN_LEASE_BUSY_REASONS.performance
+  );
 }
 
 export interface CreateMarketScreenOptions {
   tickers: string[];
-  provenance: FinvizScreenProvenance;
+  provenance: MarketScreenProvenance;
   decision?: Decision;
   lookbackDays?: number;
   autoStart?: boolean;
+  /** Latest completed NYSE session at creation (YYYY-MM-DD); null when unknown. */
+  usSession?: string | null;
+}
+
+export interface MarketScreenOutcome {
+  /** Source coverage: `capped` is a configured limit, not a failure. */
+  collection: MarketScreenCollectionStatus;
+  /** Evaluation health, independent of how much of the source was collected. */
+  analysis: 'complete' | 'degraded' | 'unavailable';
 }
 
 export interface MarketScreenDependencies {
@@ -101,6 +147,8 @@ export interface MarketScreenError {
   reason: string;
   attempts: number;
   diagnostics?: TickerAnalysisUnavailable;
+  /** Typed provider cause when the data fetcher reports one (for example `rate-limited`). */
+  cause?: string;
 }
 
 export interface MarketScreenJob {
@@ -112,18 +160,11 @@ export interface MarketScreenJob {
   startedAt: string | null;
   finishedAt: string | null;
   pauseReason: string | null;
-  universe: {
-    source: 'finviz-candidates';
-    url: string;
-    filters: string[];
-    sourceTotal: number;
-    collectedCount: number;
-    inputCount: number;
-    capturedAt: string;
-    completeness: 'complete' | 'partial';
-    overallTotal: number | null;
-    pages: number | null;
-  };
+  universe: MarketScreenUniverse;
+  /** Latest completed NYSE session when the job was created; legacy jobs omit it. */
+  usSession?: string | null;
+  /** Terminal classification; absent while pending and on legacy jobs. */
+  outcome?: MarketScreenOutcome;
   criteria: {
     decision: Decision;
     lookbackDays: number;
@@ -198,9 +239,8 @@ interface NotificationAttempt {
 
 const DEFAULT_ROOT = fileURLToPath(new URL('../../../../data/market-scans/', import.meta.url));
 const JOB_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
-const FINVIZ_PARAMETERS = new Set(['v', 'f', 'ft', 'o', 'r', 't', 's', 'c', 'ar', 'p', 'ta']);
 const activeRuntimes = new Map<string, Runtime>();
-const terminal = (status: JobStatus) => ['completed', 'partial', 'unavailable'].includes(status);
+const terminal = isMarketScreenJobTerminal;
 const timestamp = () => new Date().toISOString();
 const jobFile = (root: string, id: string, name: string) => path.join(root, id, name);
 
@@ -243,70 +283,13 @@ function validateCreate(
     return symbol;
   });
   const tickers = [...new Set(symbols)];
-  const provenance = options.provenance;
-  if (provenance?.source !== 'Finviz' || !['complete', 'partial'].includes(provenance.completeness))
-    throw new TypeError('Valid Finviz provenance is required');
+  const universe = buildMarketScreenUniverse(options.provenance, tickers, symbols.length);
   if (
-    !Number.isSafeInteger(provenance.sourceTotal) ||
-    provenance.sourceTotal < tickers.length ||
-    provenance.sourceTotal < 1
+    options.usSession !== undefined &&
+    options.usSession !== null &&
+    (typeof options.usSession !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(options.usSession))
   )
-    throw new TypeError('sourceTotal must cover the unique collected symbols');
-  if (provenance.completeness === 'complete' && provenance.sourceTotal !== tickers.length)
-    throw new TypeError('Complete provenance requires every source candidate to be collected');
-  let url: URL;
-  try {
-    url = new URL(provenance.url);
-  } catch {
-    throw new TypeError('A valid Finviz screener URL is required');
-  }
-  if (
-    url.protocol !== 'https:' ||
-    url.hostname !== 'finviz.com' ||
-    url.port ||
-    !['/screener', '/screener.ashx'].includes(url.pathname) ||
-    url.username ||
-    url.password ||
-    url.hash ||
-    [...url.searchParams].some(
-      ([key, value]) => !FINVIZ_PARAMETERS.has(key) || !/^[A-Za-z0-9_,.+=^-]*$/.test(value)
-    ) ||
-    [...url.searchParams.keys()].some((key, index, keys) => keys.indexOf(key) !== index)
-  )
-    throw new TypeError('A public HTTPS Finviz screener URL is required');
-  if (
-    !Array.isArray(provenance.filters) ||
-    provenance.filters.length > 100 ||
-    provenance.filters.some(
-      (filter) =>
-        typeof filter !== 'string' ||
-        filter.length > 160 ||
-        !/^[A-Za-z0-9_][A-Za-z0-9_.+-]*$/.test(filter)
-    )
-  )
-    throw new TypeError('filters must be a list of public Finviz filter identifiers');
-  const sourceFilters = url.searchParams.get('f')?.split(',').filter(Boolean) ?? [];
-  if (JSON.stringify(sourceFilters) !== JSON.stringify(provenance.filters)) {
-    throw new TypeError('filters must preserve the exact ordered source URL filter identifiers');
-  }
-  const capturedAt =
-    typeof provenance.capturedAt === 'string'
-      ? DateTime.fromISO(provenance.capturedAt, { setZone: true })
-      : null;
-  if (
-    typeof provenance.capturedAt !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(provenance.capturedAt) ||
-    !capturedAt?.isValid ||
-    capturedAt.toMillis() > Date.now()
-  )
-    throw new TypeError('capturedAt must be a valid past ISO timestamp');
-  for (const field of ['overallTotal', 'pages'] as const) {
-    const value = provenance[field];
-    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1))
-      throw new TypeError(`${field} must be a positive integer`);
-  }
-  if (provenance.overallTotal !== undefined && provenance.overallTotal < provenance.sourceTotal)
-    throw new TypeError('overallTotal must cover sourceTotal');
+    throw new TypeError('usSession must be an ISO date');
   const decision = options.decision === undefined ? 'BUY' : options.decision;
   const lookbackDays = options.lookbackDays === undefined ? 730 : options.lookbackDays;
   if (!['BUY', 'SELL', 'HOLD', 'ALL'].includes(decision))
@@ -325,16 +308,27 @@ function validateCreate(
     lookbackDays,
     minIntervalMs,
     autoStart: options.autoStart !== false,
-    provenance: {
-      filters: [...provenance.filters],
-      sourceTotal: provenance.sourceTotal,
-      completeness: provenance.completeness,
-      overallTotal: provenance.overallTotal ?? null,
-      pages: provenance.pages ?? null,
-    },
-    url: url.href,
-    capturedAt: capturedAt.toUTC().toISO() as string,
+    universe,
+    usSession: options.usSession ?? null,
   };
+}
+
+/** Terminal classification separating source coverage from evaluation health. */
+export function classifyMarketScreenOutcome(
+  job: Pick<MarketScreenJob, 'universe' | 'progress'>
+): MarketScreenOutcome {
+  const { progress } = job;
+  return {
+    collection: classifyCollection(job.universe),
+    analysis:
+      progress.analyzed === 0 ? 'unavailable' : progress.unavailable > 0 ? 'degraded' : 'complete',
+  };
+}
+
+function providerCause(reason: TickerAnalysisUnavailable | undefined): string | undefined {
+  // Another module may attach a typed cause; tolerate its absence.
+  const cause = (reason as { cause?: unknown } | undefined)?.cause;
+  return typeof cause === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(cause) ? cause : undefined;
 }
 
 async function loadJob(
@@ -558,7 +552,7 @@ async function notifyCompletion(
     };
     const coverageSummary = [
       `필터 ${runtime.job.criteria.decision} · 분석 ${progress.analyzed}/${progress.total} · 일치 ${progress.matched} · 제외 ${progress.excluded} · 분석 불가 ${progress.unavailable} · 알림 ${candidates.length}/${progress.matched}개`,
-      `Finviz 후보 수집 ${universe.collectedCount}/${universe.sourceTotal} · ${universe.completeness === 'complete' ? '완전 수집' : '부분 수집'}`,
+      describeUniverseCollection(universe),
     ].join('\n');
     const attempt: NotificationAttempt = {
       schemaVersion: 1,
@@ -580,6 +574,11 @@ async function notifyCompletion(
         lookbackDays: runtime.job.criteria.lookbackDays,
         pipelineConfig: runtime.job.criteria.pipelineConfig,
         candidates,
+        // Provenance for formatters that read it; ignored by older builders.
+        usSession: runtime.job.usSession ?? null,
+        universeSource: universe.source,
+        jobId: runtime.jobId,
+        matchedTickers: rows.map(({ item }) => item.ticker),
       };
       const configured = await (
         dependencies.isWhatsAppNotificationConfigured ?? isWhatsAppNotificationConfigured
@@ -748,7 +747,9 @@ async function execute(
                 );
               }
             } catch (error) {
-              if (rateLimited(error)) {
+              const cause = providerCause(unavailableReason);
+              const throttled = rateLimited(error) || cause === 'rate-limited';
+              if (throttled) {
                 fatalStop = true;
                 await writeMarketScreenJson(jobFile(runtime.root, runtime.jobId, 'control.json'), {
                   desiredStatus: 'paused',
@@ -762,15 +763,14 @@ async function execute(
                 completedAt: timestamp(),
                 item: {
                   ticker,
-                  reason: rateLimited(error)
+                  reason: throttled
                     ? 'The market data provider rate-limited this analysis.'
                     : unavailableReason
                       ? describeAnalysisUnavailable(unavailableReason)
                       : 'No usable completed-session analysis could be produced.',
                   attempts: 1,
-                  ...(!rateLimited(error) && unavailableReason
-                    ? { diagnostics: unavailableReason }
-                    : {}),
+                  ...(!throttled && unavailableReason ? { diagnostics: unavailableReason } : {}),
+                  ...(cause ? { cause } : throttled ? { cause: 'rate-limited' } : {}),
                 },
               };
             }
@@ -823,6 +823,7 @@ async function execute(
           : runtime.job.progress.unavailable > 0 || runtime.job.universe.completeness === 'partial'
             ? 'partial'
             : 'completed';
+      runtime.job.outcome = classifyMarketScreenOutcome(runtime.job);
       runtime.job.finishedAt = timestamp();
       runtime.job.pauseReason = null;
     } else {
@@ -877,18 +878,8 @@ export async function createMarketScreenJob(
     startedAt: null,
     finishedAt: null,
     pauseReason: 'Job was created paused.',
-    universe: {
-      source: 'finviz-candidates',
-      url: input.url,
-      filters: input.provenance.filters,
-      sourceTotal: input.provenance.sourceTotal,
-      collectedCount: input.tickers.length,
-      inputCount: input.inputCount,
-      capturedAt: input.capturedAt,
-      completeness: input.provenance.completeness,
-      overallTotal: input.provenance.overallTotal,
-      pages: input.provenance.pages,
-    },
+    universe: input.universe,
+    usSession: input.usSession,
     criteria: {
       decision: input.decision,
       lookbackDays: input.lookbackDays,
@@ -907,17 +898,12 @@ export async function createMarketScreenJob(
       excluded: 0,
     },
     warnings: [
-      'Finviz filters select candidates; they do not determine the engine final BUY, SELL, or HOLD decision.',
-      'This job covers only the frozen collected Finviz candidate list, not every US-listed stock or every filtered source candidate when collection is partial.',
+      ...universeWarnings(input.universe).slice(0, 2),
       'Scores are signal strengths, not success probabilities. Repeated snapshots from the same completed session are not independent new opportunities.',
       'Future next-session entry prices are unknown; risk references based on average daily price range use completed closes. SELL is a long-holder exit warning, not a short-entry recommendation.',
       'Analysis timestamps and completed-session dates can differ during a long scan. Current metadata is not a frozen point-in-time financial dataset.',
       'Provider failures are unavailable results, never HOLD. Historical outcome rates and analyst targets require analyze_stock.',
-      ...(input.provenance.completeness === 'partial'
-        ? [
-            `Only ${input.tickers.length} of ${input.provenance.sourceTotal} declared Finviz candidates were collected; missing candidates were not evaluated.`,
-          ]
-        : []),
+      ...universeWarnings(input.universe).slice(2),
     ],
   };
   await mkdir(jobFile(root, id, ''), { mode: 0o700 });
@@ -1051,8 +1037,8 @@ export async function runMarketScreenJob(
       reason: sameJob
         ? null
         : lease.owner.purpose === 'forward-paper-performance'
-          ? 'A paper performance refresh is active; resume after its worker finishes.'
-          : 'Another market-screen job is active; resume after its workers finish.',
+          ? MARKET_SCREEN_LEASE_BUSY_REASONS.performance
+          : MARKET_SCREEN_LEASE_BUSY_REASONS.screen,
     } satisfies Control);
     return snapshot(root, jobId);
   }
