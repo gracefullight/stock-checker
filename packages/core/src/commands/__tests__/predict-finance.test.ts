@@ -135,7 +135,7 @@ beforeEach(() => {
   vi.mocked(buildStockReportWhatsAppNotification).mockImplementation(async (input) => ({
     title: input.title,
     asOf: input.asOf,
-    summary: input.coverageSummary,
+    summary: `SELL ${input.candidates.filter((candidate) => candidate.decision === 'SELL').length}`,
   }));
   vi.mocked(sendWhatsAppNotification).mockResolvedValue({
     status: 'disabled',

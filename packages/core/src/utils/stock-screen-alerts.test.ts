@@ -109,6 +109,32 @@ describe('buildStockScreenWhatsAppNotification', () => {
     expect(screen).toEqual(original);
   });
 
+  it('names every BUY match in the header and passes structured gates to the setup line', async () => {
+    const matches = ['AAPL', 'MSFT', 'NVDA', 'OII', 'SPCX'].map((ticker) => candidate(ticker));
+    const screen = fixture({
+      universe: { source: 'default-screener', tickers: matches.map((match) => match.ticker) },
+      matches,
+      coverage: { ...fixture().coverage, requested: 5, analyzed: 5, matched: 5, returned: 5 },
+    });
+    const generateReport = vi.fn<StockReportAlertGenerator>(async (ticker, options) => ({
+      ticker,
+      lookbackDays: options.lookbackDays,
+      dataAsOf: '2026-10-02',
+      decision: 'BUY',
+      gateReasons: [],
+      historical: null,
+      analystTargets: null,
+    }));
+    const message = await buildStockScreenReportNotification(screen, { generateReport });
+    const [session, header] = message.summary.split('\n');
+    expect(session).toBe('미국 세션 2026-10-02(금) 종가 기준');
+    expect(header).toBe('BUY 5종목: AAPL, MSFT, NVDA, OII, SPCX · 검증 유니버스');
+    expect(message.summary.match(/\*[A-Z]+ · BUY\*/g)).toHaveLength(3);
+    expect(message.summary).toContain('*매매 계획*');
+    expect(message.summary).toContain('시장·섹터 대비 강세 RS 1.00/1.00');
+    expect(message.summary.length).toBeLessThanOrEqual(3000);
+  });
+
   it('does not start report data requests while timed-out screen providers can remain in progress', async () => {
     const screen = fixture({
       status: 'partial',
@@ -159,11 +185,12 @@ describe('buildStockScreenWhatsAppNotification', () => {
 
     expect(cheap.title).toContain('BUY 0개 · 평가 198/200 · 미산정 2종목');
     expect(rich.title).toBe(cheap.title);
-    expect(rich.summary).toBe(cheap.summary);
-    expect(rich.summary).toContain('BUY 조건 충족 0개 (분석 198개 기준).');
-    expect(rich.summary).toContain('손절·목표가 미산정 1종목: NIVF.');
-    expect(rich.summary).toContain('GCDT');
-    expect(rich.summary).not.toMatch(/상세 후보 없음|private|분석 불가/);
+    expect(cheap.summary).toBe(
+      'BUY 조건 충족 0개 (분석 198개 기준).\n가격·변동폭 기준 제외 2종목.'
+    );
+    expect(rich.summary.split('\n')[0]).toMatch(/^미국 세션 \d{4}-\d{2}-\d{2}/);
+    expect(rich.summary.split('\n').slice(1).join('\n')).toBe(cheap.summary);
+    expect(rich.summary).not.toMatch(/NIVF|GCDT|상세 후보 없음|private|분석 불가/);
     expect(generateReport).not.toHaveBeenCalled();
   });
 
@@ -340,8 +367,7 @@ describe('buildStockScreenWhatsAppNotification', () => {
 
     expect(message.summary.length).toBeLessThanOrEqual(700);
     for (const letter of ['A', 'B', 'C']) expect(message.summary).toContain(letter.repeat(32));
-    expect(message.summary).toContain('손절·목표가 미산정 20종목');
-    expect(message.summary).toContain('종가·변동폭 확인 불가 20종목');
+    expect(message.summary).toContain('가격·변동폭 기준 제외 40종목');
     expect(message.summary).toContain('가격 이력 미확보 20종목');
     expect(message.summary).toContain('데이터 확인 불가 20종목');
     expect(message.summary).not.toContain('private');

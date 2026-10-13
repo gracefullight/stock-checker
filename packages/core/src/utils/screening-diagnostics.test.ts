@@ -7,6 +7,8 @@ import {
   formatScreenDecision,
   formatScreenEvaluation,
   formatScreeningOutcome,
+  formatScreenTimestamp,
+  formatShortJobId,
   type ScreenAnalysisUnavailable,
 } from '@/utils/screening-diagnostics';
 
@@ -137,7 +139,16 @@ describe('screening diagnostics', () => {
     );
   });
 
-  it('leads with the observed BUY result and explains the three missing risk levels', () => {
+  it('formats known UTC instants to minutes and short job ids without inventing values', () => {
+    expect(formatScreenTimestamp('2026-10-05T03:30:42.123Z')).toBe('2026-10-05 03:30 UTC');
+    expect(formatScreenTimestamp('2026-02-30T03:30:42.123Z')).toBe('2026-02-30T03:30:42.123Z');
+    expect(formatScreenTimestamp('unknown')).toBe('unknown');
+    expect(formatShortJobId('1A2B3C4D-1111-2222-3333-444455556666')).toBe('1a2b3c4d');
+    expect(formatShortJobId('../secret')).toBeNull();
+    expect(formatShortJobId(undefined)).toBeNull();
+  });
+
+  it('leads with the observed BUY result and counts price-tier exclusions without naming them', () => {
     const unavailable: ScreenAnalysisUnavailable[] = ['SXTC', 'NIVF', 'DKI'].map((ticker) => ({
       ticker,
       reason: 'legacy reason',
@@ -145,7 +156,7 @@ describe('screening diagnostics', () => {
     }));
     expect(
       formatScreeningOutcome({ decision: 'BUY', analyzed: 197, matched: 0, unavailable })
-    ).toBe('BUY 조건 충족 0개 (분석 197개 기준).\n손절·목표가 미산정 3종목: DKI, NIVF, SXTC.');
+    ).toBe('BUY 조건 충족 0개 (분석 197개 기준).\n가격·변동폭 기준 제외 3종목.');
     const job = marketJob();
     job.progress.analyzed = 197;
     job.progress.matched = 0;
@@ -155,7 +166,7 @@ describe('screening diagnostics', () => {
     );
   });
 
-  it('groups risk and price failures and limits sorted examples to five tickers', () => {
+  it('merges risk and price failures into one count and keeps provider failures named', () => {
     const unavailable: ScreenAnalysisUnavailable[] = Array.from({ length: 17 }, (_, index) => ({
       ticker: `T${String(17 - index).padStart(2, '0')}`,
       reason: 'legacy reason',
@@ -166,10 +177,17 @@ describe('screening diagnostics', () => {
       reason: 'legacy reason',
       diagnostics: { code: 'invalid-price-or-atr', rows: 1000 },
     });
+    unavailable.push(
+      ...Array.from({ length: 7 }, (_, index) => ({
+        ticker: `H${String(7 - index).padStart(2, '0')}`,
+        reason: 'legacy reason',
+        diagnostics: { code: 'history-unavailable' as const, rows: 0 },
+      }))
+    );
     expect(
       formatScreeningOutcome({ decision: 'SELL', analyzed: 182, matched: 2, unavailable })
     ).toBe(
-      'SELL 조건 충족 2개 (분석 182개 기준).\n손절·목표가 미산정 17종목: T01, T02, T03, T04, T05 외 12종목.\n종가·변동폭 확인 불가 1종목: BAD.'
+      'SELL 조건 충족 2개 (분석 182개 기준).\n가격·변동폭 기준 제외 18종목.\n가격 이력 미확보 7종목: H01, H02, H03, H04, H05 외 2종목.'
     );
   });
 
@@ -265,8 +283,9 @@ describe('screening diagnostics', () => {
       unavailable,
     });
     expect(result.length).toBeLessThanOrEqual(600);
-    expect(result.split('\n')).toHaveLength(5);
-    expect(result.match(/외 15종목/g)).toHaveLength(4);
+    expect(result.split('\n')).toHaveLength(4);
+    expect(result).toContain('가격·변동폭 기준 제외 40종목.');
+    expect(result.match(/외 15종목/g)).toHaveLength(2);
     expect(result).not.toMatch(/secret|https|\*/);
     expect(result).not.toContain('ABCDEFGHIJ05');
   });

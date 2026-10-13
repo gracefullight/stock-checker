@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   isWhatsAppNotificationConfigured,
+  sanitizeNotificationText,
   sendWhatsAppNotification,
   type WhatsAppNotification,
 } from '@/utils/whatsapp';
@@ -20,15 +21,61 @@ const acceptedResponse = () =>
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
-const mockFetch = (response = acceptedResponse()) =>
-  vi.fn<typeof globalThis.fetch>().mockResolvedValue(response);
-const sentPayload = (fetch: ReturnType<typeof mockFetch>) =>
-  JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
+const statusResponse = (state = 'connected') =>
+  new Response(JSON.stringify({ state }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+type MockAnswer = (init?: RequestInit) => Promise<Response>;
+
+interface GatewayMock {
+  /** Answers for successive GET /status probes; the last entry repeats. */
+  status?: Array<MockAnswer | string>;
+  post?: MockAnswer;
+}
+
+/** Routes probes and sends by URL; the old single-response mock cannot serve two requests. */
+function gatewayFetch(mock: GatewayMock = {}) {
+  let probes = 0;
+  const statuses = mock.status ?? ['connected'];
+  return vi.fn<typeof globalThis.fetch>().mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/status') && (init?.method ?? 'GET') === 'GET') {
+      const answer = statuses[Math.min(probes, statuses.length - 1)];
+      probes += 1;
+      return typeof answer === 'string' ? statusResponse(answer) : answer(init);
+    }
+    return (mock.post ?? (async () => acceptedResponse()))(init);
+  });
+}
+
+/** A request that only settles when its abort signal fires, like a hung socket. */
+const hung: MockAnswer = (init) =>
+  new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+  });
+
+const sentPayload = (fetch: ReturnType<typeof gatewayFetch>) => {
+  const post = fetch.mock.calls.find(([, init]) => init?.method === 'POST');
+  return JSON.parse(String(post?.[1]?.body)) as {
     to: string;
     title: string;
     asOf: string;
     summary: string;
   };
+};
+const postCalls = (fetch: ReturnType<typeof gatewayFetch>) =>
+  fetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+const probeCalls = (fetch: ReturnType<typeof gatewayFetch>) =>
+  fetch.mock.calls.filter(([url]) => String(url).endsWith('/status'));
+const deps = (fetch: ReturnType<typeof gatewayFetch>, extra: Record<string, unknown> = {}) => ({
+  environment,
+  fetch,
+  alert: vi.fn(),
+  sleep: vi.fn(async (_milliseconds: number) => {}),
+  ...extra,
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -62,15 +109,35 @@ describe('isWhatsAppNotificationConfigured', () => {
   });
 });
 
+describe('sanitizeNotificationText', () => {
+  it('collapses controls and whitespace on one line and bounds UTF-16 length', () => {
+    expect(sanitizeNotificationText(' OII\n\t BUY\0 ', 80)).toBe('OII BUY');
+    expect(sanitizeNotificationText(`A${'😀'.repeat(100)}`, 7)).toBe('A😀😀😀');
+    expect(sanitizeNotificationText('‮ secret', 80)).toBe('secret');
+  });
+
+  it('keeps paragraphs in multiline mode and never pads empty input', () => {
+    expect(sanitizeNotificationText('  a\r\n\r\n\r\n b c ', 80, true)).toBe('a\n\nb c');
+    expect(sanitizeNotificationText('\n', 80, true)).toBe('');
+  });
+});
+
 describe('sendWhatsAppNotification through WhatsApp Web', () => {
-  it('sends to the authenticated local gateway without Meta credentials', async () => {
-    const fetch = mockFetch();
-    expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
+  it('probes /status, then sends once to the authenticated local gateway', async () => {
+    const fetch = gatewayFetch();
+    const dependencies = deps(fetch);
+    expect(await sendWhatsAppNotification(notification, dependencies)).toEqual({
       status: 'accepted',
       messageId: acceptedId,
     });
-    expect(fetch).toHaveBeenCalledOnce();
-    expect(fetch).toHaveBeenCalledWith(
+    expect(probeCalls(fetch)).toHaveLength(1);
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:5102/status',
+      expect.objectContaining({ method: 'GET', redirect: 'error' })
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
       'http://127.0.0.1:5102/notifications',
       expect.objectContaining({
         method: 'POST',
@@ -82,41 +149,45 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
         signal: expect.any(AbortSignal),
       })
     );
+    expect(probeCalls(fetch)[0][1]?.headers).toBeUndefined();
     expect(sentPayload(fetch)).toEqual({ to: environment.WHATSAPP_TO, ...notification });
+    expect(dependencies.sleep).not.toHaveBeenCalled();
+    expect(dependencies.alert).not.toHaveBeenCalled();
   });
 
   it('uses the configured local gateway and receiver override', async () => {
-    const fetch = mockFetch();
+    const fetch = gatewayFetch();
     await sendWhatsAppNotification(notification, {
+      ...deps(fetch),
       environment: {
         ...environment,
         WHATSAPP_GATEWAY_URL: 'http://localhost:55102',
         WHATSAPP_TO: '61415555555',
       },
-      fetch,
     });
-    expect(fetch.mock.calls[0]?.[0]).toBe('http://localhost:55102/notifications');
+    expect(fetch.mock.calls[0]?.[0]).toBe('http://localhost:55102/status');
+    expect(postCalls(fetch)[0]?.[0]).toBe('http://localhost:55102/notifications');
     expect(sentPayload(fetch).to).toBe('+61415555555');
   });
 
   it('reads default process configuration without caching credentials', async () => {
     for (const [key, value] of Object.entries(environment)) vi.stubEnv(key, value);
     vi.stubEnv('WHATSAPP_GATEWAY_URL', 'http://127.0.0.1:5102');
-    const fetch = mockFetch();
-    await sendWhatsAppNotification(notification, { fetch });
+    const fetch = gatewayFetch();
+    await sendWhatsAppNotification(notification, { fetch, alert: vi.fn() });
     vi.stubEnv('WHATSAPP_TO', '+61415555555');
-    await sendWhatsAppNotification(notification, { fetch });
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).to).toBe('+61415555555');
+    await sendWhatsAppNotification(notification, { fetch, alert: vi.fn() });
+    expect(postCalls(fetch)).toHaveLength(2);
+    expect(JSON.parse(String(postCalls(fetch)[1]?.[1]?.body)).to).toBe('+61415555555');
   });
 
   it('reads the private local token file when no explicit token is provided', async () => {
-    const fetch = mockFetch();
+    const fetch = gatewayFetch();
     const readToken = vi.fn().mockResolvedValue(environment.WHATSAPP_GATEWAY_TOKEN);
     expect(
       await sendWhatsAppNotification(notification, {
+        ...deps(fetch),
         environment: { WHATSAPP_TO: environment.WHATSAPP_TO, WHATSAPP_AUTH_DIR: '/tmp/fixture-wa' },
-        fetch,
         readToken,
       })
     ).toEqual({ status: 'accepted', messageId: acceptedId });
@@ -125,7 +196,7 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
 
   it('forwards an explicit gateway token to the token resolver', async () => {
     const readToken = vi.fn().mockResolvedValue(environment.WHATSAPP_GATEWAY_TOKEN);
-    await sendWhatsAppNotification(notification, { environment, readToken, fetch: mockFetch() });
+    await sendWhatsAppNotification(notification, { ...deps(gatewayFetch()), readToken });
     expect(readToken.mock.calls[0]?.[1]).toBe(environment.WHATSAPP_GATEWAY_TOKEN);
   });
 
@@ -133,23 +204,27 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
     {},
     { WHATSAPP_GATEWAY_URL: 'http://127.0.0.1:5102' },
     { WHATSAPP_ACCESS_TOKEN: 'legacy-meta-token', WHATSAPP_PHONE_NUMBER_ID: '12345' },
-  ])('does not send when no receiver is configured', async (configured) => {
-    const fetch = mockFetch();
+  ])('does not send or probe when no receiver is configured', async (configured) => {
+    const fetch = gatewayFetch();
     const readToken = vi.fn();
     expect(
-      await sendWhatsAppNotification(notification, { environment: configured, fetch, readToken })
+      await sendWhatsAppNotification(notification, {
+        ...deps(fetch),
+        environment: configured,
+        readToken,
+      })
     ).toEqual({ status: 'disabled', reason: 'not-configured' });
     expect(fetch).not.toHaveBeenCalled();
     expect(readToken).not.toHaveBeenCalled();
   });
 
   it('does not generate a token or contact a gateway before local setup', async () => {
-    const fetch = mockFetch();
+    const fetch = gatewayFetch();
     const readToken = vi.fn().mockResolvedValue(undefined);
     expect(
       await sendWhatsAppNotification(notification, {
+        ...deps(fetch),
         environment: { WHATSAPP_TO: environment.WHATSAPP_TO },
-        fetch,
         readToken,
       })
     ).toEqual({ status: 'disabled', reason: 'not-configured' });
@@ -158,11 +233,12 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
   });
 
   it('does not expose private token-file errors', async () => {
-    const fetch = mockFetch();
+    const fetch = gatewayFetch();
     const readToken = vi.fn().mockRejectedValue(new Error('secret-token /private/auth-path'));
-    expect(await sendWhatsAppNotification(notification, { environment, readToken, fetch })).toEqual(
-      { status: 'disabled', reason: 'invalid-configuration' }
-    );
+    expect(await sendWhatsAppNotification(notification, { ...deps(fetch), readToken })).toEqual({
+      status: 'disabled',
+      reason: 'invalid-configuration',
+    });
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -184,25 +260,25 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
     ['WHATSAPP_GATEWAY_URL', 'https://127.0.0.1:5102'],
     ['WHATSAPP_GATEWAY_URL', 'not-a-url'],
   ])('prevents malformed %s configuration from sending', async (key, value) => {
-    const fetch = mockFetch();
+    const fetch = gatewayFetch();
     expect(
       await sendWhatsAppNotification(notification, {
+        ...deps(fetch),
         environment: { ...environment, [key]: value },
-        fetch,
       })
     ).toEqual({ status: 'disabled', reason: 'invalid-configuration' });
     expect(fetch).not.toHaveBeenCalled();
   });
 
   it('normalizes controls and preserves Korean text', async () => {
-    const fetch = mockFetch();
+    const fetch = gatewayFetch();
     await sendWhatsAppNotification(
       {
         title: ' OII\n\t BUY\0 ',
         asOf: '\t 2026-10-05 \n',
-        summary: '근거:\n \t추세\u2028전환\u200b확인',
+        summary: '근거:\n \t추세 전환​확인',
       },
-      { environment, fetch }
+      deps(fetch)
     );
     expect(sentPayload(fetch)).toMatchObject({
       title: 'OII BUY',
@@ -212,10 +288,10 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
   });
 
   it('bounds UTF-16 lengths without splitting supplementary characters', async () => {
-    const fetch = mockFetch();
+    const fetch = gatewayFetch();
     await sendWhatsAppNotification(
       { title: `A${'😀'.repeat(100)}`, asOf: '日'.repeat(100), summary: '한국어😀'.repeat(1_000) },
-      { environment, fetch }
+      deps(fetch)
     );
     const payload = sentPayload(fetch);
     expect(payload.title.length).toBeLessThanOrEqual(80);
@@ -226,7 +302,7 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
   });
 
   it('preserves a detailed report and its historical and analyst sections in one send', async () => {
-    const fetch = mockFetch();
+    const fetch = gatewayFetch();
     const summary = [
       '과거 관측값이며 미래 승률이 아닙니다.',
       `근거: ${'추세 확인 '.repeat(150).trim()}`,
@@ -235,45 +311,49 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
       '애널리스트 목표가: USD 42.00, 8명, 조회 2026-10-05',
     ].join('\n');
     expect(summary.length).toBeGreaterThan(700);
-    await sendWhatsAppNotification({ ...notification, summary }, { environment, fetch });
+    await sendWhatsAppNotification({ ...notification, summary }, deps(fetch));
     expect(sentPayload(fetch).summary).toBe(summary);
-    expect(fetch).toHaveBeenCalledOnce();
-    expect(new TextEncoder().encode(String(fetch.mock.calls[0]?.[1]?.body)).length).toBeLessThan(
+    expect(postCalls(fetch)).toHaveLength(1);
+    expect(new TextEncoder().encode(String(postCalls(fetch)[0]?.[1]?.body)).length).toBeLessThan(
       16_384
     );
   });
 
   it('normalizes line endings, blank lines and controls while preserving report paragraphs', async () => {
-    const fetch = mockFetch();
+    const fetch = gatewayFetch();
     await sendWhatsAppNotification(
       {
         ...notification,
-        summary: '  OII\r\n \t근거\0 확인  \r\n\r\n\r\n승률\u200b 표본 30\r목표가\u2028확인 ',
+        summary: '  OII\r\n \t근거\0 확인  \r\n\r\n\r\n승률​ 표본 30\r목표가 확인 ',
       },
-      { environment, fetch }
+      deps(fetch)
     );
     expect(sentPayload(fetch).summary).toBe('OII\n근거 확인\n\n승률 표본 30\n목표가 확인');
   });
 
   it('uses a readable placeholder for empty notification fields', async () => {
-    const fetch = mockFetch();
-    await sendWhatsAppNotification(
-      { title: '\n', asOf: '\t', summary: '' },
-      { environment, fetch }
-    );
+    const fetch = gatewayFetch();
+    await sendWhatsAppNotification({ title: '\n', asOf: '\t', summary: '' }, deps(fetch));
     expect(sentPayload(fetch)).toMatchObject({ title: 'N/A', asOf: 'N/A', summary: 'N/A' });
   });
 
   it.each([401, 429, 503])(
     'preserves a safe HTTP %s failure without exposing details or retrying',
     async (status) => {
-      const fetch = mockFetch(new Response(JSON.stringify(environment), { status }));
-      expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
+      const fetch = gatewayFetch({
+        post: async () => new Response(JSON.stringify(environment), { status }),
+      });
+      const dependencies = deps(fetch);
+      expect(await sendWhatsAppNotification(notification, dependencies)).toEqual({
         status: 'failed',
         reason: 'http-error',
         httpStatus: status,
       });
-      expect(fetch).toHaveBeenCalledOnce();
+      expect(postCalls(fetch)).toHaveLength(1);
+      expect(dependencies.alert).toHaveBeenCalledOnce();
+      const alert = dependencies.alert.mock.calls[0][0] as { title: string; body: string };
+      expect(alert.body).toContain(`HTTP ${status}`);
+      expect(JSON.stringify(alert)).not.toContain(environment.WHATSAPP_GATEWAY_TOKEN);
     }
   );
 
@@ -284,16 +364,20 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
     { messageId: environment.WHATSAPP_GATEWAY_TOKEN },
     { messages: [{ id: 'wamid.legacy' }] },
   ])('rejects responses without a WhatsApp Web acknowledgement', async (response) => {
-    const fetch = mockFetch(new Response(JSON.stringify(response), { status: 200 }));
-    expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
+    const fetch = gatewayFetch({
+      post: async () => new Response(JSON.stringify(response), { status: 200 }),
+    });
+    expect(await sendWhatsAppNotification(notification, deps(fetch))).toEqual({
       status: 'failed',
       reason: 'invalid-response',
     });
   });
 
   it('does not expose a non-JSON response', async () => {
-    const fetch = mockFetch(new Response(environment.WHATSAPP_GATEWAY_TOKEN, { status: 200 }));
-    expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
+    const fetch = gatewayFetch({
+      post: async () => new Response(environment.WHATSAPP_GATEWAY_TOKEN, { status: 200 }),
+    });
+    expect(await sendWhatsAppNotification(notification, deps(fetch))).toEqual({
       status: 'failed',
       reason: 'invalid-response',
     });
@@ -301,57 +385,153 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
 
   it('never returns a private hexadecimal token as a message acknowledgement', async () => {
     const token = 'ab'.repeat(32);
-    const fetch = mockFetch(new Response(JSON.stringify({ messageId: token.toUpperCase() })));
+    const fetch = gatewayFetch({
+      post: async () => new Response(JSON.stringify({ messageId: token.toUpperCase() })),
+    });
     expect(
       await sendWhatsAppNotification(notification, {
+        ...deps(fetch),
         environment: { ...environment, WHATSAPP_GATEWAY_TOKEN: token },
-        fetch,
       })
     ).toEqual({ status: 'failed', reason: 'invalid-response' });
   });
 
-  it('does not expose an exception containing credentials or retry sending', async () => {
-    const fetch = vi
-      .fn<typeof globalThis.fetch>()
-      .mockRejectedValue(new Error(JSON.stringify(environment)));
-    expect(await sendWhatsAppNotification(notification, { environment, fetch })).toEqual({
+  it('does not expose an exception containing credentials or retry a posted send', async () => {
+    const fetch = gatewayFetch({
+      post: () => Promise.reject(new Error(JSON.stringify(environment))),
+    });
+    const dependencies = deps(fetch);
+    expect(await sendWhatsAppNotification(notification, dependencies)).toEqual({
       status: 'failed',
       reason: 'network-error',
     });
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(postCalls(fetch)).toHaveLength(1);
+    expect(dependencies.sleep).not.toHaveBeenCalled();
   });
 
-  it('aborts a hung gateway request within ten seconds', async () => {
+  it('aborts a hung gateway send within ten seconds and never re-posts', async () => {
     vi.useFakeTimers();
-    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(() => new Promise(() => {}));
-    const pending = sendWhatsAppNotification(notification, { environment, fetch });
+    const fetch = gatewayFetch({ post: hung });
+    const pending = sendWhatsAppNotification(notification, deps(fetch));
     await vi.advanceTimersByTimeAsync(0);
-    const signal = fetch.mock.calls[0]?.[1]?.signal;
+    const signal = postCalls(fetch)[0]?.[1]?.signal;
     await vi.advanceTimersByTimeAsync(9_999);
     expect(signal?.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(await pending).toEqual({ status: 'failed', reason: 'network-error' });
     expect(signal?.aborted).toBe(true);
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(postCalls(fetch)).toHaveLength(1);
   });
 
   it('bounds a hung acknowledgement body read as well', async () => {
     vi.useFakeTimers();
-    const response = {
-      ok: true,
-      json: () => new Promise(() => {}),
-    } as unknown as Response;
-    const fetch = mockFetch(response);
-    const pending = sendWhatsAppNotification(notification, { environment, fetch });
+    const response = { ok: true, json: () => new Promise(() => {}) } as unknown as Response;
+    const fetch = gatewayFetch({ post: async () => response });
+    const pending = sendWhatsAppNotification(notification, deps(fetch));
     await vi.advanceTimersByTimeAsync(10_000);
     expect(await pending).toEqual({ status: 'failed', reason: 'network-error' });
   });
 
-  it('cleans its timer after an accepted send', async () => {
+  it('cleans its timers after an accepted send', async () => {
     vi.useFakeTimers();
-    const fetch = mockFetch();
-    await sendWhatsAppNotification(notification, { environment, fetch });
+    const fetch = gatewayFetch();
+    await sendWhatsAppNotification(notification, deps(fetch));
     expect(vi.getTimerCount()).toBe(0);
-    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+    expect(postCalls(fetch)[0]?.[1]?.signal?.aborted).toBe(false);
+  });
+
+  describe('definite non-sends are retried before any POST', () => {
+    it('re-probes an unreachable gateway at 60/120/420 s and then gives up without posting', async () => {
+      const fetch = gatewayFetch({
+        status: [() => Promise.reject(new Error('ECONNREFUSED 127.0.0.1:5102'))],
+      });
+      const dependencies = deps(fetch);
+      expect(await sendWhatsAppNotification(notification, dependencies)).toEqual({
+        status: 'failed',
+        reason: 'gateway-unreachable',
+        probes: 4,
+      });
+      expect(dependencies.sleep.mock.calls.map(([ms]) => ms)).toEqual([60_000, 120_000, 420_000]);
+      expect(probeCalls(fetch)).toHaveLength(4);
+      expect(postCalls(fetch)).toHaveLength(0);
+      expect(dependencies.alert).toHaveBeenCalledOnce();
+      expect(dependencies.alert.mock.calls[0][0]).toMatchObject({
+        title: expect.stringContaining('WhatsApp'),
+        body: expect.stringContaining('연결할 수 없어'),
+      });
+    });
+
+    it('waits for a reconnecting session and sends once it reports connected', async () => {
+      const fetch = gatewayFetch({ status: ['disconnected', 'linking', 'connected'] });
+      const dependencies = deps(fetch);
+      expect(await sendWhatsAppNotification(notification, dependencies)).toEqual({
+        status: 'accepted',
+        messageId: acceptedId,
+      });
+      expect(dependencies.sleep.mock.calls.map(([ms]) => ms)).toEqual([60_000, 120_000]);
+      expect(probeCalls(fetch)).toHaveLength(3);
+      expect(postCalls(fetch)).toHaveLength(1);
+      expect(dependencies.alert).not.toHaveBeenCalled();
+    });
+
+    it('reports the session state when it never reconnects', async () => {
+      const fetch = gatewayFetch({ status: ['logged-out'] });
+      const dependencies = deps(fetch);
+      expect(await sendWhatsAppNotification(notification, dependencies)).toEqual({
+        status: 'failed',
+        reason: 'session-not-connected',
+        sessionState: 'logged-out',
+        probes: 4,
+      });
+      expect(postCalls(fetch)).toHaveLength(0);
+      expect(dependencies.alert.mock.calls[0][0]).toMatchObject({
+        body: expect.stringContaining("'logged-out'"),
+      });
+    });
+
+    it('treats a probe that times out as unreachable', async () => {
+      vi.useFakeTimers();
+      const fetch = gatewayFetch({ status: [hung] });
+      const pending = sendWhatsAppNotification(notification, {
+        ...deps(fetch),
+        probeDelaysMs: [],
+      });
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(probeCalls(fetch)[0]?.[1]?.signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toEqual({
+        status: 'failed',
+        reason: 'gateway-unreachable',
+        probes: 1,
+      });
+      expect(postCalls(fetch)).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('still posts when an older gateway answers /status without a readable state', async () => {
+      const fetch = gatewayFetch({
+        status: [async () => new Response('not found', { status: 404 })],
+      });
+      const dependencies = deps(fetch);
+      expect(await sendWhatsAppNotification(notification, dependencies)).toEqual({
+        status: 'accepted',
+        messageId: acceptedId,
+      });
+      expect(probeCalls(fetch)).toHaveLength(1);
+      expect(dependencies.sleep).not.toHaveBeenCalled();
+    });
+
+    it('never lets a throwing alert hook change the send result', async () => {
+      const fetch = gatewayFetch({ status: ['disconnected'] });
+      expect(
+        await sendWhatsAppNotification(notification, {
+          ...deps(fetch),
+          probeDelaysMs: [],
+          alert: () => {
+            throw new Error('osascript missing');
+          },
+        })
+      ).toMatchObject({ status: 'failed', reason: 'session-not-connected' });
+    });
   });
 });

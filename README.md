@@ -181,11 +181,37 @@ For foreground use, run `whatsapp:link` and leave it running, or stop it and run
 
 CLI BUY/SELL batches and market-screen completion summaries send after saving
 results. MCP `screen_stocks` sends only with `notifyWhatsApp: true` (default false).
-Up to three detailed tickers include original decisions, reasons, reference
-prices, historical BUY wins/sample counts, and analyst targets. SELL/HOLD history
-also measures BUY samples with the five-session/10-bps method above.
-Failures preserve results. Restart API/MCP after changing the recipient;
-relinking is unnecessary. Unconfigured recipients and GitHub-hosted jobs send nothing.
+Every message opens with the completed US session date. Up to three detailed
+BUY tickers carry a `매매 계획` block (next-session open entry and fifth-session
+close exit as US dates with Australia/Sydney times from the shared NYSE calendar,
+a position-size hint, and the in-sample validated expectation), the original
+decision and reasons, per-ticker BUY history (collapsed to counts and dates below
+ten samples), analyst targets, and ATR stop/target levels labelled as references
+outside the validated rule. Zero-match mornings send a short heartbeat instead.
+Set `STOCK_CHECKER_MAX_POSITIONS` (default 5) and optionally
+`STOCK_CHECKER_CAPITAL` to shape the size hint. Failures preserve results.
+Restart API/MCP after changing the recipient; relinking is unnecessary.
+Unconfigured recipients and GitHub-hosted jobs send nothing.
+
+Before each send the client probes the gateway's `/status`; while the gateway is
+unreachable or the session is not `connected`, nothing has been sent, so it waits
+and re-probes at about 0/60/180/600 s before giving up. Once a request is posted,
+ambiguous outcomes (timeouts, 502/504) are never retried, so a message cannot be
+duplicated. When the session is not connected or a send is not accepted, a macOS
+Notification Center alert is raised (set `STOCK_CHECKER_DESKTOP_ALERTS=0` to
+disable). The gateway only sends to the `WHATSAPP_TO` number (403 otherwise) and
+refuses more than `WHATSAPP_DAILY_SEND_CAP` sends per local date (default 50,
+429 `daily-send-cap`). `GET /status` reports the session state, how long it has
+held, today's send count, and the last send result.
+
+**Account risk.** The gateway links a personal WhatsApp account through an
+unofficial WhatsApp Web client (Baileys). WhatsApp's terms do not permit
+automated clients; accounts using them can be rate limited or banned without
+notice, and the only recovery is a manual re-link or a new number. Use a
+dedicated number if possible, keep the recipient pinned and the daily cap low,
+and never expose the gateway beyond loopback. The official WhatsApp Business
+Cloud API is the supported alternative when a template-based, fee-bearing
+integration is acceptable.
 
 For daily reports, run `mise run daily-report:service:install` on macOS.
 The service starts once each day at 09:00 Australia/Sydney, including DST;
@@ -219,6 +245,8 @@ Yahoo data needs no API key. Optional environment or private client settings:
 | `TIINGO_API_KEY` | Daily-OHLCV fallback when Yahoo fails |
 | `FMP_API_KEY` | Fallback for recent individual analyst target updates |
 | `WHATSAPP_AUTH_DIR`, `WHATSAPP_GATEWAY_URL`, `WHATSAPP_GATEWAY_TOKEN` | Override the local session directory, loopback gateway, or token |
+| `WHATSAPP_DAILY_SEND_CAP`, `STOCK_CHECKER_DESKTOP_ALERTS` | Gateway sends per local date (default 50); `0` disables macOS failure alerts |
+| `STOCK_CHECKER_MAX_POSITIONS`, `STOCK_CHECKER_CAPITAL` | Position-size hint in BUY messages (default 1/5 of capital, 5 concurrent) |
 | `STOCK_CHECKER_DASHBOARD_URL` | MCP browser links; default `http://localhost:5100` |
 
 See [the API environment example](apps/api/.env.example) for the configuration.

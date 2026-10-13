@@ -1,8 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createManagedSessionWatchdog } from './health.ts';
+import { createManagedSessionWatchdog, describeSessionState } from './health.ts';
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
+
+describe('session state description', () => {
+  it('marks only a connected session sendable and names the states needing user action', () => {
+    expect(describeSessionState('connected')).toMatchObject({
+      sendable: true,
+      needsUserAction: false,
+    });
+    expect(describeSessionState('disconnected')).toMatchObject({
+      sendable: false,
+      needsUserAction: false,
+      guidance: expect.stringContaining('whatsapp:service:restart'),
+    });
+    for (const state of ['unlinked', 'logged-out', 'pairing-expired'] as const) {
+      expect(describeSessionState(state)).toMatchObject({ sendable: false, needsUserAction: true });
+    }
+    expect(describeSessionState('logged-out').guidance).toContain('WHATSAPP_AUTH_DIR');
+    expect(describeSessionState('linking').sendable).toBe(false);
+  });
+});
 
 describe('managed WhatsApp connection watchdog', () => {
   it('does not retire an ordinary gateway even after it loses an established connection', async () => {

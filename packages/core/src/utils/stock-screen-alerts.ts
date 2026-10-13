@@ -3,6 +3,7 @@ import {
   formatScreenDecision,
   formatScreenEvaluation,
   formatScreeningOutcome,
+  formatScreenTimestamp,
   type ScreeningNotificationContext,
 } from '@/utils/screening-diagnostics';
 import {
@@ -10,17 +11,12 @@ import {
   formatStockReportWhatsAppNotification,
   type StockReportAlertInput,
 } from '@/utils/stock-report-alerts';
-import type { WhatsAppNotification } from '@/utils/whatsapp';
+import { sanitizeNotificationText, type WhatsAppNotification } from '@/utils/whatsapp';
 
-function oneLine(value: string, maximumLength: number): string {
-  return value
-    .toWellFormed()
-    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\s]+/gu, ' ')
-    .trim()
-    .slice(0, maximumLength)
-    .toWellFormed()
-    .trimEnd();
-}
+export { formatScreenTimestamp };
+
+const oneLine = (value: string, maximumLength: number) =>
+  sanitizeNotificationText(value, maximumLength);
 
 function screenEvaluation(screen: StockScreenResult): string {
   return formatScreenEvaluation({ total: screen.coverage.requested, ...screen.coverage });
@@ -43,27 +39,6 @@ function screenTitle(screen: StockScreenResult): string {
   return `종목 스크리닝 · ${decision} · ${screenEvaluation(screen)}`;
 }
 
-/** Display a known UTC instant to minute precision without using the host timezone. */
-export function formatScreenTimestamp(value: string): string {
-  const timestamp = Date.parse(value);
-  if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) ||
-    !Number.isFinite(timestamp) ||
-    new Date(timestamp).toISOString() !== value
-  ) {
-    return value;
-  }
-  return `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`;
-}
-
-function screenCoverage(screen: StockScreenResult): string {
-  const { coverage, criteria } = screen;
-  return [
-    `필터 ${criteria.decision} · 분석 ${coverage.analyzed}/${coverage.requested} · 일치 ${coverage.matched} · 분석 불가 ${coverage.unavailable}`,
-    `반환 ${coverage.returned}/${coverage.matched} · 제한 ${criteria.limit} · ${coverage.truncated ? '일부 생략' : '생략 없음'} · 알림 ${Math.min(3, screen.matches.length)}/${coverage.returned}개`,
-  ].join('\n');
-}
-
 /** Keep the original screening decisions and session dates while adding bounded report details. */
 export async function buildStockScreenReportNotification(
   screen: StockScreenResult,
@@ -73,15 +48,18 @@ export async function buildStockScreenReportNotification(
   const input: StockReportAlertInput = {
     title: screenTitle(screen),
     asOf: `검색 완료 ${formatScreenTimestamp(screen.generatedAt)}`,
-    coverageSummary: screenCoverage(screen),
     lookbackDays: criteria.lookbackDays,
     pipelineConfig: criteria.pipelineConfig,
     screening: screenContext(screen),
+    universeSource:
+      screen.universe.source === 'default-screener' ? 'configured-universe' : undefined,
+    matchedTickers: screen.matches.map((candidate) => candidate.ticker),
     candidates: screen.matches.map((candidate) => ({
       ticker: candidate.ticker,
       decision: candidate.decision,
       dataAsOf: candidate.dataAsOf,
       gateReasons: candidate.gateReasons,
+      gates: candidate.gates,
       reference: candidate.execution.reference,
     })),
   };
@@ -98,7 +76,7 @@ export async function buildStockScreenReportNotification(
   return buildStockReportWhatsAppNotification(input, dependencies);
 }
 
-/** A scan completion timestamp is separate from each candidate's completed bar date. */
+/** Compact MCP summary: a scan completion timestamp is separate from each candidate's bar date. */
 export function buildStockScreenWhatsAppNotification(
   screen: StockScreenResult
 ): WhatsAppNotification {
