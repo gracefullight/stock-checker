@@ -261,8 +261,8 @@ description = "Test the pinned WhatsApp SDK pairing fixes without network connec
 run = "node --import tsx --experimental-vm-modules --test packages/automation/whatsapp/*.test.mts"
 
 [tasks.test]
-description = "Run all tests in parallel"
-depends = ["//apps/...:test", "//packages/...:test", "finance:test", "release:test"]
+description = "Run all tests in parallel; a failing suite does not cancel its siblings"
+run = 'mise run --continue-on-error "//apps/...:test" ::: "//packages/...:test" ::: finance:test ::: release:test'
 
 [tasks."test:watch"]
 description = "Run core tests in watch mode"
