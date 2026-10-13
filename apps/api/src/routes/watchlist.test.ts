@@ -26,12 +26,54 @@ describe('watchlistRoutes', () => {
   let app: Awaited<ReturnType<typeof build>>;
 
   beforeEach(async () => {
+    vi.stubEnv('CORS_ORIGIN', undefined);
     app = await build();
     vi.resetAllMocks();
   });
 
   afterEach(async () => {
     await app.close();
+    vi.unstubAllEnvs();
+  });
+
+  describe('write guard', () => {
+    it.each([
+      { method: 'POST' as const, operation: mockedAddTicker },
+      { method: 'DELETE' as const, operation: mockedRemoveTicker },
+    ])('rejects a cross-site browser $method before mutating', async ({ method, operation }) => {
+      const res = await app.inject({
+        method,
+        url: '/api/watchlist/NVDA',
+        headers: { origin: 'https://untrusted.invalid' },
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(operation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { method: 'POST' as const, operation: mockedAddTicker },
+      { method: 'DELETE' as const, operation: mockedRemoveTicker },
+    ])(
+      'rejects an Origin-less $method from a non-loopback client',
+      async ({ method, operation }) => {
+        const res = await app.inject({
+          method,
+          url: '/api/watchlist/NVDA',
+          remoteAddress: '10.0.0.7',
+        });
+
+        expect(res.statusCode).toBe(403);
+        expect(operation).not.toHaveBeenCalled();
+      }
+    );
+
+    it('rejects an invalid ticker before touching the store', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/watchlist/NVDA,AAPL' });
+
+      expect(res.statusCode).toBe(400);
+      expect(mockedAddTicker).not.toHaveBeenCalled();
+    });
   });
 
   describe('GET /api/watchlist', () => {

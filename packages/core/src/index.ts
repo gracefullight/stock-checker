@@ -27,14 +27,22 @@ program
   .description('Run stock prediction (default)')
   .option('--ticker <list>', 'Comma-separated tickers')
   .option('--slack-webhook <url>', 'Slack webhook URL')
-  .option('--sort <order>', 'Sort order: asc or desc', 'asc')
-  .option('--portfolio-action <action>', 'Portfolio action: add, remove, list, report')
+  .option('--sort <order>', 'Ticker sort order: asc or desc', 'asc')
+  .option(
+    '--sort-by <field>',
+    'Sort by ticker (default) or decision (BUY, SELL, HOLD, then score descending)',
+    'ticker'
+  )
+  .option(
+    '--portfolio-action <action>',
+    'Portfolio action: add, remove, list, report (report defaults to portfolio assets)'
+  )
   .option('--portfolio-ticker <ticker>', 'Portfolio ticker symbol')
-  .option('--fundamentals', 'Show fundamentals for ticker')
-  .option('--news', 'Show recent news for ticker')
-  .option('--options', 'Show options chains for ticker')
-  .option('--dividends', 'Show dividend information for ticker')
-  .option('--earnings', 'Show earnings data for ticker')
+  .option('--fundamentals', 'Show fundamentals for every --ticker symbol')
+  .option('--news', 'Show recent news for every --ticker symbol')
+  .option('--options', 'Show options chains for every --ticker symbol')
+  .option('--dividends', 'Show dividend information for every --ticker symbol')
+  .option('--earnings', 'Show earnings data for every --ticker symbol')
   .option('--format <type>', 'Output format: csv or json', 'csv')
   .action(async (opts) => {
     try {
@@ -43,6 +51,12 @@ program
 
       if (sort !== 'asc' && sort !== 'desc') {
         logger.error("Sort option must be 'asc' or 'desc'");
+        process.exit(1);
+      }
+
+      const sortBy = (opts.sortBy ?? 'ticker') as 'ticker' | 'decision';
+      if (sortBy !== 'ticker' && sortBy !== 'decision') {
+        logger.error("--sort-by must be 'ticker' or 'decision'");
         process.exit(1);
       }
 
@@ -80,13 +94,14 @@ program
         }
 
         const tickers = await promptTickers();
-        const sortOrder = await promptSortOrder();
+        const sortChoice = await promptSortOrder();
         const format = await promptOutputFormat();
         const extras = await promptExtraOptions();
 
         const finalOptions: CliOptions = {
           tickers,
-          sort: sortOrder,
+          sort: sortChoice.sort,
+          sortBy: sortChoice.sortBy,
           format,
           ...extras,
           slackWebhook: process.env.SLACK_WEBHOOK_URL,
@@ -124,6 +139,7 @@ program
         tickers: finalTickers,
         slackWebhook,
         sort,
+        sortBy,
         portfolioAction: opts.portfolioAction,
         portfolioTicker: opts.portfolioTicker,
         fundamentals: opts.fundamentals,

@@ -106,7 +106,7 @@ describe('analyze_stock MCP tool', () => {
           name: 'stock-checker',
           version: packageMetadata.version,
         });
-        expect(tools).toHaveLength(10);
+        expect(tools).toHaveLength(12);
         expect(tools[0]).toMatchObject({
           name: 'analyze_stock',
           annotations: { readOnlyHint: true, destructiveHint: false },
@@ -182,6 +182,46 @@ describe('analyze_stock MCP tool', () => {
       expect(generator).not.toHaveBeenCalled();
     });
   });
+
+  test.each([
+    { ticker: '005930.KS', fragment: 'non-US listing (.KS exchange suffix)' },
+    { ticker: '7203.T', fragment: 'non-US listing (.T exchange suffix)' },
+    { ticker: 'CL=F', fragment: 'futures or FX symbol' },
+  ])(
+    'warns that $ticker is outside the validated US-equity scope',
+    async ({ ticker, fragment }) => {
+      const report = fixtureReport(ticker.toUpperCase());
+      await withClient(
+        async () => ({ report, markdown: `# ${ticker} fixture report` }),
+        async (client) => {
+          const result = await client.callTool({ name: 'analyze_stock', arguments: { ticker } });
+          expect(result).toMatchObject({
+            isError: false,
+            structuredContent: { report, warnings: [expect.stringContaining(fragment)] },
+          });
+          const text = (result.content as Array<{ text: string }>)[0].text;
+          expect(text.startsWith('> Warning:')).toBe(true);
+          expect(text).toContain(fragment);
+          expect(text).toContain(`# ${ticker} fixture report`);
+        }
+      );
+    }
+  );
+
+  test.each(['AAPL', 'BRK-B', 'BTC-USD', '^GSPC'])(
+    'adds no scope warning for %s',
+    async (ticker) => {
+      const report = fixtureReport(ticker);
+      await withClient(
+        async () => ({ report, markdown: '# fixture' }),
+        async (client) => {
+          const result = await client.callTool({ name: 'analyze_stock', arguments: { ticker } });
+          expect(result).toMatchObject({ content: [{ type: 'text', text: '# fixture' }] });
+          expect(result.structuredContent).not.toHaveProperty('warnings');
+        }
+      );
+    }
+  );
 
   test.each(['brk-b', 'BTC-USD', '005930.KS', '^GSPC', 'CL=F'])(
     'accepts market symbol %s',

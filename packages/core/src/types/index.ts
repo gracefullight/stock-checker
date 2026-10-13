@@ -2,6 +2,8 @@ export interface CliOptions {
   tickers: string[];
   slackWebhook?: string;
   sort: 'asc' | 'desc';
+  /** `ticker` (default) orders by symbol; `decision` orders BUY, SELL, HOLD, then score descending. */
+  sortBy?: 'ticker' | 'decision';
   portfolioAction?: string;
   portfolioTicker?: string;
   fundamentals?: boolean;

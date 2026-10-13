@@ -161,6 +161,82 @@ describe('marketScreenRoutes', () => {
     expect(service.resume).not.toHaveBeenCalled();
   });
 
+  it('pins a deep-linked job first on the page for /market-screen?job=<id>', async () => {
+    const other = fixture().job;
+    other.id = '0f2c6a1e-6c3b-4f1a-9c2d-2b1f7e8a9d10';
+    other.createdAt = '2026-10-04T12:01:00.000Z';
+    service.list.mockResolvedValue({
+      jobs: [other, fixture().job],
+      offset: 0,
+      limit: 20,
+      total: 2,
+      hasMore: false,
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/market-screens?job=${JOB_ID.toUpperCase()}`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      selectedJobId: JOB_ID,
+      total: 2,
+      jobs: [{ id: JOB_ID }, { id: other.id }],
+    });
+    expect(service.get).not.toHaveBeenCalled();
+  });
+
+  it('loads a deep-linked job that is not on the first page without resuming it', async () => {
+    const other = fixture().job;
+    other.id = '0f2c6a1e-6c3b-4f1a-9c2d-2b1f7e8a9d10';
+    service.list.mockResolvedValue({
+      jobs: [other],
+      offset: 0,
+      limit: 1,
+      total: 2,
+      hasMore: true,
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/market-screens?job=${JOB_ID}&limit=1`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(service.get).toHaveBeenCalledWith(JOB_ID, { kind: 'matches', offset: 0, limit: 1 });
+    expect(response.json()).toMatchObject({ selectedJobId: JOB_ID, jobs: [{ id: JOB_ID }] });
+    expect(response.json().jobs).toHaveLength(1);
+    expect(service.resume).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for a deep link to an unknown job', async () => {
+    service.list.mockResolvedValue({ jobs: [], offset: 0, limit: 20, total: 0, hasMore: false });
+    service.get.mockRejectedValue(new MarketScreenJobNotFoundError());
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/market-screens?job=${JOB_ID}`,
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: 'Market-screen job was not found.' });
+  });
+
+  it('rejects a malformed deep-link job id before store access', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/market-screens?job=not-a-uuid',
+    });
+    expect(response.statusCode).toBe(400);
+    expect(service.list).not.toHaveBeenCalled();
+  });
+
+  it('refuses Origin-less control requests from a non-loopback client', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/market-screens/${JOB_ID}/resume`,
+      remoteAddress: '192.168.1.20',
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error).toContain('from this machine only');
+    expect(service.resume).not.toHaveBeenCalled();
+  });
+
   it('passes integer list pagination beyond the candidate-row bound', async () => {
     const response = await app.inject({
       method: 'GET',

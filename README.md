@@ -56,8 +56,17 @@ mise run backtest -- --research --quick
 ```
 
 Default predictions append monthly CSV rows under `packages/core/public/`;
-`--format=json` exports JSON instead. Other flags include `--sort=asc|desc`,
-`--fundamentals`, `--news`, `--earnings`, `--dividends`, and `--options`.
+`--format=json` exports JSON instead. `--sort=asc|desc` orders by ticker;
+`--sort-by=decision` orders BUY, SELL, HOLD, then score. `--fundamentals`,
+`--news`, `--earnings`, `--dividends`, and `--options` print extra data for
+every `--ticker` symbol after the prediction table.
+`--portfolio-action=report` analyzes the saved portfolio assets (or `--ticker`),
+prints the report, and saves it under `data/reports/`. The portfolio and
+watchlist live in `data/portfolio.json` and `data/watchlist.json`, shared by the
+CLI, API, and web regardless of working directory.
+The summary table shows a score mix for BUY/SELL rows only (hidden for blocked
+HOLDs) and the measured in-sample base rate with its SPY benchmark; scores are
+not win probabilities.
 Use `mise run predict -- --help` for the full list.
 For Slack BUY/SELL summaries, set `SLACK_WEBHOOK_URL` or pass `--slack-webhook`.
 
@@ -88,6 +97,12 @@ The separate Serena and Aside entries require their own installed CLIs.
 | `prepare_finviz_screen`, `create_market_screen` | Prepare collection filters and save a durable candidate job |
 | `get_market_screen`, `control_market_screen` | Read results or pause/resume a saved job |
 | `get_market_screen_performance`, `refresh_market_screen_performance` | Read cached paper outcomes or explicitly fetch later prices |
+| `list_market_screens`, `get_daily_report` | List saved jobs (origin, status, counts, US session date) or open the latest 09:00 daily run with near misses on zero-match days; read-only |
+
+`get_market_screen` and `get_daily_report` accept `format: "compact"` for one
+line per ticker with the first blocking reason. Non-US symbols (exchange
+suffixes such as `.KS`, futures, FX) are analyzed with a warning: decisions and
+the measured base rate were validated on US equities only.
 
 Example `analyze_stock` input:
 
@@ -280,6 +295,14 @@ Yahoo data needs no API key. Optional environment or private client settings:
 | `WHATSAPP_DAILY_SEND_CAP`, `STOCK_CHECKER_DESKTOP_ALERTS` | Gateway sends per local date (default 50); `0` disables macOS failure alerts |
 | `STOCK_CHECKER_MAX_POSITIONS`, `STOCK_CHECKER_CAPITAL` | Position-size hint in BUY messages (default 1/5 of capital, 5 concurrent) |
 | `STOCK_CHECKER_DASHBOARD_URL` | MCP browser links; default `http://localhost:5100` |
+| `API_HOST`, `CORS_ORIGIN` | API bind address (default loopback `127.0.0.1`) and the single browser origin allowed to call it (default local dashboard origins; never a wildcard) |
+
+The API has no authentication. Writes (portfolio, watchlist, market-screen
+controls) require the dashboard origin from a browser, and Origin-less requests
+are accepted from loopback clients only. The screener accepts at most 50 symbols
+per request, runs four analyses at a time, and lists failed symbols under
+`unavailable` with a redacted reason. `GET /api/market-screens?job=<id>` pins a
+saved job first for `/market-screen?job=<id>` deep links.
 
 See [the API environment example](apps/api/.env.example) for the configuration.
 

@@ -8,6 +8,7 @@ import {
   runMarketScreenJob,
 } from '@stock-checker/core/src/reports/market-screen';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { mutationGuardFor } from '@/lib/mutation-guard';
 
 export interface MarketScreenApiService {
   list: typeof listMarketScreenJobs;
@@ -30,6 +31,14 @@ interface ListQuery {
   offset?: number;
   limit?: number;
 }
+
+interface JobListQuery extends ListQuery {
+  /** Deep link: pin this job first in the page so /market-screen?job=<id> can select it. */
+  job?: string;
+}
+
+const JOB_ID_PATTERN =
+  '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$';
 
 interface ResultQuery extends ListQuery {
   kind?: 'matches' | 'excluded' | 'unavailable';
@@ -54,11 +63,7 @@ const jobParamsSchema = {
   additionalProperties: false,
   required: ['jobId'],
   properties: {
-    jobId: {
-      type: 'string',
-      pattern:
-        '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
-    },
+    jobId: { type: 'string', pattern: JOB_ID_PATTERN },
   },
 };
 
@@ -74,24 +79,7 @@ function queryGuard(allowed: string[]) {
   };
 }
 
-function browserMutationAllowed(request: FastifyRequest): boolean {
-  const origin = request.headers.origin;
-  if (origin === undefined) return true;
-  const configured = process.env.CORS_ORIGIN;
-  if (configured && configured !== '*') return origin === configured;
-  return (
-    ['http://localhost:5100', 'http://127.0.0.1:5100', 'http://[::1]:5100'].includes(origin) ||
-    origin === `${request.protocol}://${request.headers.host}`
-  );
-}
-
-async function mutationGuard(request: FastifyRequest, reply: FastifyReply) {
-  if (!browserMutationAllowed(request)) {
-    return reply
-      .status(403)
-      .send({ error: 'This browser origin cannot control market-screen jobs.' });
-  }
-}
+const mutationGuard = mutationGuardFor('control market-screen jobs');
 
 function failedRequest(error: unknown, request: FastifyRequest, reply: FastifyReply) {
   if (error instanceof MarketScreenJobNotFoundError) {
@@ -118,21 +106,37 @@ export const marketScreenRoutes: FastifyPluginAsync<MarketScreenRouteOptions> = 
     return failedRequest(error, request, reply);
   });
 
-  app.get<{ Querystring: ListQuery }>(
+  app.get<{ Querystring: JobListQuery }>(
     '/market-screens',
     {
       schema: {
         querystring: {
           type: 'object',
           additionalProperties: false,
-          properties: paginationProperties,
+          properties: {
+            ...paginationProperties,
+            job: { type: 'string', pattern: JOB_ID_PATTERN },
+          },
         },
       },
-      preValidation: queryGuard(['offset', 'limit']),
+      preValidation: queryGuard(['offset', 'limit', 'job']),
     },
     async (request, reply) => {
       try {
-        return reply.send(await service.list(request.query));
+        const { job, offset, limit } = request.query;
+        const list = await service.list({ offset, limit });
+        if (!job) return reply.send(list);
+        // Deep link: make sure the requested job is on the page and first, so the
+        // dashboard can select it without paging through the store.
+        const id = job.toLowerCase();
+        const selected =
+          list.jobs.find((saved) => saved.id === id) ??
+          (await service.get(id, { kind: 'matches', offset: 0, limit: 1 })).job;
+        const jobs = [selected, ...list.jobs.filter((saved) => saved.id !== id)].slice(
+          0,
+          list.limit
+        );
+        return reply.send({ ...list, jobs, selectedJobId: id });
       } catch (error) {
         return failedRequest(error, request, reply);
       }
