@@ -1,54 +1,36 @@
 import { DEFAULT_SCREENER_TICKERS } from '@stock-checker/core/src/constants/screener';
 import { MarketHeatmap } from '@/components/market-heatmap';
 import { ScreenerTable } from '@/components/screener-table';
+import { ScreenerTableSkeleton } from '@/components/screener-table-skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { getScreener } from '@/lib/api';
+import { getScreenerResponse, type ScreenerResponse } from '@/lib/api';
 
 const TICKERS = [...DEFAULT_SCREENER_TICKERS];
 
-function ScreenerSkeleton() {
-  return (
-    <div className="space-y-2" role="status" aria-live="polite" aria-label="Loading screener data">
-      <div className="flex gap-2 px-2 py-1.5 border-b border-border">
-        {Array.from({ length: 7 }).map((_, i) => (
-          <Skeleton key={i} className="h-4 w-16" />
-        ))}
-      </div>
-      {Array.from({ length: 8 }).map((_, i) => (
-        <div key={i} className="flex gap-2 px-2 py-1.5">
-          <Skeleton className="h-4 w-12" />
-          <Skeleton className="h-4 w-16" />
-          <Skeleton className="h-4 w-10" />
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-4 w-14" />
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-4 w-12" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default async function ScreenerPage() {
-  let results: Awaited<ReturnType<typeof getScreener>> | undefined;
+  let response: ScreenerResponse | undefined;
   let error: string | null = null;
 
   try {
-    results = await getScreener(TICKERS);
+    response = await getScreenerResponse(TICKERS);
   } catch (err) {
     error = err instanceof Error ? err.message : 'Failed to fetch screener data';
   }
+  const results = response?.results;
+  const unavailable = response?.unavailable ?? [];
+  const generatedAt = response?.generatedAt;
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h1 className="text-sm font-bold font-mono tracking-widest text-primary">
           EQUITY SCREENER — {TICKERS.length} SYMBOLS
         </h1>
         <span className="text-xs font-mono text-muted-foreground">
-          {new Date().toISOString().split('T')[0]}
+          {generatedAt
+            ? `생성 ${generatedAt.replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')}`
+            : new Date().toISOString().split('T')[0]}
         </span>
       </div>
 
@@ -60,7 +42,7 @@ export default async function ScreenerPage() {
       ) : !results ? (
         <Card>
           <CardContent>
-            <ScreenerSkeleton />
+            <ScreenerTableSkeleton />
           </CardContent>
         </Card>
       ) : results.length === 0 ? (
@@ -81,13 +63,39 @@ export default async function ScreenerPage() {
           <Card className="overflow-hidden">
             <CardHeader className="border-b border-border py-1.5 px-3">
               <span className="text-[10px] font-mono text-muted-foreground">
-                {results.length} RESULTS
+                {results.length} RESULTS · 세션 날짜는 종목별 완료 세션이며 STALE 표시는 최신
+                세션보다 오래된 행입니다
               </span>
             </CardHeader>
             <CardContent className="p-0">
               <ScreenerTable results={results} />
             </CardContent>
           </Card>
+
+          {(unavailable.length > 0 || results.length < TICKERS.length) && (
+            <Alert>
+              <AlertTitle className="font-mono text-xs font-bold">
+                UNAVAILABLE · {Math.max(unavailable.length, TICKERS.length - results.length)}
+              </AlertTitle>
+              <AlertDescription className="font-mono text-xs">
+                {unavailable.length > 0 ? (
+                  <ul className="list-disc pl-4">
+                    {unavailable.map((item) => (
+                      <li key={item.ticker}>
+                        <span className="font-bold text-foreground">{item.ticker}</span>:{' '}
+                        {item.reason}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>
+                    {TICKERS.filter((t) => !results.some((r) => r.ticker === t)).join(', ')}: 분석
+                    결과가 반환되지 않았습니다 (HOLD가 아니라 데이터 없음).
+                  </p>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
         </div>
       )}
     </div>

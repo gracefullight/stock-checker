@@ -4,6 +4,7 @@ import { defaultCache } from '@serwist/turbopack/worker';
 import type { PrecacheEntry, SerwistGlobalConfig } from 'serwist';
 import { ExpirationPlugin, NetworkFirst, NetworkOnly, Serwist } from 'serwist';
 import { isMarketScreenRequest } from '@/features/market-screen/utils/market-screen-cache';
+import { isSignalApiRequest, isSignalPage } from '@/lib/is-signal-request';
 
 // `injectionPoint` (default "self.__SW_MANIFEST") is replaced by the actual
 // precache manifest at build time.
@@ -26,8 +27,17 @@ const serwist = new Serwist({
       matcher: ({ url }) => isMarketScreenRequest(url),
       handler: new NetworkOnly(),
     },
-    // API GETs (cross-origin :5101 included — the SW intercepts all page fetches).
-    // NetworkFirst with a generous timeout: the screener legitimately takes >10s.
+    // Engine decisions and holdings are never served from cache: a prior
+    // session's BUY must not appear as today's. Offline shows the fallback page.
+    {
+      matcher: ({ url, request }) => request.method === 'GET' && isSignalApiRequest(url),
+      handler: new NetworkOnly(),
+    },
+    {
+      matcher: ({ url, request }) => request.mode === 'navigate' && isSignalPage(url.pathname),
+      handler: new NetworkOnly(),
+    },
+    // Other API GETs (FX, fear & greed): NetworkFirst with a generous timeout.
     {
       matcher: ({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/api/'),
       handler: new NetworkFirst({
@@ -36,8 +46,7 @@ const serwist = new Serwist({
         plugins: [new ExpirationPlugin({ maxEntries: 64, maxAgeSeconds: 24 * 60 * 60 })],
       }),
     },
-    // Server-rendered pages: cache navigations so the screener shows
-    // last-known data offline.
+    // Non-signal pages (alerts, market-screen shell): cache navigations.
     {
       matcher: ({ request }) => request.mode === 'navigate',
       handler: new NetworkFirst({
