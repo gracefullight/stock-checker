@@ -6,7 +6,8 @@ permissions:
 
 on:
   schedule:
-    - cron: "0 23 * * *" # Run ~2 hours after U.S. market close
+    # US weekdays only, ~2 hours after the close; weekend runs re-wrote Friday's rows.
+    - cron: "0 23 * * 1-5"
   workflow_dispatch:
 
 jobs:
