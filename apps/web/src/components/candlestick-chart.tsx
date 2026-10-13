@@ -14,6 +14,8 @@ import { GaussianBandSeries } from '@/components/gaussian-band-series';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { OHLCVCandle } from '@/lib/api';
 import { getOHLCV } from '@/lib/api';
+import { classifySignalMarkers, markerSummary } from '@/lib/chart-signal-markers';
+import type { SignalFingerprint } from '@/lib/signal-gates.types';
 
 /** Format a lightweight-charts Time (string / BusinessDay / UNIX seconds) as YYYY-MM-DD. */
 function toIsoDate(time: unknown): string {
@@ -45,6 +47,11 @@ interface Props {
   days?: number;
   /** Upcoming events drawn as vertical dashed lines (capped at +30 days). */
   events?: ChartEventInput[];
+  /**
+   * Active strategy fingerprint. CSV-derived markers whose row does not carry
+   * a matching fingerprint are drawn as legacy (hollow, muted) markers.
+   */
+  currentConfig?: SignalFingerprint;
 }
 
 /** Calendar days the time scale is extended past the last candle for future events. */
@@ -85,12 +92,15 @@ function readToken(name: string): string {
   return `#${[r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('')}`;
 }
 
-export function CandlestickChart({ ticker, days = 180, events }: Props) {
+export function CandlestickChart({ ticker, days = 180, events, currentConfig }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [markerCounts, setMarkerCounts] = useState({ current: 0, legacy: 0 });
   const dataRef = useRef<OHLCVCandle[]>([]);
   const eventsRef = useRef<ChartEventInput[] | undefined>(events);
   eventsRef.current = events;
+  const configRef = useRef<SignalFingerprint | undefined>(currentConfig);
+  configRef.current = currentConfig;
   const { resolvedTheme } = useTheme();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: chart is fully recreated on ticker/days/theme change; resolvedTheme re-reads CSS tokens for light/dark. Other refs (incl. eventsRef — events are static per page load) are intentionally excluded to avoid redundant rebuilds.
@@ -289,17 +299,21 @@ export function CandlestickChart({ ticker, days = 180, events }: Props) {
         }))
       );
 
-      // signal markers
-      const markers = data
-        .filter((d) => d.signal === 'BUY' || d.signal === 'SELL')
-        .map((d) => ({
-          time: d.time as import('lightweight-charts').Time,
-          position: (d.signal === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
-          shape: (d.signal === 'BUY' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
-          color: d.signal === 'BUY' ? successColor : destructiveColor,
-          text: d.signal!,
-          size: 1,
-        }));
+      // Signal markers come from monthly prediction CSVs that mix strategy
+      // versions. Only rows verified against the active config are drawn as
+      // current BUY/SELL arrows; the rest are muted legacy circles.
+      const classified = classifySignalMarkers(data, configRef.current);
+      setMarkerCounts(markerSummary(classified));
+      const markers = classified.map((m) => ({
+        time: m.time as import('lightweight-charts').Time,
+        position: (m.signal === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
+        shape: m.legacy
+          ? ('circle' as const)
+          : ((m.signal === 'BUY' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown'),
+        color: m.legacy ? mutedFgColor : m.signal === 'BUY' ? successColor : destructiveColor,
+        text: m.legacy ? `${m.signal}*` : m.signal,
+        size: m.legacy ? 0.8 : 1,
+      }));
       if (markers.length > 0) {
         createSeriesMarkers(candleSeries, markers);
       }
@@ -340,6 +354,18 @@ export function CandlestickChart({ ticker, days = 180, events }: Props) {
     { tokenVar: '--chart-1', label: 'SMA200' },
     { tokenVar: '--muted-foreground', label: 'BB', dashed: true },
     { tokenVar: '--success', label: 'GC (trend)' },
+    ...(markerCounts.current > 0
+      ? [{ tokenVar: '--success', label: `▲▼ BUY/SELL · current config (${markerCounts.current})` }]
+      : []),
+    ...(markerCounts.legacy > 0
+      ? [
+          {
+            tokenVar: '--muted-foreground',
+            label: `● BUY*/SELL* · legacy signals (${markerCounts.legacy})`,
+            dashed: true,
+          },
+        ]
+      : []),
     ...(events?.some((e) => e.kind === 'earnings')
       ? [{ tokenVar: '--warning', label: 'E EARNINGS', dashed: true }]
       : []),
@@ -368,11 +394,19 @@ export function CandlestickChart({ ticker, days = 180, events }: Props) {
         aria-label={`${ticker} daily price candlestick chart with SMA 20/50/200, Bollinger Bands, and volume. See the technical indicators table below for the underlying values.`}
       />
       {status === 'ready' && (
-        <div className="flex gap-4 px-1 pt-1">
-          {legendItems.map(({ tokenVar, label, dashed }) => (
-            <LegendItem key={label} colorVar={tokenVar} label={label} dashed={dashed} />
-          ))}
-        </div>
+        <>
+          <div className="flex flex-wrap gap-4 px-1 pt-1">
+            {legendItems.map(({ tokenVar, label, dashed }) => (
+              <LegendItem key={label} colorVar={tokenVar} label={label} dashed={dashed} />
+            ))}
+          </div>
+          {markerCounts.legacy > 0 && (
+            <p className="px-1 pt-1 font-mono text-[10px] text-muted-foreground" lang="ko">
+              마커 출처: packages/core/public 월간 예측 CSV. 현재 설정(config 지문)과 일치하지
+              않거나 검증할 수 없는 행은 ● 레거시로 표시하며, 현재 전략의 과거 신호 기록이 아닙니다.
+            </p>
+          )}
+        </>
       )}
     </div>
   );

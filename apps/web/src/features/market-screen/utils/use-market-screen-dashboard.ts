@@ -18,15 +18,30 @@ const terminal = (status: string) => ['completed', 'partial', 'unavailable'].inc
 const message = (error: unknown) =>
   error instanceof Error ? error.message : 'The request failed. Retry to refresh.';
 
-export function useMarketScreenDashboard() {
+export interface MarketScreenDashboardOptions {
+  /** Job id from `/market-screen?job=<id>`; selected before the list arrives. */
+  initialJobId?: string | null;
+}
+
+/** Keep `?job=` in the address bar in sync so the current view can be shared. */
+function syncJobQuery(id: string | null) {
+  if (typeof window === 'undefined' || typeof window.history?.replaceState !== 'function') return;
+  const url = new URL(window.location.href);
+  if (id) url.searchParams.set('job', id);
+  else url.searchParams.delete('job');
+  window.history.replaceState(window.history.state, '', url);
+}
+
+export function useMarketScreenDashboard(options: MarketScreenDashboardOptions = {}) {
+  const initialJobId = options.initialJobId ?? null;
   const [jobsRead, setJobsRead] = useState<{ key: string; data: MarketScreenJobsResponse } | null>(
     null
   );
   const [jobsOffset, setJobsOffset] = useState(0);
   const [jobsFailure, setJobsFailure] = useState<{ key: string; message: string } | null>(null);
   const [listReload, setListReload] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selectedRef = useRef<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialJobId);
+  const selectedRef = useRef<string | null>(initialJobId);
   const [snapshot, setSnapshot] = useState<MarketScreenJobSnapshot | null>(null);
   const [kind, setKind] = useState<MarketScreenResultKind>('matches');
   const [offset, setOffset] = useState(0);
@@ -35,6 +50,8 @@ export function useMarketScreenDashboard() {
   const [settledJobKey, setSettledJobKey] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<'pause' | 'resume' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Job whose empty MATCHED page already switched the view to near misses. */
+  const [nearMissJobId, setNearMissJobId] = useState<string | null>(null);
   const actionController = useRef<AbortController | null>(null);
   const jobController = useRef<AbortController | null>(null);
   const mounted = useRef(false);
@@ -44,6 +61,7 @@ export function useMarketScreenDashboard() {
   const jobsError = jobsFailure?.key === listKey ? jobsFailure.message : null;
   const jobError = jobFailure?.key === jobKey ? jobFailure.message : null;
   const jobLoading = selectedId !== null && settledJobKey !== jobKey;
+  const nearMissView = kind === 'excluded' && nearMissJobId === selectedId;
 
   useEffect(() => {
     mounted.current = true;
@@ -105,6 +123,21 @@ export function useMarketScreenDashboard() {
         setSnapshot(result);
         setJobFailure(null);
         finished = terminal(result.job.status);
+        // Zero-BUY day: once analysis has nothing left to evaluate and the
+        // MATCHED page is empty, show what came closest instead of a blank tab.
+        const settled = result.job.progress.pending + result.job.progress.inFlight === 0;
+        if (
+          kind === 'matches' &&
+          offset === 0 &&
+          settled &&
+          result.page.total === 0 &&
+          result.job.progress.excluded > 0 &&
+          nearMissJobId !== result.job.id
+        ) {
+          setNearMissJobId(result.job.id);
+          setKind('excluded');
+          setOffset(0);
+        }
       } catch (error) {
         if (!cancelled && !controller.signal.aborted)
           setJobFailure({ key: jobKey, message: message(error) });
@@ -122,7 +155,11 @@ export function useMarketScreenDashboard() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [selectedId, kind, offset, jobKey]);
+  }, [selectedId, kind, offset, jobKey, nearMissJobId]);
+
+  useEffect(() => {
+    syncJobQuery(selectedId);
+  }, [selectedId]);
 
   function selectJob(id: string) {
     if (id === selectedRef.current) return;
@@ -186,6 +223,7 @@ export function useMarketScreenDashboard() {
     jobLoading,
     pendingAction,
     actionError,
+    nearMissView,
     selectJob,
     selectKind,
     setOffset,

@@ -1,26 +1,70 @@
 import type {
+  MarketScreenJob as CoreMarketScreenJob,
+  MarketScreenJobSnapshot as CoreMarketScreenJobSnapshot,
   MarketScreenError,
-  MarketScreenJob,
-  MarketScreenJobSnapshot,
   MarketScreenPerformanceRow,
   MarketScreenPerformanceSnapshot,
 } from '@stock-checker/core/src/reports/market-screen.ts';
-import type { StockScreenMatch } from '@stock-checker/core/src/reports/stock-screen.ts';
-import type { PipelineConfig, TickerResult } from '@stock-checker/core/src/types';
+import type { StockScreenMatch as CoreStockScreenMatch } from '@stock-checker/core/src/reports/stock-screen.ts';
+import type {
+  TickerResult as CoreTickerResult,
+  PipelineConfig,
+} from '@stock-checker/core/src/types';
 import axios, { type AxiosError } from 'axios';
+import { browserApiBaseUrl, resolveApiOrigin } from '@/lib/api-proxy';
+import type { SignalFingerprint, SignalGateExtras } from '@/lib/signal-gates.types';
 
-// Server components can use the non-public env var to avoid exposing internal
-// addresses. Clients only see NEXT_PUBLIC_* so the fallback chain is:
-//   process.env.API_URL (server-only)  →  process.env.NEXT_PUBLIC_API_URL  →  localhost
-const API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5101';
+// Server components reach the API directly (API_URL is server-only, the public
+// variable is honoured as a shared override). Browsers call same-origin
+// `/api/*`, which next.config.ts proxies to the same origin, unless
+// NEXT_PUBLIC_API_URL explicitly points elsewhere. `process.env.NEXT_PUBLIC_*`
+// must be read as a literal member access so Next can inline it client-side.
+const API_URL =
+  typeof window === 'undefined'
+    ? resolveApiOrigin({
+        API_URL: process.env.API_URL,
+        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+      })
+    : browserApiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
 
-export type {
-  MarketScreenJob,
-  MarketScreenJobSnapshot,
-  MarketScreenPerformanceRow,
-  MarketScreenPerformanceSnapshot,
-  TickerResult,
+/** Fields the API may add once the engine returns structured blockers and listing metadata. */
+export interface TickerResultExtras extends SignalGateExtras, SignalFingerprint {
+  /** ISO-4217 trading currency; absent means USD (US listing). */
+  currency?: string | null;
+  exchange?: string | null;
+  /** Frozen configuration the decision was evaluated with. */
+  pipelineConfig?: PipelineConfig;
+}
+
+export type TickerResult = CoreTickerResult & TickerResultExtras;
+export type StockScreenMatch = CoreStockScreenMatch & SignalGateExtras;
+
+/** Job metadata the API may add (origin/label, configured-universe source). */
+export interface MarketScreenJobExtras {
+  origin?: string | null;
+  label?: string | null;
+  /** Completed US session the job evaluated, when the server records it. */
+  sessionDate?: string | null;
+}
+
+export type MarketScreenJob = Omit<CoreMarketScreenJob, 'universe'> &
+  MarketScreenJobExtras & {
+    universe: Omit<CoreMarketScreenJob['universe'], 'source' | 'url'> & {
+      /** `finviz-candidates` today; a configured/validated universe source after merge. */
+      source: string;
+      url: string | null;
+      label?: string | null;
+    };
+  };
+
+export type MarketScreenJobSnapshot = Omit<CoreMarketScreenJobSnapshot, 'job' | 'page'> & {
+  job: MarketScreenJob;
+  page: Omit<CoreMarketScreenJobSnapshot['page'], 'items'> & {
+    items: Array<StockScreenMatch | MarketScreenError>;
+  };
 };
+
+export type { MarketScreenError, MarketScreenPerformanceRow, MarketScreenPerformanceSnapshot };
 
 export interface FearGreedResult {
   value: number;
@@ -89,12 +133,12 @@ export interface DividendsDTO {
   dividendHistory: Array<{ date: string; amount: number }>;
 }
 
-export interface TickerDetailResult extends TickerResult {
+export type TickerDetailResult = TickerResult & {
   fundamentals?: FundamentalsDTO;
   news?: NewsItemDTO[];
   earnings?: EarningsDTO;
   dividends?: DividendsDTO;
-}
+};
 
 export interface OHLCVCandle {
   time: string; // YYYY-MM-DD
@@ -113,6 +157,11 @@ export interface OHLCVCandle {
   gaussianLower: number;
   gaussianGreen: boolean;
   signal: 'BUY' | 'SELL' | 'HOLD' | null;
+  /** Strategy id / config hash of the CSV row behind `signal` (post-merge). */
+  signalStrategyId?: string | null;
+  signalConfigSha256?: string | null;
+  /** Server verdict when markers are already filtered against the active config. */
+  signalLegacy?: boolean | null;
 }
 
 const instance = axios.create({
@@ -124,15 +173,44 @@ const instance = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+function serverErrorText(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const body = data as { error?: unknown; message?: unknown };
+  if (typeof body.error === 'string' && body.error.trim()) return body.error;
+  if (typeof body.message === 'string' && body.message.trim()) return body.message;
+  return null;
+}
+
+const UNREACHABLE_CODES = new Set(['ERR_NETWORK', 'ECONNREFUSED', 'ECONNABORTED', 'ETIMEDOUT']);
+
+/** Where the request was going, for the reachability hint. */
+export function describeApiTarget(): string {
+  return (
+    API_URL || (typeof window === 'undefined' ? 'same-origin' : `${window.location.origin}/api`)
+  );
+}
+
+export function reachabilityHint(error: { code?: string; message?: string }): string {
+  const message = error.message ?? '';
+  const unreachable =
+    (error.code !== undefined && UNREACHABLE_CODES.has(error.code)) ||
+    /network error|econnrefused|timeout/i.test(message);
+  if (!unreachable) return '';
+  return (
+    ` — API 서버(${describeApiTarget()})에 연결할 수 없습니다. ` +
+    '`mise run dev:api`(port 5101) 실행 여부와 apps/web/.env.local 의 API_URL 설정을 확인하세요.'
+  );
+}
+
 instance.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response) {
-      const { status, statusText } = error.response;
-      throw new Error(`API error ${status}: ${statusText}`);
+      const { status, statusText, data } = error.response;
+      throw new Error(`API error ${status}: ${serverErrorText(data) ?? statusText}`);
     }
     // Network error, timeout, or request setup failure
-    throw new Error(`API error: ${error.message}`);
+    throw new Error(`API error: ${error.message}${reachabilityHint(error)}`);
   }
 );
 
@@ -150,10 +228,41 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 /**
  * GET /api/screener?tickers=AAPL,TSLA,NVDA
  */
+export interface ScreenerUnavailable {
+  ticker: string;
+  reason: string;
+}
+
+export interface ScreenerResponse {
+  results: TickerResult[];
+  /** Tickers whose analysis failed, once the API reports them (post-merge). */
+  unavailable: ScreenerUnavailable[];
+  generatedAt: string | null;
+}
+
 export async function getScreener(tickers: string[]): Promise<TickerResult[]> {
+  return (await getScreenerResponse(tickers)).results;
+}
+
+/** Same request as getScreener, keeping the unavailable list and generation time. */
+export async function getScreenerResponse(tickers: string[]): Promise<ScreenerResponse> {
   const params = new URLSearchParams({ tickers: tickers.join(',') });
-  const res = await apiFetch<{ results: TickerResult[] }>(`/api/screener?${params.toString()}`);
-  return res.results;
+  const res = await apiFetch<{
+    results: TickerResult[];
+    unavailable?: unknown;
+    generatedAt?: unknown;
+  }>(`/api/screener?${params.toString()}`);
+  const unavailable = Array.isArray(res.unavailable)
+    ? res.unavailable.filter(
+        (item): item is ScreenerUnavailable =>
+          record(item) && typeof item.ticker === 'string' && typeof item.reason === 'string'
+      )
+    : [];
+  return {
+    results: res.results,
+    unavailable,
+    generatedAt: typeof res.generatedAt === 'string' ? res.generatedAt : null,
+  };
 }
 
 /**
@@ -306,7 +415,7 @@ function validMarketScreenJob(value: unknown): value is MarketScreenJob {
   return (
     job.schemaVersion === 1 &&
     typeof job.id === 'string' &&
-    /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(job.id) &&
+    MARKET_SCREEN_JOB_ID.test(job.id) &&
     marketScreenStatuses.has(job.status) &&
     typeof job.updatedAt === 'string' &&
     Number.isFinite(Date.parse(job.updatedAt)) &&
@@ -319,8 +428,11 @@ function validMarketScreenJob(value: unknown): value is MarketScreenJob {
     progress.analyzed + progress.unavailable + progress.pending + progress.inFlight ===
       progress.total &&
     record(universe) &&
-    universe.source === 'finviz-candidates' &&
-    typeof universe.url === 'string' &&
+    typeof universe.source === 'string' &&
+    universe.source.length > 0 &&
+    (universe.source === 'finviz-candidates'
+      ? typeof universe.url === 'string'
+      : universe.url === null || universe.url === undefined || typeof universe.url === 'string') &&
     strings(universe.filters) &&
     nonnegativeInteger(universe.sourceTotal) &&
     universe.sourceTotal >= progress.total &&
@@ -333,8 +445,20 @@ function validMarketScreenJob(value: unknown): value is MarketScreenJob {
     Number.isInteger(job.criteria.lookbackDays) &&
     job.criteria.lookbackDays >= 730 &&
     job.criteria.lookbackDays <= 3650 &&
-    strings(job.warnings)
+    strings(job.warnings) &&
+    (job.origin === undefined || job.origin === null || typeof job.origin === 'string') &&
+    (job.label === undefined || job.label === null || typeof job.label === 'string')
   );
+}
+
+export const MARKET_SCREEN_JOB_ID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+
+/** Normalize a `?job=` deep-link value; anything but a UUID is ignored. */
+export function parseMarketScreenJobId(value: unknown): string | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim().toLowerCase();
+  return MARKET_SCREEN_JOB_ID.test(trimmed) ? trimmed : null;
 }
 
 function validMarketScreenItem(value: unknown, kind: MarketScreenResultKind): boolean {

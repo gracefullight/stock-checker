@@ -8,6 +8,7 @@ import {
   FIRST_MARKET_JOB,
   fixtureMarketScreenJob,
   fixtureMarketScreenSnapshot,
+  SECOND_MARKET_JOB,
 } from '@/features/market-screen/utils/market-screen-test-fixtures';
 import {
   getMarketScreen,
@@ -44,6 +45,8 @@ vi.mock('next/link', () => ({
 }));
 
 beforeEach(() => {
+  window.localStorage.clear();
+  window.history.replaceState(null, '', '/market-screen');
   vi.mocked(getMarketScreenPerformance).mockReset().mockResolvedValue(fixturePaperSnapshot());
   vi.mocked(getMarketScreens)
     .mockReset()
@@ -85,6 +88,130 @@ describe('saved market-screen dashboard', () => {
       fixtureMarketScreenJob().universe.url
     );
     expect(resumeMarketScreen).not.toHaveBeenCalled();
+  });
+
+  it('labels the Finviz lane as outside the validated universe and shows the US session and short id on cards', async () => {
+    render(<MarketScreenDashboard />);
+    const card = await screen.findByRole('button', { pressed: true });
+    expect(card).toHaveTextContent('검증 유니버스 외 · Finviz 후보');
+    expect(card).toHaveTextContent('US 세션 2026-10-03');
+    expect(card).toHaveTextContent('#11111111');
+    expect(card).toHaveTextContent('MCP / manual');
+    expect(
+      (await screen.findAllByText('검증 유니버스 외 · Finviz 후보')).length
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/검증 거래 n/)).toBeInTheDocument();
+  });
+
+  it('labels a configured-universe job as the validated universe', async () => {
+    const job = fixtureMarketScreenJob();
+    job.universe.source = 'configured-universe';
+    job.universe.url = null;
+    job.label = 'Daily report';
+    job.origin = 'daily-report';
+    vi.mocked(getMarketScreens).mockResolvedValue({
+      jobs: [job],
+      offset: 0,
+      limit: 20,
+      total: 1,
+      hasMore: false,
+    });
+    const snapshot = fixtureMarketScreenSnapshot();
+    snapshot.job = job;
+    vi.mocked(getMarketScreen).mockResolvedValue(snapshot);
+    render(<MarketScreenDashboard />);
+    const card = await screen.findByRole('button', { pressed: true });
+    expect(card).toHaveTextContent('검증 유니버스 · Daily report · daily-report');
+    expect(screen.queryByText('검증 유니버스 외 · Finviz 후보')).not.toBeInTheDocument();
+    expect(await screen.findByText(/CONFIGURED UNIVERSE/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Open saved Finviz source filters' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('opens the deep-linked job before the list arrives and writes it back to the URL', async () => {
+    const list = Promise.withResolvers<Awaited<ReturnType<typeof getMarketScreens>>>();
+    vi.mocked(getMarketScreens).mockReturnValue(list.promise);
+    render(<MarketScreenDashboard initialJobId={SECOND_MARKET_JOB} />);
+    await screen.findByText('REFERENCE CLOSE (USD)');
+    expect(getMarketScreen).toHaveBeenCalledWith(SECOND_MARKET_JOB, expect.anything());
+    expect(new URL(window.location.href).searchParams.get('job')).toBe(SECOND_MARKET_JOB);
+    await act(async () =>
+      list.resolve({
+        jobs: [fixtureMarketScreenJob()],
+        offset: 0,
+        limit: 20,
+        total: 1,
+        hasMore: false,
+      })
+    );
+    expect(await screen.findByText(/is not on this page of saved jobs/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { pressed: false })).toHaveTextContent('#11111111');
+  });
+
+  it('hides stale paused jobs behind a toggle without hiding the selected one', async () => {
+    const user = userEvent.setup();
+    const stale = fixtureMarketScreenJob(SECOND_MARKET_JOB);
+    vi.mocked(getMarketScreens).mockResolvedValue({
+      jobs: [fixtureMarketScreenJob(FIRST_MARKET_JOB, 'completed'), stale],
+      offset: 0,
+      limit: 20,
+      total: 2,
+      hasMore: false,
+    });
+    render(<MarketScreenDashboard now={() => Date.parse('2026-10-14T00:00:00.000Z')} />);
+    const list = await screen.findByRole('list', { name: 'Saved market-screen jobs' });
+    expect(within(list).getAllByRole('button')).toHaveLength(2);
+    expect(within(list).getByText(/STALE PAUSED/)).toBeInTheDocument();
+    await user.click(screen.getByRole('switch', { name: /Hide stale paused jobs/ }));
+    expect(within(list).getAllByRole('button')).toHaveLength(1);
+    expect(screen.getByText(/1 hidden/)).toBeInTheDocument();
+    expect(window.localStorage.getItem('market-screen-hide-stale-paused')).toBe('1');
+  });
+
+  it('defaults to the near-miss view with tiers when a settled job has no matches', async () => {
+    vi.mocked(getMarketScreen).mockImplementation(async (id, options) => {
+      const snapshot = fixtureMarketScreenSnapshot(id, options?.kind, 'completed');
+      snapshot.job.progress.matched = 0;
+      snapshot.job.progress.excluded = 2;
+      if (options?.kind === 'matches') {
+        snapshot.page.items = [];
+        snapshot.page.total = 0;
+      } else if (options?.kind === 'excluded') {
+        const first = snapshot.page.items[0];
+        if (!('decision' in first)) throw new Error('fixture');
+        snapshot.page.items = [
+          { ...first, ticker: 'LOWSCORE', buyScore: 90 },
+          {
+            ...first,
+            ticker: 'QUALITY',
+            buyScore: 240,
+            gateReasons: ['The entry-quality gate rejected this score-qualified BUY setup.'],
+          },
+        ];
+        snapshot.page.total = 2;
+      }
+      return snapshot;
+    });
+    render(<MarketScreenDashboard />);
+    expect(await screen.findByRole('tab', { name: 'NEAR MISS · EXCLUDED' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+    expect(screen.getByText(/BUY 매치가 없습니다/)).toBeInTheDocument();
+    const rows = within(
+      screen.getByRole('table', { name: 'Saved market-screen decisions' })
+    ).getAllByRole('row');
+    expect(rows[1]).toHaveTextContent('QUALITY');
+    expect(rows[1]).toHaveTextContent('T1 · 품질 게이트 차단');
+    expect(rows[1]).toHaveTextContent('HOLD · BLOCKED');
+    expect(rows[2]).toHaveTextContent('LOWSCORE');
+    expect(rows[2]).toHaveTextContent('T3 · 추세·RS 통과');
+    expect(
+      screen.getByText(
+        '진입 품질 게이트가 점수 통과 BUY 셋업을 차단했습니다 (풀백 조건 미충족 또는 과열)'
+      )
+    ).toBeInTheDocument();
   });
 
   it('runs a mutation only after explicit Resume and updates status afterwards', async () => {

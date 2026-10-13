@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="ko" suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground">
         <SerwistProvider swUrl="/serwist/sw.js">
           <ThemeProvider>

@@ -105,6 +105,48 @@ describe('market-screen reads and explicit controls', () => {
     await act(async () => newRead.resolve(fixtureMarketScreenSnapshot()));
   });
 
+  it('selects a deep-linked job immediately and keeps it when the list arrives', async () => {
+    const view = renderHook(() => useMarketScreenDashboard({ initialJobId: SECOND_MARKET_JOB }));
+    expect(view.result.current.selectedId).toBe(SECOND_MARKET_JOB);
+    await act(async () => {});
+    expect(view.result.current.selectedId).toBe(SECOND_MARKET_JOB);
+    expect(view.result.current.snapshot?.job.id).toBe(SECOND_MARKET_JOB);
+    expect(vi.mocked(getMarketScreen).mock.calls[0][0]).toBe(SECOND_MARKET_JOB);
+    expect(new URL(window.location.href).searchParams.get('job')).toBe(SECOND_MARKET_JOB);
+    expect(resumeMarketScreen).not.toHaveBeenCalled();
+  });
+
+  it('switches once to the near-miss view when a settled job has no matches', async () => {
+    vi.mocked(getMarketScreen).mockImplementation(async (id, options) => {
+      const snapshot = fixtureMarketScreenSnapshot(id, options?.kind, 'completed');
+      snapshot.job.progress.matched = 0;
+      snapshot.job.progress.excluded = 2;
+      if (options?.kind === 'matches') {
+        snapshot.page.items = [];
+        snapshot.page.total = 0;
+      }
+      return snapshot;
+    });
+    const view = renderHook(() => useMarketScreenDashboard());
+    await act(async () => {});
+    expect(view.result.current.kind).toBe('excluded');
+    expect(view.result.current.nearMissView).toBe(true);
+    expect(vi.mocked(getMarketScreen).mock.calls.map((call) => call[1]?.kind)).toEqual([
+      'matches',
+      'excluded',
+    ]);
+    await act(async () => view.result.current.selectKind('matches'));
+    expect(view.result.current.kind).toBe('matches');
+    expect(view.result.current.nearMissView).toBe(false);
+  });
+
+  it('keeps the matches tab when matches exist or analysis is still pending', async () => {
+    const view = renderHook(() => useMarketScreenDashboard());
+    await act(async () => {});
+    expect(view.result.current.kind).toBe('matches');
+    expect(view.result.current.nearMissView).toBe(false);
+  });
+
   it('stops terminal polling while continuing read-only paused status polling', async () => {
     vi.useFakeTimers();
     vi.mocked(getMarketScreen).mockResolvedValue(

@@ -20,4 +20,16 @@ describe('SignalBadge', () => {
     expect(screen.getByText('HOLD')).toBeDefined();
     expect(screen.getByLabelText('Signal: HOLD')).toBeDefined();
   });
+
+  it('renders a blocked HOLD with an explicit text state, not colour alone', () => {
+    render(<SignalBadge signal="HOLD" blocked />);
+    const badge = screen.getByLabelText('Signal: HOLD (blocked setup)');
+    expect(badge).toHaveTextContent('HOLD · BLOCKED');
+    expect(badge).toHaveClass('text-warning');
+  });
+
+  it('ignores the blocked flag for BUY and SELL', () => {
+    render(<SignalBadge signal="BUY" blocked />);
+    expect(screen.getByLabelText('Signal: BUY')).toHaveTextContent('BUY');
+  });
 });

@@ -85,6 +85,22 @@ describe('market-screen HTTP client', () => {
     });
   });
 
+  it('accepts a configured-universe job without a Finviz URL and optional origin metadata', async () => {
+    const snapshot = fixtureMarketScreenSnapshot();
+    snapshot.job.universe.source = 'configured-universe';
+    snapshot.job.universe.url = null;
+    snapshot.job.origin = 'daily-report';
+    snapshot.job.label = 'Sydney 09:00';
+    request.mockResolvedValue({ data: snapshot });
+    await expect(getMarketScreen(FIRST_MARKET_JOB)).resolves.toMatchObject({
+      job: { origin: 'daily-report', universe: { source: 'configured-universe' } },
+    });
+    Reflect.set(snapshot.job, 'origin', 42);
+    await expect(getMarketScreen(FIRST_MARKET_JOB)).rejects.toMatchObject({
+      message: 'Invalid market-screen response; retry to refresh.',
+    });
+  });
+
   it('rejects mismatched jobs, non-finite scores and invented future entry fills', async () => {
     const invalid = fixtureMarketScreenSnapshot();
     request.mockResolvedValue({ data: invalid });
