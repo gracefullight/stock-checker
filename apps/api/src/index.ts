@@ -18,4 +18,7 @@ await app.register(marketRoutes, { prefix: '/api' });
 await app.register(marketScreenRoutes, { prefix: '/api' });
 
 const port = Number(process.env.PORT ?? 5101);
-await app.listen({ port, host: '0.0.0.0' });
+// Loopback by default: the API has no authentication. Set API_HOST=0.0.0.0 only
+// when the LAN is trusted; writes still require the dashboard origin or a local client.
+const host = process.env.API_HOST?.trim() || '127.0.0.1';
+await app.listen({ port, host });

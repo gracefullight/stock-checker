@@ -1,5 +1,7 @@
 import { addTicker, getWatchlist, removeTicker } from '@stock-checker/core/src/watchlist/manager';
 import type { FastifyPluginAsync } from 'fastify';
+import { mutationGuardFor } from '@/lib/mutation-guard';
+import { TICKER_PARAM_SCHEMA } from '@/routes/portfolio';
 
 interface TickerParams {
   ticker: string;
@@ -16,25 +18,39 @@ export const watchlistRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
-  app.post<{ Params: TickerParams }>('/watchlist/:ticker', async (req, reply) => {
-    try {
-      const ticker = req.params.ticker.toUpperCase();
-      await addTicker(ticker);
-      return reply.status(201).send({ success: true });
-    } catch (error) {
-      req.log.error({ err: error }, 'add watchlist ticker failed');
-      return reply.status(500).send({ error: 'Internal server error' });
+  app.post<{ Params: TickerParams }>(
+    '/watchlist/:ticker',
+    {
+      schema: { params: TICKER_PARAM_SCHEMA },
+      onRequest: mutationGuardFor('add watchlist ticker'),
+    },
+    async (req, reply) => {
+      try {
+        const ticker = req.params.ticker.toUpperCase();
+        await addTicker(ticker);
+        return reply.status(201).send({ success: true });
+      } catch (error) {
+        req.log.error({ err: error }, 'add watchlist ticker failed');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
     }
-  });
+  );
 
-  app.delete<{ Params: TickerParams }>('/watchlist/:ticker', async (req, reply) => {
-    try {
-      const ticker = req.params.ticker.toUpperCase();
-      await removeTicker(ticker);
-      return reply.send({ success: true });
-    } catch (error) {
-      req.log.error({ err: error }, 'remove watchlist ticker failed');
-      return reply.status(500).send({ error: 'Internal server error' });
+  app.delete<{ Params: TickerParams }>(
+    '/watchlist/:ticker',
+    {
+      schema: { params: TICKER_PARAM_SCHEMA },
+      onRequest: mutationGuardFor('remove watchlist ticker'),
+    },
+    async (req, reply) => {
+      try {
+        const ticker = req.params.ticker.toUpperCase();
+        await removeTicker(ticker);
+        return reply.send({ success: true });
+      } catch (error) {
+        req.log.error({ err: error }, 'remove watchlist ticker failed');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
     }
-  });
+  );
 };
