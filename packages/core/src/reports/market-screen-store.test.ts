@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -8,6 +8,7 @@ import {
   acquireMarketScreenLease,
   type MarketScreenLeaseOwner,
   marketScreenOwnerIsAlive,
+  pruneMarketScreenJobs,
   readMarketScreenJson,
   readMarketScreenLease,
   writeMarketScreenJson,
@@ -235,5 +236,100 @@ describe('market-screen durable store', () => {
     );
     expect(await readMarketScreenJson(file)).toMatchObject({ pid: process.pid, token: 'invalid' });
     expect(await readdir(root)).toEqual(['.runner.lock']);
+  });
+});
+
+describe('market-screen storage pruning', () => {
+  const now = new Date('2026-10-14T00:00:00Z');
+  async function savedJob(root: string, createdAt: string, matches = 1) {
+    const id = randomUUID();
+    const file = (name: string) => path.join(root, id, name);
+    await writeMarketScreenJson(file('state.json'), { schemaVersion: 1, id, createdAt });
+    await writeMarketScreenJson(file('manifest.json'), { schemaVersion: 1, id, tickers: ['A'] });
+    await writeMarketScreenJson(file('control.json'), { desiredStatus: 'paused', reason: null });
+    await writeMarketScreenJson(file('notification.json'), { schemaVersion: 1 });
+    for (let index = 0; index < matches; index++)
+      await writeMarketScreenJson(file(`results/matches/0000000${index}.json`), { index });
+    await writeMarketScreenJson(file('results/excluded/00000009.json'), { index: 9 });
+    await writeMarketScreenJson(file('results/unavailable/00000008.json'), { index: 8 });
+    await writeMarketScreenJson(file('performance/00000000.json'), { index: 0 });
+    await writeMarketScreenJson(file('performance/refresh.json'), { refreshed: true });
+    return id;
+  }
+
+  test('archives only old jobs, keeping summaries, BUY matches and paper ledgers', async () => {
+    const root = await temporaryRoot();
+    const old = await savedJob(root, '2026-09-01T00:00:00Z');
+    const recent = await savedJob(root, '2026-10-10T00:00:00Z');
+    await mkdir(path.join(root, 'not-a-job'));
+    const preview = await pruneMarketScreenJobs({
+      rootDirectory: root,
+      olderThanDays: 30,
+      now: () => now,
+      dryRun: true,
+    });
+    expect(preview).toMatchObject({
+      dryRun: true,
+      pruned: [old],
+      kept: [{ id: recent, reason: 'recent' }],
+    });
+    expect(await readdir(path.join(root, old))).toContain('manifest.json');
+    const result = await pruneMarketScreenJobs({
+      rootDirectory: root,
+      olderThanDays: 30,
+      now: () => now,
+    });
+    expect(result).toMatchObject({ pruned: [old], kept: [{ id: recent, reason: 'recent' }] });
+    expect((await readdir(root)).sort()).toEqual(['archive', 'not-a-job', recent].sort());
+    const archived = path.join(root, 'archive', old);
+    expect((await readdir(archived)).sort()).toEqual(['performance', 'results', 'state.json']);
+    expect(await readdir(path.join(archived, 'results'))).toEqual(['matches']);
+    expect(await readdir(path.join(archived, 'results/matches'))).toEqual(['00000000.json']);
+    expect((await readdir(path.join(archived, 'performance'))).sort()).toEqual([
+      '00000000.json',
+      'refresh.json',
+    ]);
+    expect(await readMarketScreenJson(path.join(archived, 'state.json'))).toMatchObject({
+      id: old,
+    });
+    expect(await readdir(path.join(root, recent))).toContain('manifest.json');
+    // Archived jobs are not pruned again and the missing store is a no-op.
+    expect(
+      await pruneMarketScreenJobs({ rootDirectory: root, olderThanDays: 30, now: () => now })
+    ).toMatchObject({ pruned: [] });
+    expect(
+      await pruneMarketScreenJobs({ rootDirectory: path.join(root, 'missing'), now: () => now })
+    ).toMatchObject({ pruned: [], kept: [] });
+  });
+
+  test('never touches the job holding a live lease or an unreadable job', async () => {
+    const root = await temporaryRoot();
+    const active = await savedJob(root, '2026-01-01T00:00:00Z');
+    const broken = randomUUID();
+    await writeMarketScreenJson(path.join(root, broken, 'state.json'), {
+      id: 'other',
+      createdAt: 'x',
+    });
+    const lease = await acquireMarketScreenLease(root, active);
+    try {
+      const result = await pruneMarketScreenJobs({
+        rootDirectory: root,
+        olderThanDays: 1,
+        now: () => now,
+      });
+      expect(result.pruned).toEqual([]);
+      expect(result.kept).toEqual(
+        [
+          { id: active, reason: 'active' },
+          { id: broken, reason: 'unreadable' },
+        ].sort((left, right) => left.id.localeCompare(right.id))
+      );
+    } finally {
+      await lease.release();
+    }
+    expect(await readdir(path.join(root, active))).toContain('manifest.json');
+    await expect(pruneMarketScreenJobs({ rootDirectory: root, olderThanDays: 0 })).rejects.toThrow(
+      'olderThanDays'
+    );
   });
 });
