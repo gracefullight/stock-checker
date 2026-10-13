@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_QUALITY_PIPELINE_CONFIG } from '@/constants';
-import { fetchBenchmarkPrices, getHistoricalPrices } from '@/services/data-fetcher';
+import {
+  fetchBenchmarkPrices,
+  getHistoricalPrices,
+  MarketDataError,
+} from '@/services/data-fetcher';
 import { getEarningsData } from '@/services/earnings';
 import { getFundamentals } from '@/services/fundamentals';
 import { calculateAllIndicators } from '@/services/indicators';
@@ -9,9 +13,10 @@ import {
   analyzeTickerContext,
   type TickerAnalysisUnavailable,
 } from '@/services/ticker-analysis';
-import type { IndicatorValues } from '@/types';
+import type { BenchmarkCandle, IndicatorValues } from '@/types';
 
-vi.mock('@/services/data-fetcher', () => ({
+vi.mock('@/services/data-fetcher', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/data-fetcher')>()),
   getHistoricalPrices: vi.fn(),
   fetchBenchmarkPrices: vi.fn().mockResolvedValue([]),
 }));
@@ -50,9 +55,25 @@ const indicators: IndicatorValues = {
   volumeRatio: 1,
 };
 
+/** Flat benchmark aligned to the ticker's sessions (RS evidence stays available). */
+function benchmarkFor(prices: ReadonlyArray<{ date: Date }>): BenchmarkCandle[] {
+  return prices.map(({ date }) => ({ date, close: 100, high: 101, low: 99, volume: 1_000_000 }));
+}
+
+/** 210 sessions of history on consecutive UTC days, ending with the given bar. */
+function sessions(length = 210, latest: Partial<typeof bar> = {}) {
+  return Array.from({ length }, (_, index) => ({
+    ...bar,
+    date: new Date(Date.UTC(2026, 0, index + 1)),
+    ...(index === length - 1 ? latest : {}),
+  }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getHistoricalPrices).mockResolvedValue([bar]);
+  vi.mocked(fetchBenchmarkPrices).mockResolvedValue(benchmarkFor([bar]));
+  vi.mocked(getFundamentals).mockResolvedValue({ sector: 'Technology' } as never);
   vi.mocked(calculateAllIndicators).mockReturnValue(indicators);
 });
 
@@ -133,12 +154,9 @@ describe('analysis availability diagnostics', () => {
   it.each([false, true])(
     'reports native latest-bar ATR rejection after replay, callback throws=%s',
     async (callbackThrows) => {
-      const prices = Array.from({ length: 210 }, (_, index) => ({
-        ...bar,
-        date: new Date(Date.UTC(2026, 0, index + 1)),
-        ...(index === 209 ? { open: 0.1, close: 0.1, high: 0.11, low: 0.09 } : {}),
-      }));
+      const prices = sessions(210, { open: 0.1, close: 0.1, high: 0.11, low: 0.09 });
       vi.mocked(getHistoricalPrices).mockResolvedValue(prices);
+      vi.mocked(fetchBenchmarkPrices).mockResolvedValue(benchmarkFor(prices));
       vi.mocked(calculateAllIndicators).mockReturnValue({ ...indicators, atr: 0.01 });
       const onUnavailable = vi.fn<(reason: TickerAnalysisUnavailable) => void>(() => {
         if (callbackThrows) throw new Error('Diagnostic consumer failed');
@@ -168,5 +186,170 @@ describe('analysis availability diagnostics', () => {
     expect(onUnavailable).not.toHaveBeenCalled();
     vi.mocked(getHistoricalPrices).mockResolvedValue([]);
     expect(await analyzeTicker('MISSING', null)).toBeNull();
+  });
+});
+
+describe('benchmark availability on the decision path', () => {
+  it.each([
+    {
+      name: 'SPY rate-limited after the Tiingo fallback',
+      failure: () => Promise.reject(new MarketDataError('SPY', 'rate-limited')),
+      expected: { code: 'benchmark-unavailable', symbol: 'SPY', cause: 'rate-limited' },
+    },
+    {
+      name: 'SPY provider error',
+      failure: () => Promise.reject(new MarketDataError('SPY', 'error')),
+      expected: { code: 'benchmark-unavailable', symbol: 'SPY', cause: 'error' },
+    },
+    {
+      name: 'SPY empty series',
+      failure: () => Promise.resolve([]),
+      expected: { code: 'benchmark-unavailable', symbol: 'SPY', cause: 'empty' },
+    },
+    {
+      name: 'SPY missing the latest ticker session',
+      failure: () => Promise.resolve(benchmarkFor([{ date: new Date('2026-10-02T00:00:00Z') }])),
+      expected: { code: 'benchmark-unavailable', symbol: 'SPY', cause: 'missing-latest-session' },
+    },
+  ])('reports $name as benchmark-unavailable, never HOLD', async ({ failure, expected }) => {
+    vi.mocked(fetchBenchmarkPrices).mockImplementation(failure as never);
+    const onUnavailable = vi.fn();
+
+    expect(await analyzeTickerContext('VALID', null, { onUnavailable })).toBeNull();
+    expect(onUnavailable).toHaveBeenCalledExactlyOnceWith({
+      ...expected,
+      rows: 1,
+      latestSession: '2026-10-05',
+    });
+    expect(fetchBenchmarkPrices).toHaveBeenCalledWith('SPY', 730, { strict: true });
+    expect(getEarningsData).not.toHaveBeenCalled();
+  });
+
+  it('requires enough benchmark bars for the long RS lookback once the ticker has them', async () => {
+    const prices = sessions(210);
+    vi.mocked(getHistoricalPrices).mockResolvedValue(prices);
+    vi.mocked(fetchBenchmarkPrices).mockResolvedValue(benchmarkFor(prices.slice(-100)));
+    const onUnavailable = vi.fn();
+
+    expect(await analyzeTickerContext('VALID', null, { onUnavailable })).toBeNull();
+    expect(onUnavailable).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ code: 'benchmark-unavailable', cause: 'insufficient-bars' })
+    );
+  });
+
+  it('reports a sector ETF failure with the sector symbol', async () => {
+    vi.mocked(fetchBenchmarkPrices).mockImplementation(async (symbol) => {
+      if (symbol === 'XLK') throw new MarketDataError('XLK', 'rate-limited');
+      return benchmarkFor([bar]);
+    });
+    const onUnavailable = vi.fn();
+
+    expect(await analyzeTickerContext('VALID', null, { onUnavailable })).toBeNull();
+    expect(onUnavailable).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        code: 'benchmark-unavailable',
+        symbol: 'XLK',
+        cause: 'rate-limited',
+      })
+    );
+  });
+
+  it('reports a ticker with no resolvable sector ETF as sector-benchmark-unavailable', async () => {
+    vi.mocked(getFundamentals).mockResolvedValue({ sector: 'Shipping Containers' } as never);
+    const onUnavailable = vi.fn();
+
+    expect(await analyzeTickerContext('UNMAPPED', null, { onUnavailable })).toBeNull();
+    expect(onUnavailable).toHaveBeenCalledExactlyOnceWith({
+      code: 'sector-benchmark-unavailable',
+      rows: 1,
+      cause: 'unmapped-sector',
+      latestSession: '2026-10-05',
+    });
+    expect(fetchBenchmarkPrices).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['Financial Services', 'XLF'],
+    ['Consumer Cyclical', 'XLY'],
+    ['Consumer Defensive', 'XLP'],
+    ['Basic Materials', 'XLB'],
+  ])(
+    'resolves the Yahoo sector name %s to %s for tickers outside the universe',
+    async (sector, etf) => {
+      vi.mocked(getFundamentals).mockResolvedValue({ sector } as never);
+
+      const context = await analyzeTickerContext('UNMAPPED', null);
+      expect(context?.sectorETF).toBe(etf);
+      expect(context?.result.sectorEtf).toBe(etf);
+      expect(fetchBenchmarkPrices).toHaveBeenCalledWith(etf, 730, { strict: true });
+    }
+  );
+
+  it('prefers the validated universe mapping over the provider sector name', async () => {
+    // INTC is mapped to XLK in TICKER_SECTOR_ETF even if Yahoo reports another sector.
+    vi.mocked(getFundamentals).mockResolvedValue({ sector: 'Consumer Cyclical' } as never);
+
+    const context = await analyzeTickerContext('INTC', null);
+    expect(context?.sectorETF).toBe('XLK');
+    expect(fetchBenchmarkPrices).toHaveBeenCalledWith('XLK', 730, { strict: true });
+  });
+
+  it('flags a ticker whose latest session is older than SPY as stale-session', async () => {
+    vi.mocked(fetchBenchmarkPrices).mockResolvedValue(
+      benchmarkFor([bar, { date: new Date('2026-10-06T00:00:00.000Z') }])
+    );
+    const onUnavailable = vi.fn();
+
+    expect(await analyzeTickerContext('VALID', null, { onUnavailable })).toBeNull();
+    expect(onUnavailable).toHaveBeenCalledExactlyOnceWith({
+      code: 'stale-session',
+      rows: 1,
+      latestSession: '2026-10-05',
+      benchmarkSession: '2026-10-06',
+    });
+    expect(getEarningsData).not.toHaveBeenCalled();
+  });
+});
+
+describe('live and validated rule parity', () => {
+  it('never emits BUY from the short-history fallback and names the reason', async () => {
+    // A single bar with strong flow would score as a BUY on the unvalidated path.
+    vi.mocked(getHistoricalPrices).mockResolvedValue([
+      { ...bar, high: 110, low: 99.5, close: 100, dollarVolume: 100_000_000 },
+    ]);
+    const context = await analyzeTickerContext('VALID', null);
+
+    expect(context).not.toBeNull();
+    expect(context?.pipelineResult.finalDecision).not.toBe('BUY');
+    expect(context?.result.checks?.[0]).toEqual({
+      gate: 'insufficient-history',
+      id: 'sessions',
+      passed: false,
+      value: 1,
+      limit: 210,
+      comparator: '>=',
+    });
+  });
+
+  it('keeps live earnings evidence out of the decision and exposes it as context', async () => {
+    const prices = sessions(210);
+    vi.mocked(getHistoricalPrices).mockResolvedValue(prices);
+    vi.mocked(fetchBenchmarkPrices).mockResolvedValue(benchmarkFor(prices));
+    vi.mocked(getEarningsData).mockResolvedValue({
+      earningsHistory: [{ epsActual: 3, epsEstimate: 2 }],
+      estimateRevisions: { direction: 'up' },
+    } as never);
+
+    const context = await analyzeTickerContext('VALID', null);
+    expect(context?.earningsEvidence).toEqual({ beat: true, estimateUp: true });
+    expect(context?.result.earningsEvidence).toEqual({ beat: true, estimateUp: true });
+    // Validated neutral value: earningsBeat === null scores 0.3 on every bar.
+    expect(context?.pipelineResult.gateResults.institutional.components.earnings).toBe(0.3);
+    expect(context?.result).toMatchObject({
+      buyScore: context?.pipelineResult.buyScore,
+      sellScore: context?.pipelineResult.sellScore,
+      blockedBy: context?.pipelineResult.blockedBy ?? null,
+    });
+    expect(context?.result.checks).toEqual(context?.pipelineResult.checks);
   });
 });

@@ -9,7 +9,13 @@ vi.mock('@/services/tiingo', () => ({
   fetchTiingoDaily: vi.fn(),
 }));
 
-import { fetchBenchmarkPrices, getHistoricalPrices } from '@/services/data-fetcher';
+import {
+  classifyProviderError,
+  fetchBenchmarkPrices,
+  getHistoricalPrices,
+  getHistoricalPricesDetailed,
+  MarketDataError,
+} from '@/services/data-fetcher';
 import { fetchTiingoDaily, isTiingoConfigured } from '@/services/tiingo';
 import { fetchYahooDaily } from '@/services/yahoo-finance';
 
@@ -151,5 +157,52 @@ describe('getHistoricalPrices fallback chain', () => {
 
     expect(rows[0]).toEqual(rows[1]);
     expect(mockedHistorical).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('strict benchmark fetches', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('throws a typed rate-limit error after Yahoo 429 and the Tiingo fallback both fail', async () => {
+    mockedHistorical.mockRejectedValue(
+      Object.assign(new Error('Too Many Requests'), { status: 429 })
+    );
+    mockedIsConfigured.mockReturnValue(true);
+    mockedFetchTiingo.mockRejectedValue(new Error('quota'));
+
+    const error = await fetchBenchmarkPrices('LIMITED', 730, { strict: true }).catch((e) => e);
+    expect(error).toBeInstanceOf(MarketDataError);
+    expect(error).toMatchObject({
+      name: 'RateLimitError',
+      symbol: 'LIMITED',
+      failure: 'rate-limited',
+    });
+    // Non-strict callers keep the legacy empty-series contract.
+    expect(await fetchBenchmarkPrices('LIMITED', 730)).toEqual([]);
+  });
+
+  it('distinguishes an empty series from a provider error', async () => {
+    mockedHistorical.mockResolvedValue([] as never);
+    mockedIsConfigured.mockReturnValue(false);
+    await expect(fetchBenchmarkPrices('EMPTY', 730, { strict: true })).rejects.toMatchObject({
+      failure: 'empty',
+      name: 'MarketDataError',
+    });
+
+    mockedHistorical.mockRejectedValue(new Error('socket hang up'));
+    await expect(fetchBenchmarkPrices('BROKEN', 730, { strict: true })).rejects.toMatchObject({
+      failure: 'error',
+    });
+    expect(await getHistoricalPricesDetailed('BROKEN', 30)).toEqual({ rows: [], failure: 'error' });
+  });
+
+  it('classifies 429 responses and rate-limit wording as rate-limited', () => {
+    expect(classifyProviderError({ response: { status: 429 } })).toBe('rate-limited');
+    expect(classifyProviderError(new Error('HTTP 429 returned'))).toBe('rate-limited');
+    expect(classifyProviderError(new Error('rate limit exceeded'))).toBe('rate-limited');
+    expect(classifyProviderError(new Error('ECONNRESET'))).toBe('error');
+    expect(classifyProviderError(null)).toBe('error');
   });
 });

@@ -1,11 +1,16 @@
-import { MARKET_BENCHMARK, SECTOR_ETF_MAP } from '@/constants';
-import { TICKER_SECTOR_ETF } from '@/constants/tickers';
+import { MARKET_BENCHMARK, sectorEtfFor } from '@/constants';
 import {
   buildTickerContext,
   type Candle,
   evaluateLatestSignalWithContext,
 } from '@/optimization/engine';
-import { fetchBenchmarkPrices, getHistoricalPrices } from '@/services/data-fetcher';
+import {
+  classifyProviderError,
+  fetchBenchmarkPrices,
+  getHistoricalPrices,
+  MarketDataError,
+  type MarketDataFailureCause,
+} from '@/services/data-fetcher';
 import { getEarningsData } from '@/services/earnings';
 import { getFundamentals } from '@/services/fundamentals';
 import { gaussianChannel } from '@/services/gaussian-channel';
@@ -19,10 +24,20 @@ import type {
   CandleData,
   PipelineConfig,
   PipelineResult,
+  SignalCheck,
   TickerResult,
 } from '@/types';
 import { isLeaderPullbackPipelineConfig, loadPipelineConfig } from '@/utils/config-loader';
 import { tradingDaysUntil } from '@/utils/trading-days';
+
+/** Sessions the shared causal evaluator needs before it can replay setup state. */
+export const MIN_REPLAY_SESSIONS = 210;
+const DEFAULT_LOOKBACK_DAYS = 730;
+
+export interface EarningsEvidence {
+  beat: boolean | null;
+  estimateUp: boolean | null;
+}
 
 export interface TickerAnalysisContext {
   result: TickerResult;
@@ -32,18 +47,44 @@ export interface TickerAnalysisContext {
   sectorCandles: BenchmarkCandle[];
   sectorETF: string | null;
   config: PipelineConfig;
+  /** Live provider earnings evidence; context only, never part of the decision. */
+  earningsEvidence?: EarningsEvidence;
 }
 
 export type TickerAnalysisUnavailableCode =
   | 'history-unavailable'
   | 'invalid-price-or-atr'
-  | 'risk-levels-infeasible';
+  | 'risk-levels-infeasible'
+  /** SPY or the sector ETF series is missing, short, or lacks the ticker's latest session. */
+  | 'benchmark-unavailable'
+  /** No sector ETF resolves for the ticker (unknown provider sector, outside the universe). */
+  | 'sector-benchmark-unavailable'
+  /** The ticker's latest completed session is older than SPY's latest completed session. */
+  | 'stale-session';
+
+export type TickerAnalysisUnavailableCause =
+  | MarketDataFailureCause
+  | 'missing-latest-session'
+  | 'insufficient-bars'
+  | 'unmapped-sector';
 
 export interface TickerAnalysisUnavailable {
   code: TickerAnalysisUnavailableCode;
   rows: number;
   close?: number;
   atr?: number;
+  /**
+   * Why the input is unusable. Provider causes ('rate-limited' | 'empty' |
+   * 'error') are reported after the Tiingo fallback also failed, so a screening
+   * loop can pause on rate limits instead of counting HOLDs.
+   */
+  cause?: TickerAnalysisUnavailableCause;
+  /** Benchmark symbol the failure refers to. */
+  symbol?: string;
+  /** Ticker's latest completed session (YYYY-MM-DD). */
+  latestSession?: string;
+  /** SPY's latest completed session (YYYY-MM-DD) when it is newer than the ticker's. */
+  benchmarkSession?: string;
 }
 
 export interface TickerAnalysisOptions {
@@ -77,19 +118,59 @@ function reportUnavailableRisk(
   });
 }
 
+function sessionOf(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+type BenchmarkOutcome =
+  | { ok: true; candles: BenchmarkCandle[]; latestSession: string | null }
+  | { ok: false; cause: TickerAnalysisUnavailableCause };
+
+/**
+ * Fetch a benchmark on the decision path. Provider failures surface with their
+ * cause instead of degrading to an empty series; a series that lacks the ticker's
+ * latest session or enough bars for the long RS lookback is equally unusable.
+ */
+async function loadBenchmark(
+  symbol: string,
+  lookbackDays: number,
+  tickerSession: string,
+  minBars: number
+): Promise<BenchmarkOutcome> {
+  let prices: BenchmarkCandle[];
+  try {
+    prices = await fetchBenchmarkPrices(symbol, lookbackDays, { strict: true });
+  } catch (error) {
+    return {
+      ok: false,
+      cause: error instanceof MarketDataError ? error.failure : classifyProviderError(error),
+    };
+  }
+  if (prices.length === 0) return { ok: false, cause: 'empty' };
+  const candles = prices.filter((candle) => sessionOf(candle.date) <= tickerSession);
+  const last = candles.at(-1);
+  if (!last || sessionOf(last.date) !== tickerSession) {
+    return { ok: false, cause: 'missing-latest-session' };
+  }
+  if (candles.length <= minBars) return { ok: false, cause: 'insufficient-bars' };
+  return { ok: true, candles, latestSession: sessionOf(prices[prices.length - 1].date) };
+}
+
 export async function analyzeTickerContext(
   ticker: string,
   fearGreed: number | null,
   options: TickerAnalysisOptions = {}
 ): Promise<TickerAnalysisContext | null> {
-  const dailyPrices = await getHistoricalPrices(ticker, options.lookbackDays ?? 730);
+  const lookbackDays = options.lookbackDays ?? DEFAULT_LOOKBACK_DAYS;
+  const dailyPrices = await getHistoricalPrices(ticker, lookbackDays);
   if (dailyPrices.length === 0) {
     emitUnavailable(options, { code: 'history-unavailable', rows: 0 });
     return null;
   }
 
   const latest = dailyPrices[dailyPrices.length - 1];
-  const dateStr = latest.date.toISOString().split('T')[0];
+  const dateStr = sessionOf(latest.date);
+  const rows = dailyPrices.length;
   const closes = dailyPrices.map((d) => d.close);
   const highs = dailyPrices.map((d) => d.high);
   const lows = dailyPrices.map((d) => d.low);
@@ -98,7 +179,7 @@ export async function analyzeTickerContext(
   let indicators = calculateAllIndicators({ closes, highs, lows, volumes });
   let riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
   if (!riskLevels) {
-    reportUnavailableRisk(options, dailyPrices.length, latest.close, indicators.atr);
+    reportUnavailableRisk(options, rows, latest.close, indicators.atr);
     return null;
   }
   if (options.pipelineConfig && !isLeaderPullbackPipelineConfig(options.pipelineConfig)) {
@@ -107,6 +188,69 @@ export async function analyzeTickerContext(
   const pipelineConfig = options.pipelineConfig
     ? structuredClone(options.pipelineConfig)
     : await loadPipelineConfig();
+
+  // Benchmarks are decision inputs: the leader-pullback gate needs market and
+  // sector relative strength on the ticker's own latest session. A missing,
+  // short, or stale benchmark makes the analysis unavailable, never a HOLD.
+  // The RS bar requirement only applies once the ticker itself has that history.
+  const rsLookback = pipelineConfig.institutional.rsLookback.long;
+  const minBenchmarkBars = rows > rsLookback ? rsLookback : 0;
+  const spy = await loadBenchmark(MARKET_BENCHMARK, lookbackDays, dateStr, minBenchmarkBars);
+  if (!spy.ok) {
+    emitUnavailable(options, {
+      code: 'benchmark-unavailable',
+      rows,
+      symbol: MARKET_BENCHMARK,
+      cause: spy.cause,
+      latestSession: dateStr,
+    });
+    return null;
+  }
+  if (spy.latestSession !== null && spy.latestSession > dateStr) {
+    // The provider dropped or has not published the ticker's latest session. A
+    // decision on the prior bar would label an entry "next open" one session late.
+    emitUnavailable(options, {
+      code: 'stale-session',
+      rows,
+      latestSession: dateStr,
+      benchmarkSession: spy.latestSession,
+    });
+    return null;
+  }
+  const spyCandles = spy.candles;
+  const marketUptrend =
+    spyCandles.length >= 2
+      ? gaussianChannel(spyCandles.map((candle) => candle.close)).isGreen
+      : null;
+
+  let sector: string | null = null;
+  try {
+    sector = (await getFundamentals(ticker))?.sector ?? null;
+  } catch {
+    /* sector evidence unavailable; the validated universe map may still resolve */
+  }
+  const sectorETF = sectorEtfFor(ticker, sector);
+  if (!sectorETF) {
+    emitUnavailable(options, {
+      code: 'sector-benchmark-unavailable',
+      rows,
+      cause: 'unmapped-sector',
+      latestSession: dateStr,
+    });
+    return null;
+  }
+  const sectorOutcome = await loadBenchmark(sectorETF, lookbackDays, dateStr, minBenchmarkBars);
+  if (!sectorOutcome.ok) {
+    emitUnavailable(options, {
+      code: 'benchmark-unavailable',
+      rows,
+      symbol: sectorETF,
+      cause: sectorOutcome.cause,
+      latestSession: dateStr,
+    });
+    return null;
+  }
+  const sectorCandles = sectorOutcome.candles;
 
   const { score: patternScore, patterns: detectedPatterns } = detectPatterns(
     { highs: highs.slice(-50), lows: lows.slice(-50), closes: closes.slice(-50) },
@@ -123,75 +267,54 @@ export async function analyzeTickerContext(
 
   const recentMacdHistogram = calcRecentMacdHistogram(closes);
 
-  // Institutional flow inputs — market + sector relative strength, liquidity,
-  // and current earnings revision direction (historical backtests omit unavailable
-  // point-in-time earnings data; without the benchmark inputs
-  // rsSpy/rsSector stay 0 and the leader-pullback gate would block everything).
-  const spyPrices =
-    options.lookbackDays === undefined
-      ? await fetchBenchmarkPrices(MARKET_BENCHMARK)
-      : await fetchBenchmarkPrices(MARKET_BENCHMARK, options.lookbackDays);
-  const spyCandles = spyPrices.filter(
-    (candle) => candle.date.toISOString().slice(0, 10) <= dateStr
-  );
-  const marketUptrend =
-    spyCandles.length >= 2
-      ? gaussianChannel(spyCandles.map((candle) => candle.close)).isGreen
-      : null;
-  let sectorETF: string | null = TICKER_SECTOR_ETF[ticker] ?? null;
-  let sector: string | null = null;
-  try {
-    const fund = await getFundamentals(ticker);
-    sector = fund?.sector ?? null;
-    if (fund?.sector && SECTOR_ETF_MAP[fund.sector]) {
-      sectorETF = SECTOR_ETF_MAP[fund.sector];
-    }
-  } catch {
-    /* retain the known ticker-sector mapping, or leave sector evidence unavailable */
-  }
-  const sectorPrices = sectorETF
-    ? options.lookbackDays === undefined
-      ? await fetchBenchmarkPrices(sectorETF)
-      : await fetchBenchmarkPrices(sectorETF, options.lookbackDays)
-    : [];
-  const sectorCandles = sectorPrices.filter(
-    (candle) => candle.date.toISOString().slice(0, 10) <= dateStr
-  );
-
   const recent20 = dailyPrices.slice(-20);
   const avgDailyDollarVol =
     recent20.reduce((s, d) => s + (d.dollarVolume ?? d.close * d.volume), 0) / recent20.length;
+  const nominalClose =
+    latest.dollarVolume !== undefined && latest.volume > 0
+      ? latest.dollarVolume / latest.volume
+      : latest.close;
 
-  let earningsBeat: boolean | null = null;
-  let earningsEstimateUp: boolean | null = null;
+  // Live earnings evidence is context only. The validated measurement scored
+  // every bar at the neutral earnings value (no point-in-time history exists),
+  // so the decision below is made without it.
+  const earningsEvidence: EarningsEvidence = { beat: null, estimateUp: null };
   let nextEarningsDate: Date | null = null;
   try {
     const earningsInfo = await getEarningsData(ticker);
     nextEarningsDate = earningsInfo?.nextEarningsDate ?? null;
     const revisionDirection = earningsInfo?.estimateRevisions?.direction;
-    earningsEstimateUp =
+    earningsEvidence.estimateUp =
       revisionDirection === 'up' ? true : revisionDirection === 'down' ? false : null;
     const hist = earningsInfo?.earningsHistory;
     if (hist && hist.length > 0) {
       const last = hist[hist.length - 1];
       if (last.epsActual != null && last.epsEstimate != null) {
-        earningsBeat = last.epsActual > last.epsEstimate;
+        earningsEvidence.beat = last.epsActual > last.epsEstimate;
       }
     }
   } catch {
-    /* fallback */
+    /* earnings context unavailable */
   }
 
   const historicalContext = buildTickerContext(dailyPrices, spyCandles, sectorCandles);
   const replayed = historicalContext
-    ? evaluateLatestSignalWithContext(historicalContext, ticker, pipelineConfig, {
-        earningsBeat,
-        earningsEstimateUp,
-      })
+    ? evaluateLatestSignalWithContext(historicalContext, ticker, pipelineConfig)
     : null;
-  const pipelineResult =
-    replayed?.pipelineResult ??
-    evaluateSignal({
+  let pipelineResult: PipelineResult;
+  if (replayed) {
+    pipelineResult = replayed.pipelineResult;
+    indicators = replayed.indicators;
+    riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
+    if (!riskLevels) {
+      reportUnavailableRisk(options, rows, latest.close, indicators.atr);
+      return null;
+    }
+  } else {
+    // Fewer than MIN_REPLAY_SESSIONS sessions: no cluster state can be replayed,
+    // so this path is unvalidated. Scores and gates are still reported for
+    // context, but it never emits a BUY.
+    const fallback = evaluateSignal({
       ticker,
       indicators,
       close: latest.close,
@@ -210,18 +333,26 @@ export async function analyzeTickerContext(
       spyCandles,
       sectorCandles,
       avgDailyDollarVol,
-      earningsBeat,
-      earningsEstimateUp,
+      nominalClose,
       marketUptrend,
       currentDate: latest.date,
     });
-  if (replayed) {
-    indicators = replayed.indicators;
-    riskLevels = calculateLongRiskLevels(latest.close, indicators.atr);
-    if (!riskLevels) {
-      reportUnavailableRisk(options, dailyPrices.length, latest.close, indicators.atr);
-      return null;
-    }
+    const historyCheck: SignalCheck = {
+      gate: 'insufficient-history',
+      id: 'sessions',
+      passed: false,
+      value: rows,
+      limit: MIN_REPLAY_SESSIONS,
+      comparator: '>=',
+    };
+    pipelineResult = {
+      ...fallback,
+      ...(fallback.finalDecision === 'BUY'
+        ? { finalDecision: 'HOLD', score: fallback.buyScore, confidence: 0 }
+        : {}),
+      blockedBy: fallback.finalDecision === 'BUY' ? 'insufficient-history' : fallback.blockedBy,
+      checks: [historyCheck, ...(fallback.checks ?? [])],
+    };
   }
   const patterns = replayed?.patterns ?? detectedPatterns;
 
@@ -265,6 +396,13 @@ export async function analyzeTickerContext(
     sector,
     nextEarningsDate: nextEarningsDate ? nextEarningsDate.toISOString().split('T')[0] : null,
     daysToEarnings: nextEarningsDate ? tradingDaysUntil(nextEarningsDate) : null,
+    buyScore,
+    sellScore,
+    blockedBy: pipelineResult.blockedBy ?? null,
+    checks: pipelineResult.checks ?? [],
+    cluster: pipelineResult.cluster ?? null,
+    earningsEvidence,
+    sectorEtf: sectorETF,
   };
   return {
     result,
@@ -274,6 +412,7 @@ export async function analyzeTickerContext(
     sectorCandles,
     sectorETF,
     config: pipelineConfig,
+    earningsEvidence,
   };
 }
 

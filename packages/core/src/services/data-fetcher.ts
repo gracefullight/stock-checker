@@ -46,28 +46,101 @@ function shouldRetry(error: unknown): boolean {
   return false;
 }
 
-export async function getHistoricalPrices(symbol: string, daysAgo = 365) {
+/** Why a provider chain produced no usable rows, after every fallback was tried. */
+export type MarketDataFailureCause = 'rate-limited' | 'empty' | 'error';
+
+export type HistoricalRow =
+  | Awaited<ReturnType<typeof fetchYahooDaily>>[number]
+  | Awaited<ReturnType<typeof fetchTiingoDaily>>[number];
+
+export interface HistoricalPricesResult {
+  rows: HistoricalRow[];
+  /** Null when rows were returned; otherwise the most specific failure observed. */
+  failure: MarketDataFailureCause | null;
+}
+
+/** Typed provider failure so callers can tell a 429 from an empty series. */
+export class MarketDataError extends Error {
+  readonly symbol: string;
+  readonly failure: MarketDataFailureCause;
+
+  constructor(symbol: string, failure: MarketDataFailureCause, cause?: unknown) {
+    super(
+      failure === 'rate-limited'
+        ? `Market data provider rate-limited ${symbol}`
+        : failure === 'empty'
+          ? `Market data provider returned no rows for ${symbol}`
+          : `Market data request failed for ${symbol}`,
+      cause === undefined ? undefined : { cause }
+    );
+    // 'RateLimitError' is the name the screening pause detector recognizes.
+    this.name = failure === 'rate-limited' ? 'RateLimitError' : 'MarketDataError';
+    this.symbol = symbol;
+    this.failure = failure;
+  }
+}
+
+/** Classify a provider error; HTTP 429 and rate-limit wording count as rate-limited. */
+export function classifyProviderError(error: unknown): MarketDataFailureCause {
+  if (!error || typeof error !== 'object') return 'error';
+  const value = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    response?: { status?: unknown };
+    name?: unknown;
+    message?: unknown;
+  };
+  return value.status === 429 ||
+    value.statusCode === 429 ||
+    value.response?.status === 429 ||
+    value.name === 'RateLimitError' ||
+    (typeof value.message === 'string' &&
+      /\b429\b|too many requests|rate.limit/i.test(value.message))
+    ? 'rate-limited'
+    : 'error';
+}
+
+/**
+ * Yahoo first, then Tiingo when a key is provisioned. Never throws: the result
+ * carries the failure cause so callers can report rate limits distinctly.
+ */
+export async function getHistoricalPricesDetailed(
+  symbol: string,
+  daysAgo = 365
+): Promise<HistoricalPricesResult> {
   const end = DateTime.now();
   const start = end.minus({ days: daysAgo });
+  let failure: MarketDataFailureCause = 'empty';
 
   try {
     const rows = await fetchYahooDaily(symbol, start.toJSDate(), end.toJSDate());
-    if (rows.length > 0) return rows;
+    if (rows.length > 0) return { rows, failure: null };
     logger.warn({ symbol }, 'Yahoo returned no historical prices');
   } catch (error) {
-    logger.error({ error, symbol }, 'Failed to fetch historical prices from Yahoo');
+    failure = classifyProviderError(error);
+    logger.error({ error, symbol, failure }, 'Failed to fetch historical prices from Yahoo');
   }
 
   // Fallback: Tiingo daily candles when a key is provisioned (Yahoo rate-limits
   // aggressively); without a key, degrade to [] as before.
   if (isTiingoConfigured()) {
     try {
-      return await fetchTiingoDaily(symbol, daysAgo);
+      const rows = await fetchTiingoDaily(symbol, daysAgo);
+      if (rows.length > 0) return { rows, failure: null };
+      logger.warn({ symbol }, 'Tiingo returned no historical prices');
+      if (failure !== 'rate-limited') failure = 'empty';
     } catch (error) {
-      logger.error({ error, symbol }, 'Tiingo fallback failed');
+      const tiingoFailure = classifyProviderError(error);
+      logger.error({ error, symbol, failure: tiingoFailure }, 'Tiingo fallback failed');
+      // A rate limit on either provider is the actionable cause.
+      if (failure !== 'rate-limited') failure = tiingoFailure;
     }
   }
-  return [];
+  return { rows: [], failure };
+}
+
+export async function getHistoricalPrices(symbol: string, daysAgo = 365) {
+  return (await getHistoricalPricesDetailed(symbol, daysAgo)).rows;
 }
 
 const BENCHMARK_TTL_MS = 5 * 60 * 1_000;
@@ -79,11 +152,24 @@ const benchmarkCache = new Map<
     calendarDate: string | null;
   }
 >();
-const benchmarkInFlight = new Map<string, Promise<BenchmarkCandle[]>>();
+const benchmarkInFlight = new Map<
+  string,
+  Promise<{ candles: BenchmarkCandle[]; failure: MarketDataFailureCause | null }>
+>();
+
+export interface BenchmarkFetchOptions {
+  /**
+   * Throw a `MarketDataError` (with the failure cause) instead of returning []
+   * when every provider failed. Decision paths use this so a missing benchmark
+   * is reported as unavailable rather than evaluated as a HOLD.
+   */
+  strict?: boolean;
+}
 
 export async function fetchBenchmarkPrices(
   symbol: string,
-  daysAgo = 730
+  daysAgo = 730,
+  options: BenchmarkFetchOptions = {}
 ): Promise<BenchmarkCandle[]> {
   const key = JSON.stringify([symbol, daysAgo]);
   const calendarDate = DateTime.now().setZone('America/New_York').toISODate();
@@ -92,32 +178,34 @@ export async function fetchBenchmarkPrices(
     return cached.candles;
   }
   benchmarkCache.delete(key);
-  const inFlight = benchmarkInFlight.get(key);
-  if (inFlight) return inFlight;
-
-  const request = (async () => {
-    const raw = await getHistoricalPrices(symbol, daysAgo);
-    const candles: BenchmarkCandle[] = raw.map((d) => ({
-      date: d.date,
-      // Adapters return coherent adjusted OHLC, or coherent raw OHLC when
-      // adjustment fields are unavailable; never replace just the close.
-      close: d.close,
-      volume: d.volume,
-      high: d.high,
-      low: d.low,
-    }));
-    if (candles.length > 0) {
-      benchmarkCache.set(key, {
-        candles,
-        calendarDate,
-        expiresAt: Date.now() + BENCHMARK_TTL_MS,
-      });
-    }
-    return candles;
-  })();
-  benchmarkInFlight.set(key, request);
+  let request = benchmarkInFlight.get(key);
+  if (!request) {
+    request = (async () => {
+      const { rows, failure } = await getHistoricalPricesDetailed(symbol, daysAgo);
+      const candles: BenchmarkCandle[] = rows.map((d) => ({
+        date: d.date,
+        // Adapters return coherent adjusted OHLC, or coherent raw OHLC when
+        // adjustment fields are unavailable; never replace just the close.
+        close: d.close,
+        volume: d.volume,
+        high: d.high,
+        low: d.low,
+      }));
+      if (candles.length > 0) {
+        benchmarkCache.set(key, {
+          candles,
+          calendarDate,
+          expiresAt: Date.now() + BENCHMARK_TTL_MS,
+        });
+      }
+      return { candles, failure };
+    })();
+    benchmarkInFlight.set(key, request);
+  }
   try {
-    return await request;
+    const { candles, failure } = await request;
+    if (options.strict && failure !== null) throw new MarketDataError(symbol, failure);
+    return candles;
   } finally {
     benchmarkInFlight.delete(key);
   }

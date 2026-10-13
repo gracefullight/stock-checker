@@ -59,33 +59,67 @@ export async function fetchYahooDaily(
     : null;
   const sessionIsOpen = regularSession && Date.now() < regularSession.end.getTime();
   const rows = new Map<string, YahooDailyRow>();
+  // Every rejected bar is logged with its reason so a silently missing latest
+  // session (decision made on the prior bar) can be diagnosed. Expected drops
+  // (the in-progress session, bars after the requested window) log at debug.
+  const drop = (q: (typeof quotes)[number], reason: string, expected = false) => {
+    const date = q.date instanceof Date && Number.isFinite(q.date.getTime()) ? q.date : null;
+    stderrLogger[expected ? 'debug' : 'info'](
+      { symbol, date: date?.toISOString() ?? null, reason },
+      'Dropped daily bar'
+    );
+  };
   for (const q of quotes) {
-    if (
-      q.close == null ||
-      q.open == null ||
-      q.high == null ||
-      q.low == null ||
-      ![q.open, q.high, q.low, q.close].every((v) => Number.isFinite(v) && v > 0) ||
-      q.high < Math.max(q.open, q.close) ||
-      q.low > Math.min(q.open, q.close) ||
-      !(q.date instanceof Date) ||
-      !Number.isFinite(q.date.getTime()) ||
-      q.date.getTime() > Math.min(Date.now(), period2.getTime())
-    )
+    if (!(q.date instanceof Date) || !Number.isFinite(q.date.getTime())) {
+      drop(q, 'invalid-date');
       continue;
+    }
+    if (q.date.getTime() > Math.min(Date.now(), period2.getTime())) {
+      drop(q, 'after-window', true);
+      continue;
+    }
+    if (q.close == null || q.open == null || q.high == null || q.low == null) {
+      // Yahoo appends the live in-progress bar with null close on trading days.
+      drop(q, 'incomplete-ohlc', sessionIsOpen === true);
+      continue;
+    }
+    if (![q.open, q.high, q.low, q.close].every((v) => Number.isFinite(v) && v > 0)) {
+      drop(q, 'nonpositive-ohlc');
+      continue;
+    }
+    if (q.high < Math.max(q.open, q.close) || q.low > Math.min(q.open, q.close)) {
+      drop(q, 'inconsistent-ohlc-range');
+      continue;
+    }
 
     const sessionDate = DateTime.fromJSDate(q.date, { zone: timezone }).toISODate();
-    if (!sessionDate || (sessionIsOpen && sessionDate === openSessionDate)) continue;
+    if (!sessionDate) {
+      drop(q, 'invalid-session-date');
+      continue;
+    }
+    if (sessionIsOpen && sessionDate === openSessionDate) {
+      drop(q, 'session-in-progress', true);
+      continue;
+    }
     const close = q.adjclose ?? q.close;
     const volume = q.volume ?? 0;
-    if (!Number.isFinite(close) || close <= 0 || !Number.isFinite(volume) || volume < 0) continue;
+    if (!Number.isFinite(close) || close <= 0 || !Number.isFinite(volume) || volume < 0) {
+      drop(q, 'invalid-adjclose-or-volume');
+      continue;
+    }
     const dollarVolume = q.close * volume;
-    if (!Number.isFinite(dollarVolume)) continue;
+    if (!Number.isFinite(dollarVolume)) {
+      drop(q, 'nonfinite-dollar-volume');
+      continue;
+    }
     const factor = close / q.close;
     const open = q.open * factor;
     const high = q.high * factor;
     const low = q.low * factor;
-    if (![open, high, low].every((v) => Number.isFinite(v) && v > 0)) continue;
+    if (![open, high, low].every((v) => Number.isFinite(v) && v > 0)) {
+      drop(q, 'nonfinite-adjusted-ohlc');
+      continue;
+    }
 
     rows.set(sessionDate, {
       date: new Date(`${sessionDate}T00:00:00.000Z`),

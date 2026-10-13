@@ -10,6 +10,7 @@ import {
 import { gateReasons } from '@/reports/signal-reasons';
 import { fetchBenchmarkPrices, getHistoricalPrices } from '@/services/data-fetcher';
 import { type EarningsData, getEarningsData } from '@/services/earnings';
+import { getFundamentals } from '@/services/fundamentals';
 import { calculateAllIndicators } from '@/services/indicators';
 import { evaluateSignal } from '@/services/pipeline';
 import { analyzeTickerContext } from '@/services/ticker-analysis';
@@ -97,6 +98,39 @@ const pipelineResult: PipelineResult = {
     },
   },
 };
+/** Flat benchmark aligned to the ticker's sessions so RS evidence is available. */
+function benchmarkFor(prices: ReadonlyArray<{ date: Date }>) {
+  return prices.map(({ date }) => ({ date, close: 100, high: 101, low: 99, volume: 1_000_000 }));
+}
+
+/**
+ * 211 sessions: a leader (strong run-up vs a flat benchmark) that pulls back
+ * below SMA50, bounces, and closes its last bar near the low after a long upper
+ * wick. Session 205 fires and is quality-blocked; the last session (2026-07-30)
+ * is the first one past the five-calendar-day window and qualifies as a BUY
+ * through the shared replay path.
+ */
+function leaderPullbackPrices() {
+  const peak = 190;
+  const downBars = 11;
+  return Array.from({ length: 211 }, (_, index) => {
+    let close: number;
+    if (index < peak) close = 100 + index * 0.6;
+    else if (index < peak + downBars) close = 100 + (peak - 1) * 0.6 - (index - peak + 1) * 1.5;
+    else close = 100 + (peak - 1) * 0.6 - downBars * 1.5 + (index - peak - downBars + 1) * 0.5;
+    const last = index === 210;
+    if (last) close -= 1.5;
+    return {
+      ...bar,
+      date: new Date(Date.UTC(2026, 0, index + 1)),
+      open: close + 1,
+      close,
+      high: close + (last ? 9 : 1),
+      low: close - 1,
+    };
+  });
+}
+
 const earnings: EarningsData = {
   ticker: 'TEST',
   nextEarningsDate: null,
@@ -142,7 +176,8 @@ beforeEach(() => {
     reason: 'not-configured',
   });
   vi.mocked(getHistoricalPrices).mockResolvedValue([bar]);
-  vi.mocked(fetchBenchmarkPrices).mockResolvedValue([]);
+  vi.mocked(fetchBenchmarkPrices).mockResolvedValue(benchmarkFor([bar]));
+  vi.mocked(getFundamentals).mockResolvedValue({ sector: 'Technology' } as never);
   vi.mocked(calculateAllIndicators).mockReturnValue(indicators);
   vi.mocked(evaluateSignal).mockReturnValue(pipelineResult);
   vi.mocked(getEarningsData).mockResolvedValue(earnings);
@@ -200,70 +235,59 @@ describe('equity prediction finance inputs', () => {
     expect(sendWhatsAppNotification).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { missingSector: false, expected: 'BUY' },
-    { missingSector: true, expected: 'HOLD' },
-  ] as const)(
-    'preserves actual leader-pullback engine decision $expected across CLI and shared analysis',
-    async ({ missingSector, expected }) => {
-      const { evaluateSignal: realEvaluateSignal } =
-        await vi.importActual<typeof import('@/services/pipeline')>('@/services/pipeline');
-      vi.mocked(evaluateSignal).mockImplementation(realEvaluateSignal);
-      const prices = Array.from({ length: 200 }, (_, index) => {
-        const close = 100 + index * 0.5;
-        return {
-          ...bar,
-          date: new Date(Date.UTC(2026, 0, index + 1)),
-          open: close + 1,
-          close,
-          high: close + (index === 199 ? 9 : 1),
-          low: close - 1,
-        };
-      });
-      const close = prices.at(-1)!.close;
-      vi.mocked(getHistoricalPrices).mockResolvedValue(prices);
-      vi.mocked(calculateAllIndicators).mockReturnValue({
-        ...indicators,
-        rsi: 55,
-        stochasticK: 55,
-        williamsR: -45,
-        sma50: close + 1,
-        sma200: 100,
-        volumeRatio: 1.1,
-        donchUpper: 250,
-      });
-      vi.mocked(getEarningsData).mockResolvedValue({
-        ...earnings,
-        earningsHistory: [],
-        estimateRevisions: null,
-      });
-      vi.mocked(fetchBenchmarkPrices).mockImplementation(async (ticker) =>
-        ticker === 'XLK' && missingSector
-          ? []
-          : prices.map((price) => ({ ...price, close: 100, high: 101, low: 99 }))
-      );
-      const context = await analyzeTickerContext('AAPL', 10);
-      expect(context?.pipelineResult.finalDecision).toBe(expected);
-      expect(context?.pipelineResult.qualityBlocked).toBe(missingSector ? true : undefined);
-      const actualEngineInput = vi.mocked(evaluateSignal).mock.calls[0][0];
-      vi.clearAllMocks();
+  it('preserves the actual leader-pullback engine BUY across CLI and shared analysis', async () => {
+    const { evaluateSignal: realEvaluateSignal } =
+      await vi.importActual<typeof import('@/services/pipeline')>('@/services/pipeline');
+    vi.mocked(evaluateSignal).mockImplementation(realEvaluateSignal);
+    const prices = leaderPullbackPrices();
+    vi.mocked(getHistoricalPrices).mockResolvedValue(prices);
+    vi.mocked(fetchBenchmarkPrices).mockResolvedValue(benchmarkFor(prices));
+    vi.mocked(getEarningsData).mockResolvedValue({
+      ...earnings,
+      earningsHistory: [],
+      estimateRevisions: null,
+    });
+    const context = await analyzeTickerContext('AAPL', 10);
+    expect(context?.pipelineResult.finalDecision).toBe('BUY');
+    expect(context?.result).toMatchObject({ opinion: 'BUY', blockedBy: null, date: '2026-07-30' });
+    expect(context?.result.checks?.every((check) => check.passed)).toBe(true);
+    // The shared replay evaluates every completed bar from session 205 onward.
+    const sharedInputs = vi.mocked(evaluateSignal).mock.calls.map(([input]) => input);
+    expect(sharedInputs.length).toBeGreaterThan(1);
+    vi.clearAllMocks();
 
-      await predict({ tickers: ['AAPL'], sort: 'asc', format: 'csv' });
+    await predict({ tickers: ['AAPL'], sort: 'asc', format: 'csv' });
 
-      expect(evaluateSignal).toHaveBeenCalledExactlyOnceWith(actualEngineInput);
-      expect(writeToCsv).toHaveBeenCalledExactlyOnceWith([context!.result]);
-      if (expected === 'BUY') {
-        expect(buildStockReportWhatsAppNotification).toHaveBeenCalledWith(
-          expect.objectContaining({
-            candidates: [expect.objectContaining({ context, gateReasons: gateReasons(context!) })],
-          }),
-          undefined
-        );
-      } else {
-        expect(sendWhatsAppNotification).not.toHaveBeenCalled();
-      }
-    }
-  );
+    expect(vi.mocked(evaluateSignal).mock.calls.map(([input]) => input)).toEqual(sharedInputs);
+    expect(writeToCsv).toHaveBeenCalledExactlyOnceWith([context!.result]);
+    expect(buildStockReportWhatsAppNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidates: [expect.objectContaining({ context, gateReasons: gateReasons(context!) })],
+      }),
+      undefined
+    );
+  });
+
+  it('reports a missing sector benchmark as unavailable instead of analyzing a HOLD', async () => {
+    const prices = leaderPullbackPrices();
+    vi.mocked(getHistoricalPrices).mockResolvedValue(prices);
+    vi.mocked(fetchBenchmarkPrices).mockImplementation(async (symbol) =>
+      symbol === 'XLK' ? [] : benchmarkFor(prices)
+    );
+    const onUnavailable = vi.fn();
+    expect(await analyzeTickerContext('AAPL', 10, { onUnavailable })).toBeNull();
+    expect(onUnavailable).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ code: 'benchmark-unavailable', symbol: 'XLK', cause: 'empty' })
+    );
+    expect(evaluateSignal).not.toHaveBeenCalled();
+    vi.clearAllMocks();
+
+    await predict({ tickers: ['AAPL'], sort: 'asc', format: 'csv' });
+
+    expect(evaluateSignal).not.toHaveBeenCalled();
+    expect(writeToCsv).toHaveBeenCalledExactlyOnceWith([]);
+    expect(sendWhatsAppNotification).not.toHaveBeenCalled();
+  });
 
   it('uses a caller-owned full config snapshot without reloading between cache key and analysis', async () => {
     const frozenConfig = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
@@ -377,7 +401,11 @@ describe('equity prediction finance inputs', () => {
             ]),
             context: expect.objectContaining({
               dailyPrices: [bar],
-              pipelineResult,
+              // The short-history path adds the structured insufficient-history check.
+              pipelineResult: expect.objectContaining({
+                ...pipelineResult,
+                checks: [expect.objectContaining({ gate: 'insufficient-history' })],
+              }),
               config: expect.objectContaining({ thresholds }),
               result: expect.objectContaining({ opinion: 'SELL', date: '2026-10-01' }),
             }),
@@ -456,12 +484,16 @@ describe('equity prediction finance inputs', () => {
     ]);
   });
 
-  it('uses a downward same-period estimate revision despite rising quarterly EPS estimates', async () => {
+  it('keeps live earnings evidence out of the decision and reports it as context', async () => {
     await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
 
-    expect(evaluateSignal).toHaveBeenCalledWith(
-      expect.objectContaining({ earningsBeat: true, earningsEstimateUp: false })
-    );
+    // Validated neutral scoring: the evaluator never receives live earnings inputs.
+    const [input] = vi.mocked(evaluateSignal).mock.calls[0];
+    expect(input).not.toHaveProperty('earningsBeat');
+    expect(input).not.toHaveProperty('earningsEstimateUp');
+    expect(writeToCsv).toHaveBeenCalledWith([
+      expect.objectContaining({ earningsEvidence: { beat: true, estimateUp: false } }),
+    ]);
   });
 
   it.each(['flat', null] as const)(
@@ -476,9 +508,9 @@ describe('equity prediction finance inputs', () => {
 
       await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
 
-      expect(evaluateSignal).toHaveBeenCalledWith(
-        expect.objectContaining({ earningsEstimateUp: null })
-      );
+      expect(writeToCsv).toHaveBeenCalledWith([
+        expect.objectContaining({ earningsEvidence: { beat: true, estimateUp: null } }),
+      ]);
     }
   );
 
@@ -490,11 +522,13 @@ describe('equity prediction finance inputs', () => {
     expect(writeToCsv).toHaveBeenCalledWith([]);
   });
 
-  it('does not reuse SPY as sector evidence when the ticker sector is unknown', async () => {
+  it('reports an unknown sector as unavailable instead of reusing SPY as sector evidence', async () => {
+    vi.mocked(getFundamentals).mockResolvedValue(null as never);
     await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
 
-    expect(fetchBenchmarkPrices).toHaveBeenCalledExactlyOnceWith('SPY');
-    expect(evaluateSignal).toHaveBeenCalledWith(expect.objectContaining({ sectorCandles: [] }));
+    expect(fetchBenchmarkPrices).toHaveBeenCalledExactlyOnceWith('SPY', 730, { strict: true });
+    expect(evaluateSignal).not.toHaveBeenCalled();
+    expect(writeToCsv).toHaveBeenCalledExactlyOnceWith([]);
   });
 
   it('uses nominal provider dollar turnover for liquidity with adjusted signal prices', async () => {
@@ -507,13 +541,14 @@ describe('equity prediction finance inputs', () => {
   });
 
   it('uses the static sector mapping when fundamentals are unavailable', async () => {
+    vi.mocked(getFundamentals).mockResolvedValue(null as never);
     await predict({ tickers: ['AAPL'], sort: 'asc', format: 'csv' });
 
-    expect(fetchBenchmarkPrices).toHaveBeenNthCalledWith(1, 'SPY');
-    expect(fetchBenchmarkPrices).toHaveBeenNthCalledWith(2, 'XLK');
+    expect(fetchBenchmarkPrices).toHaveBeenNthCalledWith(1, 'SPY', 730, { strict: true });
+    expect(fetchBenchmarkPrices).toHaveBeenNthCalledWith(2, 'XLK', 730, { strict: true });
   });
 
-  it('does not use benchmark candles after the stock as-of date for the market regime', async () => {
+  it('does not analyze a ticker whose latest session is older than SPY (stale-session)', async () => {
     const benchmark = [
       { date: new Date('2026-09-30'), close: 100, high: 101, low: 99, volume: 1_000_000 },
       { date: bar.date, close: 101, high: 102, low: 100, volume: 1_000_000 },
@@ -523,8 +558,7 @@ describe('equity prediction finance inputs', () => {
 
     await predict({ tickers: ['TEST'], sort: 'asc', format: 'csv' });
 
-    expect(evaluateSignal).toHaveBeenCalledWith(
-      expect.objectContaining({ spyCandles: benchmark.slice(0, 2), marketUptrend: true })
-    );
+    expect(evaluateSignal).not.toHaveBeenCalled();
+    expect(writeToCsv).toHaveBeenCalledExactlyOnceWith([]);
   });
 });
