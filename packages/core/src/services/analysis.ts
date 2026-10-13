@@ -269,14 +269,18 @@ function momentumGradientScore(params: {
 
 // --- Institutional / Flow-Primary Scoring (strategy: 'institutional') ---
 //
-// Weight budget (buy side, total theoretical max shown in parens):
+// Weight budget (buy side; each gradient is in [0, 1], so the weight is the
+// component's maximum contribution). These are the hardcoded W_* constants
+// below — the configurable `institutional.weights` only shape the separate
+// display-only institutional score, not this composite.
 //
-//   FLOW components (sum of weights = 390):
-//     relativeStrength  rsSpy + rsSector blended via institutionalScore  (weight 120)
+//   FLOW components (sum of weights = 480):
+//     rsSpy     relative strength vs SPY                                  (weight 120)
+//     rsSector  relative strength vs sector ETF                           (weight  90)
 //     vwap accumulation                                                   (weight  90)
 //     breakout + relative-volume                                          (weight 110)
 //     liquidity / dollar-vol quality                                      (weight  40)
-//     earnings revision                                                   (weight  30)
+//     earnings revision (neutral 0.3 when unknown = 9 points)             (weight  30)
 //
 //   OSCILLATOR "seasoning" (sum = 130):
 //     RSI momentum zone                                                   (weight  40)
@@ -284,12 +288,13 @@ function momentumGradientScore(params: {
 //     Stochastic                                                           (weight  25)
 //     Williams %R                                                          (weight  30)
 //
-// Total theoretical max buy score ≈ 520 (before pattern contribution).
-// Threshold should be set proportionally lower than momentum to fire more frequently.
+// Total theoretical max buy score = 610 before the chart-pattern term
+// (pattern weights are ±65..75 each). The shipped BUY threshold is 200 and the
+// quality gate caps BUYs at scoreMax 400.
 //
-// Flow dominance test: a +1 unit change in any flow component contributes
-// (component weight) vs oscillator max contribution = 25-40.  Flow components
-// each dominate oscillators individually.
+// Flow dominance: a +1 unit change in any flow component contributes its
+// weight (40-120) vs an oscillator's maximum of 25-40, so each flow component
+// outweighs any single oscillator.
 
 export interface InstitutionalFlowInputs {
   /** Raw institutional score component gradients (each in [0, 1]) */
@@ -431,7 +436,8 @@ export function gradientScore(params: {
   config: PipelineConfig;
   flowInputs?: InstitutionalFlowInputs;
 }): { buyScore: number; sellScore: number; gradients: Record<string, number> } {
-  if (params.config.strategy === 'institutional') {
+  // 'leader-pullback' is the readable alias of the shipped 'institutional' strategy.
+  if (params.config.strategy === 'institutional' || params.config.strategy === 'leader-pullback') {
     return institutionalGradientScore(params);
   }
   if (params.config.strategy === 'momentum') {

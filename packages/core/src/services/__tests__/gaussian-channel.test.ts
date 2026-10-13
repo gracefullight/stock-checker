@@ -97,3 +97,24 @@ describe('gaussianChannel', () => {
     }
   });
 });
+
+describe('gaussianFilter cascade', () => {
+  it('equals four cascaded single-pole EMAs with the DonovanWall alpha', () => {
+    const prices = risingPrices(120, 100, 1).map((p, i) => p + Math.sin(i / 5) * 3);
+    const period = 20;
+    const poles = 4;
+    const beta = (1 - Math.cos((2 * Math.PI) / period)) / (Math.SQRT2 ** (2 / poles) - 1);
+    const alpha = -beta + Math.sqrt(beta * beta + 2 * beta);
+    let stage = prices.slice();
+    for (let p = 0; p < poles; p++) {
+      const next = [stage[0]];
+      for (let i = 1; i < stage.length; i++)
+        next.push(alpha * stage[i] + (1 - alpha) * next[i - 1]);
+      stage = next;
+    }
+    const result = gaussianChannel(prices, { period, poles, mult: 1.4 });
+    for (const [i, point] of result.series.entries()) {
+      expect(point.mid).toBeCloseTo(stage[i], 9);
+    }
+  });
+});

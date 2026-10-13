@@ -12,9 +12,14 @@
  *
  * Each pole applies:  f[i] = alpha·src[i] + (1-alpha)·f[i-1]
  * Four poles are cascaded so the output is a heavily smoothed estimate of price.
+ * With the defaults alpha ≈ 0.0954, so each pole lags about (1-alpha)/alpha ≈ 9.5
+ * bars and the four-pole cascade lags price by roughly 38 bars.
  *
- * Direction is determined by comparing the last filter value to the previous one.
- * "Green" channel = filter rising (uptrend).  "Red" = falling (downtrend).
+ * Direction compares the latest filter value with the previous one (epsilon =
+ * mid × 1e-8): rising = 'up' (green), falling = 'down' (red), else 'flat'.
+ * The pipeline trend gate passes when the slope is >= 0 ('up' or 'flat') and
+ * blocks only 'down'; `isGreen` is strictly 'up' and is used for the market
+ * kill-switch. The bands use |Δclose| as a true-range proxy and are display-only.
  */
 
 export interface GaussianChannelPoint {
@@ -40,27 +45,11 @@ export interface GaussianChannelOptions {
  */
 function gaussianFilter(values: number[], alpha: number, poles: number): number[] {
   const n = values.length;
-  const result = new Float64Array(n);
 
-  // Initialise first sample to avoid cold-start bias
-  result[0] = values[0];
-
-  for (let i = 1; i < n; i++) {
-    const v = values[i];
-    // Cascade `poles` times on the same bar using previous bar's pole outputs
-    // We store intermediate pole values per bar to keep it stateless per-pass.
-    // For pole k: f_k[i] = alpha * f_{k-1}[i] + (1-alpha) * f_k[i-1]
-    // We approximate by running all poles in a single forward pass per bar:
-    let filtered = v;
-    for (let p = 0; p < poles; p++) {
-      filtered = alpha * filtered + (1 - alpha) * result[i - 1];
-    }
-    result[i] = filtered;
-  }
-
-  // --- true multi-pole pass: re-run with proper per-pole state ---
-  // The above single-pass is a simplification; the proper version maintains
-  // separate state arrays for each pole.
+  // Cascaded single-pole EMAs with separate state per pole:
+  //   f_0[i] = alpha * src[i]       + (1 - alpha) * f_0[i-1]
+  //   f_k[i] = alpha * f_{k-1}[i]   + (1 - alpha) * f_k[i-1]   (k >= 1)
+  // Every pole starts at values[0] to avoid cold-start bias.
   const poles_state: Float64Array[] = Array.from({ length: poles }, () => new Float64Array(n));
   for (let p = 0; p < poles; p++) {
     poles_state[p][0] = values[0];
@@ -114,8 +103,8 @@ export function gaussianChannel(
   // Filtered mid-price
   const filtered = gaussianFilter(values, alpha, poles);
 
-  // True range for each bar (approximation using just high/low absent; use |diff| as proxy)
-  // Since we only have close prices, approximate TR as |close[i] - close[i-1]|
+  // Band width: only closes are available, so |close[i] - close[i-1]| stands in
+  // for the true range. Bands never feed a decision gate.
   const trueRanges: number[] = [0];
   for (let i = 1; i < values.length; i++) {
     trueRanges.push(Math.abs(values[i] - values[i - 1]));

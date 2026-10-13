@@ -17,7 +17,7 @@ import {
 import { DEFAULT_ROUND_TRIP_COST_PCT } from '@/constants';
 import { type GaussianChannelPoint, gaussianChannel } from '@/services/gaussian-channel';
 import { detectPatterns } from '@/services/patterns';
-import { evaluateSignal } from '@/services/pipeline';
+import { evaluateSignal, isPullbackSetup } from '@/services/pipeline';
 import type {
   BenchmarkCandle,
   CandleData,
@@ -342,7 +342,13 @@ export interface TickerBarEvaluation {
 }
 
 export interface CurrentEarningsEvidence {
-  /** Current provider evidence applies only to the latest bar, never to older setup states. */
+  /**
+   * Current provider evidence applies only to the latest bar, never to older
+   * setup states. Live analysis (ticker-analysis.ts) deliberately passes nothing
+   * here: the validated measurement scored every bar at the neutral earnings
+   * value, so injecting live evidence would move the decision off the measured
+   * rule. The hook remains for research runs that measure earnings explicitly.
+   */
   earningsBeat?: boolean | null;
   earningsEstimateUp?: boolean | null;
 }
@@ -383,6 +389,8 @@ function* evaluateBarsWithContext(
   } = ctx;
 
   const recentBuyDates: Date[] = [];
+  const recentBuySessionIndexes: number[] = [];
+  const consume = config.clusterFilter.consume ?? 'all-setups';
 
   for (let i = 205; i < data.length; i++) {
     const indicators = buildIndicatorsAtBar(
@@ -438,6 +446,10 @@ function* evaluateBarsWithContext(
     const sectorIdx = sectorIdxForBar[i];
     const sectorCandles = sectorIdx >= 0 ? sector.slice(0, sectorIdx + 1) : [];
     const avgDailyDollarVol = avgDollarVolArr[i];
+    // Nominal close = source dollar turnover / shares; adjusted close when no turnover.
+    const dollarVolume = data[i].dollarVolume;
+    const nominalClose =
+      dollarVolume !== undefined && data[i].volume > 0 ? dollarVolume / data[i].volume : closes[i];
 
     const result = evaluateSignal({
       ticker,
@@ -450,6 +462,8 @@ function* evaluateBarsWithContext(
       recentMacdHistogram,
       config,
       recentBuyDates,
+      recentBuySessionIndexes,
+      currentSessionIndex: i,
       currentDate: data[i].date,
       // Institutional/flow inputs — series up to bar i (no lookahead) + market RS + liquidity.
       allCloses: closes.slice(0, i + 1),
@@ -460,16 +474,24 @@ function* evaluateBarsWithContext(
       spyCandles,
       sectorCandles,
       avgDailyDollarVol,
+      nominalClose,
       gaussianPoint: gaussianSeries[i],
       marketUptrend: spyIdx >= 0 ? (ctx.spyUptrend[spyIdx] ?? null) : null,
       ...(i === data.length - 1 ? latestEarnings : {}),
     });
 
-    // Record BUYs and quality-blocked setups into the cluster window: a setup is
+    // Record consumed setups into the cluster window. Validated default
+    // ('all-setups'): every BUY and every quality-blocked score-fire — a setup is
     // judged ONCE on its first score-fire; later bars of the same deteriorating
     // cluster must not re-trigger; live latest-bar analysis replays this same state.
-    if (result.finalDecision === 'BUY' || result.qualityBlocked) {
+    // 'buys-only' and 'pullback-setups' are research variants (see config docs).
+    const consumed =
+      result.finalDecision === 'BUY' ||
+      (consume === 'all-setups' && result.qualityBlocked === true) ||
+      (consume === 'pullback-setups' && isPullbackSetup(result));
+    if (consumed) {
       recentBuyDates.push(data[i].date);
+      recentBuySessionIndexes.push(i);
     }
 
     yield { index: i, indicators, patterns, pipelineResult: result };

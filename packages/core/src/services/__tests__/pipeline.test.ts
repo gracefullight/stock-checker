@@ -322,16 +322,17 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
   // Closes trending up so close > vwap20 and volumeRatio > 1.0 → vwapGrad = 1.0
   // No spyCandles / sectorCandles (length < rsLookback.long + 1 = 127) → rsSpy = rsSector = 0
   // earningsBeat = null → earningsGrad = 0.3
-  // avgDailyDollarVol = 0 → liquidityGrad = 0
+  // avgDailyDollarVol = 60M (above the $5M eligibility floor) → liquidityGrad = 1.0
   //
-  // instResult.score = 0*0.3 + 0*0.25 + 1.0*0.2 + 1.0*0.15 + 0*0.07 + 0.3*0.03 = 0.359 < 0.55
+  // instResult.score = 0*0.3 + 0*0.25 + 1.0*0.2 + 1.0*0.15 + 1.0*0.07 + 0.3*0.03 = 0.429 < 0.55
   // → instResult.passed = false
   //
   // institutionalGradientScore buyScore = rsSpy(0)*120 + rsSector(0)*90 + vwap(1)*90
-  //   + breakoutVol(1)*110 + liquidity(0)*40 + earnings(0.3)*30 + oscillators
-  //   = 0 + 0 + 90 + 110 + 0 + 9 + oscillators = 209+ → >= 200 threshold → BUY
+  //   + breakoutVol(1)*110 + liquidity(1)*40 + earnings(0.3)*30 + oscillators
+  //   = 0 + 0 + 90 + 110 + 40 + 9 + oscillators = 249+ → >= 200 threshold → BUY
 
   const close = 105;
+  const LIQUID_ADV = 60_000_000;
   // Build allCloses: 20 bars ascending so vwap < close and recent candles show uptrend
   const allCloses = Array.from({ length: 20 }, (_, i) => 90 + i);
   // allHighs / allLows / allVolumes matching the close series
@@ -385,7 +386,7 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
       allVolumes,
       spyCandles: shortBenchmark,
       sectorCandles: shortBenchmark,
-      avgDailyDollarVol: 0,
+      avgDailyDollarVol: LIQUID_ADV,
       earningsBeat: null,
       earningsEstimateUp: null,
     });
@@ -425,7 +426,7 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
       allVolumes,
       spyCandles: shortBenchmark,
       sectorCandles: shortBenchmark,
-      avgDailyDollarVol: 0,
+      avgDailyDollarVol: LIQUID_ADV,
       earningsBeat: null,
       earningsEstimateUp: null,
     });
@@ -462,7 +463,7 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
       allVolumes,
       spyCandles: shortBenchmark,
       sectorCandles: shortBenchmark,
-      avgDailyDollarVol: 0,
+      avgDailyDollarVol: LIQUID_ADV,
     });
     expect(result.finalDecision).toBe('BUY');
     expect(result.qualityBlocked).toBeUndefined();
@@ -490,7 +491,7 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
       allVolumes,
       spyCandles: shortBenchmark,
       sectorCandles: shortBenchmark,
-      avgDailyDollarVol: 0,
+      avgDailyDollarVol: LIQUID_ADV,
     });
     expect(result.finalDecision).toBe('HOLD');
     // Blocked by the quality gate, not by trend/score — the trend gate still passed.
@@ -529,7 +530,7 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
     allVolumes,
     spyCandles: shortBenchmark,
     sectorCandles: shortBenchmark,
-    avgDailyDollarVol: 0,
+    avgDailyDollarVol: LIQUID_ADV,
   };
 
   it('blocks BUY when the market kill-switch is on and SPY regime is down', () => {
@@ -591,7 +592,7 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
         allVolumes: fallVolumes,
         spyCandles: shortBenchmark,
         sectorCandles: shortBenchmark,
-        avgDailyDollarVol: 0,
+        avgDailyDollarVol: LIQUID_ADV,
       });
 
     it('fires SELL when the trend regime is downtrend (exit discipline)', () => {
@@ -610,5 +611,169 @@ describe('evaluateSignal — institutional blend-not-hard-gate', () => {
       expect(result.sellScore).toBeGreaterThanOrEqual(instConfig.thresholds.sell);
       expect(result.finalDecision).toBe('HOLD');
     });
+  });
+});
+
+describe('structured blockers and eligibility', () => {
+  const closes = Array.from({ length: 200 }, (_, i) => 100 + i * 0.5);
+  const close = closes.at(-1) as number;
+  const benchmark = closes.map((_, i) => ({
+    date: new Date(Date.UTC(2025, 0, i + 1)),
+    close: 100,
+    high: 101,
+    low: 99,
+    volume: 1_000_000,
+  }));
+  const params = {
+    ticker: 'LEADER',
+    indicators: makeIndicators({
+      rsi: 55,
+      stochasticK: 55,
+      williamsR: -45,
+      atr: 2,
+      sma50: close + 1,
+      volumeRatio: 1.1,
+      donchUpper: 250,
+    }),
+    close,
+    open: close + 1,
+    fearGreed: null,
+    patternScore: 0,
+    recentCandles: [{ open: close + 1, close, high: close + 9, low: close - 1, volume: 1_000_000 }],
+    recentMacdHistogram: [-0.2, -0.1, 0.1],
+    config: DEFAULT_QUALITY_PIPELINE_CONFIG,
+    allCloses: closes,
+    allDates: benchmark.map((candle) => candle.date),
+    allHighs: closes.map((value) => value + 1),
+    allLows: closes.map((value) => value - 1),
+    allVolumes: new Array(200).fill(1_000_000),
+    spyCandles: benchmark,
+    sectorCandles: benchmark,
+    // Above the $5M eligibility floor but keeps the composite under scoreMax 400.
+    avgDailyDollarVol: 9_000_000,
+    nominalClose: close,
+    currentDate: benchmark.at(-1)!.date,
+  };
+
+  it('returns passed checks for every active gate on a BUY and no entries for disabled gates', () => {
+    const result = evaluateSignal(params);
+    expect(result.finalDecision).toBe('BUY');
+    expect(result.blockedBy).toBeUndefined();
+    const gates = new Set(result.checks?.map((check) => check.gate));
+    expect(gates).toEqual(new Set(['trend', 'score', 'eligibility', 'quality', 'confluence']));
+    expect(result.checks?.every((check) => check.passed)).toBe(true);
+    expect(result.checks?.map((check) => check.id)).toEqual([
+      'filter-direction',
+      'buy-score',
+      'avg-dollar-volume',
+      'nominal-price',
+      'ibs',
+      'atr-pct',
+      'vol-ratio-min',
+      'vol-ratio-max',
+      'score-max',
+      'rs-spy',
+      'rs-sector',
+      'below-sma50',
+      'active-indicators',
+    ]);
+  });
+
+  it.each([
+    { field: 'avgDailyDollarVol', value: 4_999_999, id: 'avg-dollar-volume', limit: 5_000_000 },
+    { field: 'nominalClose', value: 4.99, id: 'nominal-price', limit: 5 },
+  ] as const)(
+    'blocks an ineligible $id without consuming the setup',
+    ({ field, value, id, limit }) => {
+      const result = evaluateSignal({ ...params, [field]: value });
+      expect(result.finalDecision).toBe('HOLD');
+      expect(result.blockedBy).toBe('eligibility');
+      expect(result.qualityBlocked).toBeUndefined();
+      expect(result.checks?.find((check) => check.id === id)).toEqual({
+        gate: 'eligibility',
+        id,
+        passed: false,
+        value,
+        limit,
+        comparator: '>=',
+      });
+    }
+  );
+
+  it('skips the eligibility floors when liquidity and nominal price are unknown', () => {
+    const { avgDailyDollarVol: _adv, nominalClose: _price, ...unknown } = params;
+    const result = evaluateSignal(unknown);
+    expect(result.finalDecision).toBe('BUY');
+    expect(result.checks?.some((check) => check.gate === 'eligibility')).toBe(false);
+  });
+
+  it('names the failed quality clauses with their observed values and limits', () => {
+    const result = evaluateSignal({
+      ...params,
+      recentCandles: [{ open: close + 1, close, high: close + 1, low: close - 1, volume: 1 }],
+    });
+    expect(result).toMatchObject({
+      finalDecision: 'HOLD',
+      blockedBy: 'quality',
+      qualityBlocked: true,
+    });
+    const failed = result.checks?.filter((check) => !check.passed);
+    expect(failed).toEqual([
+      { gate: 'quality', id: 'ibs', passed: false, value: 0.5, limit: 0.2, comparator: '<' },
+    ]);
+  });
+
+  it('reports the cluster window with last setup and next eligible dates', () => {
+    const lastSetup = new Date(Date.UTC(2025, 6, 16));
+    const result = evaluateSignal({
+      ...params,
+      recentBuyDates: [lastSetup],
+      currentDate: new Date(Date.UTC(2025, 6, 19)),
+    });
+    expect(result).toMatchObject({ finalDecision: 'HOLD', blockedBy: 'cluster' });
+    expect(result.cluster).toEqual({
+      lastSetupDate: '2025-07-16',
+      nextEligibleDate: '2025-07-21',
+      gapUnit: 'calendar',
+      minGap: 5,
+    });
+    expect(result.checks?.find((check) => check.gate === 'cluster')).toEqual({
+      gate: 'cluster',
+      id: 'min-gap',
+      passed: false,
+      value: 3,
+      limit: 5,
+      comparator: '>=',
+    });
+    expect(
+      evaluateSignal({
+        ...params,
+        recentBuyDates: [lastSetup],
+        currentDate: new Date(Date.UTC(2025, 6, 21)),
+      }).finalDecision
+    ).toBe('BUY');
+  });
+
+  it('marks a HOLD without a score fire as blocked by score', () => {
+    const result = evaluateSignal({
+      ...params,
+      spyCandles: [],
+      sectorCandles: [],
+      avgDailyDollarVol: 0,
+    });
+    // Eligibility is checked only after the score fires; here the score itself fails.
+    expect(result.finalDecision).toBe('HOLD');
+    expect(result.blockedBy).toBe(result.buyScore >= 200 ? 'eligibility' : 'score');
+    expect(result.checks?.find((check) => check.id === 'buy-score')).toMatchObject({
+      limit: 200,
+      comparator: '>=',
+    });
+  });
+
+  it("treats the 'leader-pullback' strategy alias exactly like 'institutional'", () => {
+    const alias = { ...DEFAULT_QUALITY_PIPELINE_CONFIG, strategy: 'leader-pullback' as const };
+    const canonical = evaluateSignal(params);
+    const aliased = evaluateSignal({ ...params, config: alias });
+    expect(aliased).toEqual(canonical);
   });
 });
