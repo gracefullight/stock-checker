@@ -47,8 +47,10 @@ OKLCH tokens via shadcn `:root` / `.dark`. Semantic finance tokens added on top.
 | `--warning` | HOLD / neutral | `--yellow` (#ffd700) |
 | `--chart-1..5` | recharts series | (new) |
 
-- Light + dark via `next-themes` (`.dark` class). Charts must resolve tokens at
-  runtime and react to theme change (see §6).
+- Light + dark via the in-house `ThemeProvider` / `useTheme`
+  (`components/common/theme-provider.tsx`, `.dark` class on `<html>`, dark by
+  default, `localStorage` key `theme`). Charts must resolve tokens at runtime and
+  react to theme change (see §7).
 - Never hardcode hex in components — read tokens.
 
 ## 5. Layout & Spacing
@@ -60,15 +62,18 @@ OKLCH tokens via shadcn `:root` / `.dark`. Semantic finance tokens added on top.
 ## 6. Motion
 
 - `transform` + `opacity` only; 150ms micro-interactions, 200–500ms transitions.
-- Respect `prefers-reduced-motion` (`useReducedMotion`). Use `motion/react` only
-  (never `framer-motion`).
+- No animation library is installed: use CSS transitions and the `tw-animate-css`
+  utilities already imported in `globals.css`. Do not add `framer-motion`.
+- Respect `prefers-reduced-motion` (Tailwind `motion-reduce:` variants or a media
+  query) on any motion you introduce; the current UI has no reduced-motion guard.
 
 ## 7. Components
 
-- Base: shadcn/ui on **Base UI registry** (`@base-ui-components/react`).
-- Wrappers in `components/common/*`: `signal-badge` (cva buy/sell/hold),
+- Base: shadcn/ui on **Base UI registry** (`@base-ui/react`).
+- Domain wrappers in `components/*`: `signal-badge` (cva buy/sell/hold),
   `pattern-list` (cva bullish/bearish), `score-bar` (Progress + threshold),
-  `indicator-row` (TableRow).
+  `indicator-row` (TableRow). Shared chrome lives in `components/common/*`
+  (`theme-provider`, `theme-toggle`, `earnings-warning-badge`).
 - Charts: recharts via shadcn `ChartContainer`/`ChartConfig`
   (`indicator-gauge`, `probability-chart`); lightweight-charts kept for
   `candlestick-chart` with runtime token resolution + `useTheme`.
@@ -86,7 +91,7 @@ When generating components for this project:
 
 - Use shadcn primitives (`Table`, `Card`, `Badge`, `Progress`, `Tooltip`,
   `Skeleton`, `Alert`) over raw `div`/generic classes. Treat `components/ui/*`
-  as read-only; customize via `cva` or `components/common/*` wrappers.
+  as read-only; customize via `cva` or wrappers in `components/*`.
 - Use semantic tokens (`bg-card`, `text-muted-foreground`, `text-success`,
   `text-destructive`, `text-warning`) — never raw hex.
 - Numbers use `tabular-nums` + monospace stack. Body uses system sans.
@@ -95,7 +100,3 @@ When generating components for this project:
 - Preserve ARIA semantics listed in §8 on every migrated component.
 - Dark/light: never hardcode chart colors — resolve from CSS tokens at runtime
   and re-render on theme change.
-
----
-
-_See `docs/plans/designs/001-web-shadcn-baseui-migration.md` for the migration plan._

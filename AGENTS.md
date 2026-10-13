@@ -20,8 +20,8 @@
 - `mise run lint`, `mise run typecheck`, `mise run test`: Run quality checks.
 - Bun workspace scripts are inferred by mise; `mise run //apps/web:typecheck` runs a package task.
 - `mise run typecheck:automation`: Check `.mts` automation scripts and tests, executed through `tsx`.
-- `mise run finance:typecheck`: Check the Python financial scripts with Pyrefly.
-- `mise run finance:lint`, `mise run finance:format:check`: Check Python lint and formatting with Ruff.
+- `mise run finance:typecheck`: Check the Python finance tests with Pyrefly.
+- `mise run finance:lint`, `mise run finance:format:check`: Check `packages/finance/` lint and formatting with Ruff.
 - `mise run finance:fix`: Apply safe Ruff fixes, then format sequentially.
 - `mise run finance:test`: Run the offline Python finance regressions.
 - `mise run mcp`: Run the local stock analyst MCP over stdio; reserve stdout for JSON-RPC.
@@ -45,21 +45,22 @@
 - Modules: ESNext with bundler resolution.
 - Indentation: 2 spaces; keep lines focused and typed.
 - Naming: `lowerCamelCase` for vars/functions, `UpperCamelCase` for types/interfaces, `UPPER_SNAKE_CASE` for constants.
-- Logging: Use `pino` (avoid `console.log`).
+- Logging: Use `pino` on stderr for diagnostics (avoid `console.log` for logs). Intentional CLI output such as summary tables and CSV/JSON exports may write to stdout; MCP code paths must keep stdout for JSON-RPC.
 - Structure: Keep CLI and route handlers thin; place helpers in the owning workspace's `src/`.
 - Signal settings: CLI, API/web, MCP, screening, and backtests resolve the same complete leader-pullback configuration through `loadPipelineConfig`; ignore legacy partial weight files. Preserve quality, trend, and cluster gates during optimization, and freeze the configuration for each batch or saved scan.
 
 ## Testing Guidelines
-- Vitest suites are colocated as `*.test.ts` / `*.test.tsx` in each workspace's `src/`.
-- Python finance regressions use pytest under `packages/finance/tests/`.
-- Use `mise run test:core`, `mise run test:api`, or `mise run test:web` for scoped checks.
+- `packages/core`, `apps/api`, and `apps/web` use Vitest; suites live next to their sources as `*.test.ts` / `*.test.tsx` or in sibling `__tests__/` directories under `src/`.
+- `apps/mcp` uses `bun test`; `packages/automation` and `.github/scripts` use `node --test` with `.mts` files.
+- Python finance regressions use pytest under `packages/finance/tests/`; Ruff and Pyrefly check only `packages/finance/` (the oma-managed skill scripts under `.agents/` are resolved for imports, never linted or modified).
+- Use `mise run test:core`, `mise run test:api`, `mise run test:web`, or `mise run test:mcp` for scoped checks; `mise run test` keeps running sibling suites when one fails.
 - Add regression tests for behavior changes; use fixtures and mocks for external market data.
 
 ## Commit & Pull Request Guidelines
 - Commits: Follow Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`). Examples in history: `feat: add INTC and UPST tickers`, `fix: notify slack after csv write`.
 - PRs: Include a concise description, linked issue (if any), and a sample run (command used plus snippet of CSV output or logs). Note any changes affecting the GH Action.
 - CI: Ensure the nightly workflow continues to succeed without extra setup (no new required secrets).
-- Releases: Main pushes generate a Release Please PR, validate its exact commit, automatically squash-merge passing version changes, and create the tag/GitHub Release. Keep root/workspace versions and `bun.lock` synchronized.
+- Releases: Main pushes generate a Release Please PR, validate its exact commit, automatically squash-merge passing version changes, and create the tag/GitHub Release. Keep root/workspace versions and `bun.lock` synchronized. Nightly `chore(data)` commits touch only `packages/core/public/`, which `exclude-paths` in `release-please-config.json` keeps out of releases.
 
 ## Security & Configuration Tips
 - Do not commit secrets. Pass Slack webhooks via env vars or GitHub Secrets.
