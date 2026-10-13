@@ -1,5 +1,10 @@
-import { promises as fs } from 'node:fs';
 import pino from 'pino';
+import {
+  localStorePath,
+  migrateLegacyStores,
+  readJsonStore,
+  writeJsonStore,
+} from '@/portfolio/local-store';
 
 const logger = pino({
   level: 'debug',
@@ -12,24 +17,47 @@ interface Watchlist {
   createdAt: string;
 }
 
-const WATCHLIST_FILE = '.watchlist.json';
+/** Legacy name kept for the one-time migration; the store itself lives under data/. */
+const LEGACY_WATCHLIST_FILE = '.watchlist.json';
+export const WATCHLIST_FILE = localStorePath('watchlist.json');
+
+function mergeWatchlists(values: Watchlist[]): Watchlist {
+  const tickers: string[] = [];
+  for (const value of values) {
+    for (const entry of Array.isArray(value.tickers) ? value.tickers : []) {
+      const ticker = String(entry).toUpperCase();
+      if (!tickers.includes(ticker)) tickers.push(ticker);
+    }
+  }
+  const createdAt = values
+    .map((value) => value.createdAt)
+    .filter((value): value is string => typeof value === 'string')
+    .sort()[0];
+  return { tickers, createdAt: createdAt ?? new Date().toISOString() };
+}
 
 async function loadWatchlist(): Promise<Watchlist> {
-  try {
-    const data = await fs.readFile(WATCHLIST_FILE, 'utf-8');
-    return JSON.parse(data);
-  } catch (error) {
-    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
-      throw error;
-    }
-    logger.info('No existing watchlist found, creating new one');
-    return { tickers: [], createdAt: new Date().toISOString() };
+  const saved = await readJsonStore<Watchlist>(WATCHLIST_FILE);
+  if (saved) return saved;
+  const migration = await migrateLegacyStores<Watchlist>(
+    WATCHLIST_FILE,
+    LEGACY_WATCHLIST_FILE,
+    mergeWatchlists
+  );
+  if (migration.value) {
+    logger.info(
+      { sources: migration.sources, file: WATCHLIST_FILE, count: migration.value.tickers.length },
+      'Migrated legacy watchlist files into the shared store'
+    );
+    return migration.value;
   }
+  logger.info('No existing watchlist found, creating new one');
+  return { tickers: [], createdAt: new Date().toISOString() };
 }
 
 async function saveWatchlist(watchlist: Watchlist): Promise<void> {
   try {
-    await fs.writeFile(WATCHLIST_FILE, JSON.stringify(watchlist, null, 2), 'utf-8');
+    await writeJsonStore(WATCHLIST_FILE, watchlist);
     logger.info(`Watchlist saved: ${watchlist.tickers.length} tickers`);
   } catch (error) {
     logger.error({ error }, 'Failed to save watchlist');

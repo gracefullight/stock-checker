@@ -1,5 +1,10 @@
-import { promises as fs } from 'node:fs';
 import pino from 'pino';
+import {
+  localStorePath,
+  migrateLegacyStores,
+  readJsonStore,
+  writeJsonStore,
+} from '@/portfolio/local-store';
 import type { TickerResult } from '@/types';
 
 const logger = pino({
@@ -13,24 +18,47 @@ interface Portfolio {
   createdAt: string;
 }
 
-const PORTFOLIO_FILE = '.portfolio.json';
+/** Legacy name kept for the one-time migration; the store itself lives under data/. */
+const LEGACY_PORTFOLIO_FILE = '.portfolio.json';
+export const PORTFOLIO_FILE = localStorePath('portfolio.json');
+
+function mergePortfolios(values: Portfolio[]): Portfolio {
+  const assets: string[] = [];
+  for (const value of values) {
+    for (const asset of Array.isArray(value.assets) ? value.assets : []) {
+      const ticker = String(asset).toUpperCase();
+      if (!assets.includes(ticker)) assets.push(ticker);
+    }
+  }
+  const createdAt = values
+    .map((value) => value.createdAt)
+    .filter((value): value is string => typeof value === 'string')
+    .sort()[0];
+  return { assets, createdAt: createdAt ?? new Date().toISOString() };
+}
 
 async function loadPortfolio(): Promise<Portfolio> {
-  try {
-    const data = await fs.readFile(PORTFOLIO_FILE, 'utf-8');
-    return JSON.parse(data);
-  } catch (error) {
-    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
-      throw error;
-    }
-    logger.info('No existing portfolio found, creating new one');
-    return { assets: [], createdAt: new Date().toISOString() };
+  const saved = await readJsonStore<Portfolio>(PORTFOLIO_FILE);
+  if (saved) return saved;
+  const migration = await migrateLegacyStores<Portfolio>(
+    PORTFOLIO_FILE,
+    LEGACY_PORTFOLIO_FILE,
+    mergePortfolios
+  );
+  if (migration.value) {
+    logger.info(
+      { sources: migration.sources, file: PORTFOLIO_FILE, count: migration.value.assets.length },
+      'Migrated legacy portfolio files into the shared store'
+    );
+    return migration.value;
   }
+  logger.info('No existing portfolio found, creating new one');
+  return { assets: [], createdAt: new Date().toISOString() };
 }
 
 async function savePortfolio(portfolio: Portfolio): Promise<void> {
   try {
-    await fs.writeFile(PORTFOLIO_FILE, JSON.stringify(portfolio, null, 2), 'utf-8');
+    await writeJsonStore(PORTFOLIO_FILE, portfolio);
     logger.info(`Portfolio saved: ${portfolio.assets.length} assets`);
   } catch (error) {
     logger.error({ error }, 'Failed to save portfolio');
@@ -78,11 +106,18 @@ export async function generatePerformanceReport(
   report.push(`Generated: ${new Date().toISOString()}`);
   report.push('');
 
+  const missing = tickers.filter((ticker) => !results.some((result) => result.ticker === ticker));
+  if (missing.length > 0) {
+    report.push(`Unavailable (no usable analysis): ${missing.join(', ')}`);
+    report.push('');
+  }
+
   for (const result of results) {
     if (!tickers.includes(result.ticker)) continue;
 
     report.push(`## ${result.ticker}`);
     report.push(`- Opinion: ${result.opinion}`);
+    report.push(`- Session: ${result.date}`);
     report.push(`- Close: ${result.close.toFixed(2)}`);
     report.push(`- RSI: ${result.rsi.toFixed(2)}`);
     report.push(`- Score: ${result.score.toFixed(2)}`);
