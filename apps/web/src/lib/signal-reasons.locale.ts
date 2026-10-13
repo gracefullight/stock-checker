@@ -1,5 +1,10 @@
 import type { TickerResult } from '@stock-checker/core/src/types';
-import type { SignalBlock, SignalCheck, SignalGateExtras } from '@/lib/signal-gates.types';
+import {
+  type SignalBlock,
+  type SignalCheck,
+  toSignalBlock,
+  type WithSignalGates,
+} from '@/lib/signal-gates.types';
 import { deriveSignalVisual, type SignalThresholds } from '@/lib/signal-visuals';
 
 /**
@@ -146,8 +151,11 @@ export function reasonCodeOf(reason: string): ReasonCode | null {
   return null;
 }
 
-function formatNumber(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return 'N/A';
+function formatNumber(value: number | string | boolean | null | undefined): string {
+  if (value === null || value === undefined) return 'N/A';
+  if (typeof value === 'boolean') return value ? '예' : '아니오';
+  if (typeof value === 'string') return value;
+  if (!Number.isFinite(value)) return 'N/A';
   return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(2);
 }
 
@@ -179,7 +187,7 @@ export function describeBlock(block: SignalBlock): string[] {
  * TickerResult already carries.
  */
 export function describeTickerDecision(
-  result: TickerResult & SignalGateExtras,
+  result: WithSignalGates<TickerResult>,
   thresholds: SignalThresholds
 ): string[] {
   const visual = deriveSignalVisual({
@@ -189,8 +197,9 @@ export function describeTickerDecision(
     thresholds,
   });
   const lines: string[] = [visual.description];
-  if (result.blockedBy) {
-    lines.push(...describeBlock(result.blockedBy));
+  const block = toSignalBlock(result);
+  if (block) {
+    lines.push(...describeBlock(block));
     return lines;
   }
   if (result.gateReasons?.length) {

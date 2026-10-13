@@ -1,4 +1,5 @@
 import type { StockScreenMatch } from '@/lib/api';
+import { toSignalBlock } from '@/lib/signal-gates.types';
 import { describeCheck } from '@/lib/signal-reasons.locale';
 import { DEFAULT_SIGNAL_THRESHOLDS } from '@/lib/signal-visuals';
 
@@ -48,7 +49,7 @@ const QUALITY_REASON = /entry-quality gate rejected/i;
 const DEFAULT_RS_MIN = 0.7;
 
 function failedCheckDetail(item: StockScreenMatch): string | null {
-  const checks = item.blockedBy?.checks ?? item.checks;
+  const checks = toSignalBlock(item)?.checks ?? item.checks;
   const failed = checks?.filter((check) => !check.passed) ?? [];
   if (failed.length === 0) return null;
   return failed.map(describeCheck).join(' · ');
@@ -72,9 +73,10 @@ export function classifyNearMiss(
   const scoreQualified = item.buyScore >= buyThreshold;
   const scoreNear = item.buyScore >= buyThreshold * nearRatio;
   const checkDetail = failedCheckDetail(item);
+  const block = toSignalBlock(item);
 
   const qualityBlocked =
-    item.blockedBy?.gate === 'quality' ||
+    block?.gate === 'quality' ||
     item.qualityBlocked === true ||
     (item.gateReasons ?? []).some((reason) => QUALITY_REASON.test(reason));
 
@@ -89,8 +91,8 @@ export function classifyNearMiss(
     tier = 'gated';
     detail =
       checkDetail ??
-      (item.blockedBy
-        ? `차단 게이트: ${item.blockedBy.gate}`
+      (block
+        ? `차단 게이트: ${block.gate}`
         : '점수·추세 통과, 클러스터 필터 또는 지표 합치도에서 차단된 것으로 보임');
   } else if (trendOk && scoreNear) {
     tier = 'score-near';

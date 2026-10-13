@@ -18,8 +18,14 @@ import {
   sortByNearMiss,
 } from '@/features/market-screen/utils/classify-near-miss';
 import type { MarketScreenJobSnapshot, MarketScreenResultKind, StockScreenMatch } from '@/lib/api';
+import { toSignalBlock } from '@/lib/signal-gates.types';
 import { describeBlock, translateGateReason } from '@/lib/signal-reasons.locale';
 import { deriveSignalVisual, signalThresholdsFromConfig } from '@/lib/signal-visuals';
+
+function blockLines(item: StockScreenMatch): string[] {
+  const block = toSignalBlock(item);
+  return block ? describeBlock(block) : [];
+}
 
 const TABS: Array<{ kind: MarketScreenResultKind; label: string }> = [
   { kind: 'matches', label: 'MATCHED' },
@@ -203,12 +209,11 @@ export function MarketScreenResults({
                     {item.ticker} — 결정 사유 (SIGNAL REASONS)
                   </summary>
                   <ul className="mt-2 list-disc space-y-1 pl-4 text-muted-foreground" lang="ko">
-                    {item.blockedBy &&
-                      describeBlock(item.blockedBy).map((line, index) => (
-                        <li key={`block-${String(index)}${line}`} className="text-foreground">
-                          {line}
-                        </li>
-                      ))}
+                    {blockLines(item).map((line, index) => (
+                      <li key={`block-${String(index)}${line}`} className="text-foreground">
+                        {line}
+                      </li>
+                    ))}
                     {item.gateReasons.map((reason, index) => (
                       <li key={String(index) + reason}>{translateGateReason(reason)}</li>
                     ))}

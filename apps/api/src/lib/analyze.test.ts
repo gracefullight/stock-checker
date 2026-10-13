@@ -45,8 +45,9 @@ const candles = [
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getHistoricalPrices).mockResolvedValue(candles);
-  vi.mocked(fetchBenchmarkPrices).mockResolvedValue([]);
-  vi.mocked(getFundamentals).mockResolvedValue(null as never);
+  // The engine now requires SPY and the sector ETF to cover the ticker's latest session.
+  vi.mocked(fetchBenchmarkPrices).mockResolvedValue(candles);
+  vi.mocked(getFundamentals).mockResolvedValue({ sector: 'Technology' } as never);
   vi.mocked(getEarningsData).mockResolvedValue({
     earningsHistory: [
       { epsActual: 1, epsEstimate: 1 },
@@ -84,12 +85,15 @@ describe('financial analysis inputs', () => {
     expect(result?.fearGreed).toBe(95);
   });
 
-  it('uses same-period estimate revisions instead of increasing quarterly EPS', async () => {
-    await analyzeTicker('AAPL', null);
+  it('keeps live earnings evidence as context without feeding it to the decision', async () => {
+    const result = await analyzeTicker('AAPL', null);
 
-    expect(evaluateSignal).toHaveBeenCalledWith(
-      expect.objectContaining({ earningsEstimateUp: false, earningsBeat: true })
-    );
+    // Same-period estimate revisions and the latest beat are reported, never scored:
+    // the validated backtest had no point-in-time earnings, so the decision stays neutral.
+    expect(result?.earningsEvidence).toEqual({ beat: true, estimateUp: false });
+    const inputs = vi.mocked(evaluateSignal).mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(inputs.earningsBeat ?? null).toBeNull();
+    expect(inputs.earningsEstimateUp ?? null).toBeNull();
   });
 
   it.each(['flat', null])('does not invent a revision direction for %s data', async (direction) => {
@@ -98,11 +102,9 @@ describe('financial analysis inputs', () => {
       estimateRevisions: { direction },
     } as never);
 
-    await analyzeTicker('AAPL', null);
+    const result = await analyzeTicker('AAPL', null);
 
-    expect(evaluateSignal).toHaveBeenCalledWith(
-      expect.objectContaining({ earningsEstimateUp: null })
-    );
+    expect(result?.earningsEvidence).toEqual({ beat: null, estimateUp: null });
   });
 
   it('returns long-holder risk levels for an exit-only SELL signal', async () => {
@@ -120,12 +122,29 @@ describe('financial analysis inputs', () => {
     expect(evaluateSignal).not.toHaveBeenCalled();
   });
 
-  it('does not duplicate market-relative strength when an unknown ticker has no sector', async () => {
-    await analyzeTicker('UNMAPPED', null);
+  it('reports an unknown ticker without a sector ETF as unavailable instead of HOLD', async () => {
+    vi.mocked(getFundamentals).mockResolvedValue(null as never);
 
+    expect(await analyzeTicker('UNMAPPED', null)).toBeNull();
     expect(fetchBenchmarkPrices).toHaveBeenCalledTimes(1);
-    expect(fetchBenchmarkPrices).toHaveBeenCalledWith('SPY');
-    expect(evaluateSignal).toHaveBeenCalledWith(expect.objectContaining({ sectorCandles: [] }));
+    expect(fetchBenchmarkPrices).toHaveBeenCalledWith(
+      'SPY',
+      expect.any(Number),
+      expect.objectContaining({ strict: true })
+    );
+    expect(evaluateSignal).not.toHaveBeenCalled();
+  });
+
+  it('resolves the sector ETF from the validated map before the provider sector', async () => {
+    vi.mocked(getFundamentals).mockResolvedValue({ sector: 'Financial Services' } as never);
+
+    await analyzeTicker('AAPL', null);
+
+    expect(fetchBenchmarkPrices).toHaveBeenCalledWith(
+      'XLK',
+      expect.any(Number),
+      expect.objectContaining({ strict: true })
+    );
   });
 
   it('uses nominal dollar volume when corporate-action-adjusted candles provide it', async () => {
