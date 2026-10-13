@@ -397,11 +397,12 @@ export function MarketScreenDashboard({ initialJobId = null, now }: MarketScreen
                   </li>
                 ))}
               </ul>
-              {!isValidatedUniverseJob(job) && !job.universe.filters.includes('ta_sma50_pb') && (
-                <p className="text-sm text-muted-foreground">
-                  No below-SMA50 candidate cut is recorded for this job.
-                </p>
-              )}
+              {!isValidatedUniverseJob(job) &&
+                !(job.universe.filters as string[]).includes('ta_sma50_pb') && (
+                  <p className="text-sm text-muted-foreground">
+                    No below-SMA50 candidate cut is recorded for this job.
+                  </p>
+                )}
               {source && (
                 <a
                   href={source}

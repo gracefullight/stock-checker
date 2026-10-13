@@ -20,6 +20,8 @@ export function fixturePaperRow(
     grossReturnPct: status === 'completed' ? 1.1 : null,
     netReturnPct: status === 'completed' ? 1 : null,
     outcome: status === 'completed' ? 'win' : null,
+    spyNetReturnPct: null,
+    excessReturnPct: null,
     updatedAt: '2026-10-03T00:00:00.000Z',
   };
 }
@@ -51,6 +53,10 @@ export function fixturePaperSnapshot(jobId = FIRST_MARKET_JOB): MarketScreenPerf
       legacyUntracked: 0,
       winRatePct: null,
       averageNetReturnPct: null,
+      winRateWilson95: null,
+      spyMatched: 0,
+      averageSpyNetReturnPct: null,
+      averageExcessReturnPct: null,
     },
     page: { offset: 0, limit: 20, total: 1, hasMore: false, items: [fixturePaperRow()] },
     refresh: { status: 'idle', selected: 0, processed: 0, reason: null },
@@ -88,6 +94,10 @@ export function fixtureCompletedPaperSnapshot(): MarketScreenPerformanceSnapshot
     legacyUntracked: 1,
     winRatePct: 100 / 3,
     averageNetReturnPct: 0,
+    winRateWilson95: null,
+    spyMatched: 0,
+    averageSpyNetReturnPct: null,
+    averageExcessReturnPct: null,
   };
   snapshot.page = {
     offset: 0,
