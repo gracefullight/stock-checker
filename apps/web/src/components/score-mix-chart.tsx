@@ -7,24 +7,27 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from '@/components/ui/chart';
+import { normalizeDecision } from '@/lib/signal-visuals';
 
 interface Props {
-  buyProbability: number;
-  sellProbability: number;
-  holdProbability: number;
+  /** Engine final decision; the mix is hidden for HOLD so it cannot read as a 79% buy. */
+  decision: string | null | undefined;
+  buyWeight: number;
+  sellWeight: number;
+  holdWeight: number;
 }
 
 const CHART_CONFIG = {
   BUY: {
-    label: 'BUY',
+    label: 'BUY weight',
     color: 'var(--success)',
   },
   SELL: {
-    label: 'SELL',
+    label: 'SELL weight',
     color: 'var(--destructive)',
   },
   HOLD: {
-    label: 'HOLD',
+    label: 'HOLD weight',
     color: 'var(--muted-foreground)',
   },
 } satisfies ChartConfig;
@@ -36,22 +39,36 @@ function getSliceColorVar(key: SliceKey): string {
   return `var(--color-${key})`;
 }
 
-export function ProbabilityChart({ buyProbability, sellProbability, holdProbability }: Props) {
+/**
+ * Score mix: how the buy/sell/hold score weights split for the final decision.
+ * These are calibration weights, not win probabilities, so the chart is only
+ * shown for BUY and SELL and the centre label names the *decision*, not the
+ * largest slice.
+ */
+export function ScoreMixChart({ decision, buyWeight, sellWeight, holdWeight }: Props) {
+  const final = normalizeDecision(decision);
+  if (final === 'HOLD') {
+    return (
+      <p className="text-center font-mono text-[10px] text-muted-foreground">
+        SCORE MIX hidden for HOLD: 가중치 분포는 승률이 아니며, 차단된 셋업을 강한 매수처럼 보이게
+        할 수 있어 BUY/SELL에서만 표시합니다.
+      </p>
+    );
+  }
   const data: Array<{ name: SliceKey; value: number }> = [
-    { name: 'BUY', value: Math.round(buyProbability) },
-    { name: 'SELL', value: Math.round(sellProbability) },
-    { name: 'HOLD', value: Math.round(holdProbability) },
+    { name: 'BUY', value: Math.round(buyWeight) },
+    { name: 'SELL', value: Math.round(sellWeight) },
+    { name: 'HOLD', value: Math.round(holdWeight) },
   ];
-
-  const dominant = data.reduce((a, b) => (a.value >= b.value ? a : b));
-  const dominantColorVar = getSliceColorVar(dominant.name);
+  const decisionColorVar = getSliceColorVar(final);
+  const decisionWeight = data.find((entry) => entry.name === final)?.value ?? 0;
 
   return (
     <div className="flex flex-col items-center gap-2">
       <div
         className="relative w-full h-[160px]"
         role="img"
-        aria-label={`Signal weights: BUY ${data[0].value}%, SELL ${data[1].value}%, HOLD ${data[2].value}%. Dominant ${dominant.name} at ${dominant.value}%.`}
+        aria-label={`Score mix for final decision ${final}: BUY ${data[0].value}%, SELL ${data[1].value}%, HOLD ${data[2].value}%. Calibration weights, not win probabilities.`}
       >
         <ChartContainer
           config={CHART_CONFIG}
@@ -72,7 +89,7 @@ export function ProbabilityChart({ buyProbability, sellProbability, holdProbabil
                 <Cell
                   key={entry.name}
                   fill={getSliceColorVar(entry.name)}
-                  opacity={entry.name === dominant.name ? 1 : 0.35}
+                  opacity={entry.name === final ? 1 : 0.35}
                 />
               ))}
             </Pie>
@@ -84,27 +101,25 @@ export function ProbabilityChart({ buyProbability, sellProbability, holdProbabil
           </PieChart>
         </ChartContainer>
 
-        {/* centre label */}
+        {/* centre label: the decision, not the dominant slice */}
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <span className="font-mono text-lg font-bold" style={{ color: dominantColorVar }}>
-            {dominant.value}%
+          <span className="font-mono text-lg font-bold" style={{ color: decisionColorVar }}>
+            {final}
           </span>
-          <span
-            className="font-mono text-[10px] tracking-widest"
-            style={{ color: dominantColorVar }}
-          >
-            {dominant.name}
+          <span className="font-mono text-[10px] tracking-widest text-muted-foreground">
+            weight {decisionWeight}%
           </span>
         </div>
       </div>
 
-      {/* legend */}
+      {/* legend: colour always paired with text */}
       <div className="flex gap-4">
         {data.map((entry) => (
           <div key={entry.name} className="flex items-center gap-1">
             <span
               className="w-2 h-2 rounded-full"
               style={{ background: getSliceColorVar(entry.name) }}
+              aria-hidden="true"
             />
             <span className="font-mono text-[10px] text-muted-foreground">
               {entry.name} {entry.value}%
@@ -113,7 +128,7 @@ export function ProbabilityChart({ buyProbability, sellProbability, holdProbabil
         ))}
       </div>
       <p className="text-center font-mono text-[10px] text-muted-foreground">
-        Score weights, not probabilities of profitable trades.
+        SCORE MIX = 점수 가중치 분포. 수익 확률이나 승률이 아닙니다.
       </p>
     </div>
   );

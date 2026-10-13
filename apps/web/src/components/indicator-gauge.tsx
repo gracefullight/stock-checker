@@ -2,6 +2,7 @@
 
 import { PolarAngleAxis, RadialBar, RadialBarChart } from 'recharts';
 import { type ChartConfig, ChartContainer } from '@/components/ui/chart';
+import { indicatorZone, ZONE_LABEL } from '@/lib/indicator-zones';
 
 interface Props {
   label: string;
@@ -12,24 +13,17 @@ interface Props {
   overboughtThreshold?: number;
 }
 
-function getZoneKey(
-  value: number,
-  oversold: number,
-  overbought: number
-): 'oversold' | 'overbought' | 'neutral' {
-  if (value <= oversold) return 'oversold';
-  if (value >= overbought) return 'overbought';
-  return 'neutral';
-}
-
+// Same meaning as indicator-row and the screener RSI column: an oscillator
+// extreme is an amber caution with a text label; green/red stay reserved for
+// the final decision and price change.
 const CHART_CONFIG = {
   oversold: {
     label: 'Oversold',
-    color: 'var(--success)',
+    color: 'var(--warning)',
   },
   overbought: {
     label: 'Overbought',
-    color: 'var(--destructive)',
+    color: 'var(--warning)',
   },
   neutral: {
     label: 'Neutral',
@@ -46,14 +40,11 @@ export function IndicatorGauge({
   overboughtThreshold = 70,
 }: Props) {
   const pct = Math.round(((value - min) / (max - min)) * 100);
-  const zoneKey = getZoneKey(value, oversoldThreshold, overboughtThreshold);
+  const zoneKey = indicatorZone(value, {
+    oversold: oversoldThreshold,
+    overbought: overboughtThreshold,
+  });
   const colorVar = `var(--color-${zoneKey})`;
-
-  const ZONE_LABEL: Record<typeof zoneKey, string> = {
-    oversold: 'OVERSOLD',
-    overbought: 'OVERBOUGHT',
-    neutral: 'NEUTRAL',
-  };
 
   const data = [{ name: label, value: pct, fill: colorVar }];
 
