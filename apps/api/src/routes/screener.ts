@@ -20,6 +20,8 @@ import {
   cachedFundamentals,
   cachedNews,
 } from '@/lib/cached/reference';
+import { mapSettledWithConcurrency } from '@/lib/concurrency';
+import { safeErrorText } from '@/lib/error-text';
 
 interface ScreenerQuery {
   tickers?: string;
@@ -36,6 +38,12 @@ interface SingleTickerParams {
 interface DaysQuery {
   days?: number;
 }
+
+/** Upper bound on one screener request; the web universe is 20 symbols. */
+export const MAX_SCREENER_TICKERS = 50;
+/** Concurrent per-ticker analyses; each one fans out to several Yahoo calls. */
+export const SCREENER_CONCURRENCY = 4;
+const TICKER_PATTERN = /^\^?[A-Z0-9]+(?:[.-][A-Z0-9]+)*(?:=[A-Z0-9]+)?$/;
 
 const daysQuerystringSchema = {
   type: 'object',
@@ -68,52 +76,86 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         let tickers: string[];
 
         if (req.query.tickers) {
-          tickers = req.query.tickers
-            .split(',')
-            .map((t) => t.trim().toUpperCase())
-            .filter(Boolean);
+          tickers = [
+            ...new Set(
+              req.query.tickers
+                .split(',')
+                .map((t) => t.trim().toUpperCase())
+                .filter(Boolean)
+            ),
+          ];
+          const invalid = tickers.filter((ticker) => !TICKER_PATTERN.test(ticker));
+          if (invalid.length > 0) {
+            return reply.status(400).send({
+              error: `Invalid ticker symbol${invalid.length > 1 ? 's' : ''}: ${invalid.join(', ')}. Use symbols such as AAPL, BRK-B or 005930.KS.`,
+            });
+          }
+          if (tickers.length > MAX_SCREENER_TICKERS) {
+            return reply.status(400).send({
+              error: `Too many tickers: ${tickers.length} requested, at most ${MAX_SCREENER_TICKERS} per request. Split the list or use a saved market screen.`,
+            });
+          }
         } else {
           const portfolio = await getPortfolio();
-          tickers = portfolio.assets;
+          tickers = portfolio.assets.slice(0, MAX_SCREENER_TICKERS);
         }
 
         if (tickers.length === 0) {
           return reply.send({
             results: [],
+            unavailable: [],
             fearGreed: null,
             generatedAt: new Date().toISOString(),
           });
         }
 
         const fearGreed = await cachedFearGreed();
-        // Analysis (slow, per-ticker) and quote snapshot lookup (one batch call) run together.
+        // Throttled analysis (slow, per-ticker) and the quote snapshot lookup (one batch call) run together.
         const [settled, snapshots] = await Promise.all([
-          Promise.allSettled(tickers.map((ticker) => cachedAnalyzeTicker(ticker, fearGreed))),
+          mapSettledWithConcurrency(tickers, SCREENER_CONCURRENCY, (ticker) =>
+            cachedAnalyzeTicker(ticker, fearGreed)
+          ),
           cachedQuoteSnapshots(tickers),
         ]);
 
         const snapshotMap = snapshots ?? {};
-        const results = settled
-          .map((r) => (r.status === 'fulfilled' ? r.value : null))
-          .filter((r) => r !== null)
-          .map((r) => {
-            const snap = snapshotMap[r.ticker];
-            return {
-              ...r,
-              name: snap?.name ?? r.name,
-              marketCap: snap?.marketCap ?? null,
-              dayChangePct: snap?.dayChangePct ?? null,
-            };
+        const results: Array<NonNullable<Awaited<ReturnType<typeof cachedAnalyzeTicker>>>> = [];
+        const unavailable: Array<{ ticker: string; reason: string }> = [];
+        settled.forEach((outcome, index) => {
+          const ticker = tickers[index];
+          if (outcome.status === 'rejected') {
+            req.log.warn({ ticker }, 'screener ticker analysis failed');
+            unavailable.push({
+              ticker,
+              reason: safeErrorText(outcome.reason, 'Analysis request failed.'),
+            });
+            return;
+          }
+          const r = outcome.value;
+          if (!r) {
+            unavailable.push({ ticker, reason: 'No usable completed-session analysis.' });
+            return;
+          }
+          const snap = snapshotMap[r.ticker];
+          results.push({
+            ...r,
+            name: snap?.name ?? r.name,
+            marketCap: snap?.marketCap ?? null,
+            dayChangePct: snap?.dayChangePct ?? null,
           });
+        });
 
         return reply.send({
           results,
+          unavailable,
           fearGreed,
           generatedAt: new Date().toISOString(),
         });
       } catch (error) {
         req.log.error({ err: error }, 'screener failed');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return reply
+          .status(500)
+          .send({ error: 'Internal server error', detail: safeErrorText(error) });
       }
     }
   );
@@ -178,7 +220,9 @@ export const screenerRoutes: FastifyPluginAsync = async (app) => {
         return reply.send({ ...result, ...extras });
       } catch (error) {
         req.log.error({ err: error }, 'single screener failed');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return reply
+          .status(500)
+          .send({ error: 'Internal server error', detail: safeErrorText(error) });
       }
     }
   );

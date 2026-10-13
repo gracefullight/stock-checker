@@ -192,25 +192,98 @@ describe('screenerRoutes', () => {
       expect(body.fearGreed).toBeNull();
     });
 
-    it('filters out null results from failed analyzeTicker calls', async () => {
+    it('lists failed and empty analyses as unavailable instead of dropping them', async () => {
       mockedGetFearGreedIndex.mockResolvedValue(50);
-      mockedAnalyzeTicker
-        .mockResolvedValueOnce(mockTickerResult as never)
-        .mockRejectedValueOnce(new Error('bad ticker'));
+      mockedAnalyzeTicker.mockImplementation(async (ticker: string) => {
+        if (ticker === 'AAPL') return mockTickerResult as never;
+        if (ticker === 'NONE') return null;
+        throw new Error('rate limited by https://query.example/v8?crumb=secret-crumb');
+      });
 
-      const res = await app.inject({ method: 'GET', url: '/api/screener?tickers=AAPL,BAD' });
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/screener?tickers=AAPL,BAD,NONE',
+      });
 
       expect(res.statusCode).toBe(200);
       expect(res.json().results).toHaveLength(1);
+      expect(res.json().unavailable).toEqual([
+        { ticker: 'BAD', reason: 'rate limited by [url]' },
+        { ticker: 'NONE', reason: 'No usable completed-session analysis.' },
+      ]);
+      expect(res.body).not.toContain('secret-crumb');
     });
 
-    it('returns 500 when getFearGreedIndex rejects', async () => {
-      mockedGetFearGreedIndex.mockRejectedValue(new Error('network error'));
+    it('dedupes repeated symbols within one request', async () => {
+      mockedGetFearGreedIndex.mockResolvedValue(50);
+      mockedAnalyzeTicker.mockResolvedValue(mockTickerResult as never);
+
+      const res = await app.inject({ method: 'GET', url: '/api/screener?tickers=AAPL,aapl' });
+
+      expect(res.statusCode).toBe(200);
+      expect(mockedAnalyzeTicker).toHaveBeenCalledTimes(1);
+      expect(res.json().unavailable).toEqual([]);
+    });
+
+    it('rejects more than the per-request ticker cap before any analysis', async () => {
+      const tickers = Array.from({ length: 51 }, (_, index) => `T${index}`).join(',');
+
+      const res = await app.inject({ method: 'GET', url: `/api/screener?tickers=${tickers}` });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain('at most 50');
+      expect(mockedGetFearGreedIndex).not.toHaveBeenCalled();
+      expect(mockedAnalyzeTicker).not.toHaveBeenCalled();
+    });
+
+    it.each(['AAPL;DROP', '../etc', 'AAPL MSFT'])(
+      'rejects invalid symbols with an actionable message: %s',
+      async (ticker) => {
+        const res = await app.inject({
+          method: 'GET',
+          url: `/api/screener?tickers=${encodeURIComponent(ticker)}`,
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json().error).toContain('Invalid ticker symbol');
+        expect(mockedAnalyzeTicker).not.toHaveBeenCalled();
+      }
+    );
+
+    it('throttles analysis fan-out to the configured concurrency', async () => {
+      mockedGetFearGreedIndex.mockResolvedValue(50);
+      let inFlight = 0;
+      let peak = 0;
+      mockedAnalyzeTicker.mockImplementation(async (ticker: string) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return { ...mockTickerResult, ticker } as never;
+      });
+      const tickers = Array.from({ length: 12 }, (_, index) => `T${index}`).join(',');
+
+      const res = await app.inject({ method: 'GET', url: `/api/screener?tickers=${tickers}` });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().results).toHaveLength(12);
+      expect(mockedAnalyzeTicker).toHaveBeenCalledTimes(12);
+      expect(peak).toBeLessThanOrEqual(4);
+      expect(peak).toBeGreaterThan(1);
+    });
+
+    it('returns 500 with redacted detail when getFearGreedIndex rejects', async () => {
+      mockedGetFearGreedIndex.mockRejectedValue(
+        new Error('network error https://api.alternative.me/fng/?token=abc')
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/screener?tickers=AAPL' });
 
       expect(res.statusCode).toBe(500);
-      expect(res.json()).toEqual({ error: 'Internal server error' });
+      expect(res.json()).toEqual({
+        error: 'Internal server error',
+        detail: 'network error [url]',
+      });
     });
   });
 
@@ -248,14 +321,19 @@ describe('screenerRoutes', () => {
       expect(res.json()).toEqual({ error: 'No data found for ticker: UNKNOWN' });
     });
 
-    it('returns 500 when analyzeTicker rejects', async () => {
+    it('returns 500 with the redacted provider message when analyzeTicker rejects', async () => {
       mockedGetFearGreedIndex.mockResolvedValue(50);
-      mockedAnalyzeTicker.mockRejectedValue(new Error('fetch failed'));
+      mockedAnalyzeTicker.mockRejectedValue(
+        new Error('fetch failed for /Users/private/cache/AAPL.json')
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/screener/AAPL' });
 
       expect(res.statusCode).toBe(500);
-      expect(res.json()).toEqual({ error: 'Internal server error' });
+      expect(res.json()).toEqual({
+        error: 'Internal server error',
+        detail: 'fetch failed for [path]',
+      });
     });
   });
 
