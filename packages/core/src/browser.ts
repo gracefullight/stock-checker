@@ -13,11 +13,6 @@ import {
   runSignalsWithContext,
   type WinRateResult,
 } from '@/optimization/engine';
-import {
-  type OptimizeProgress,
-  type OptimizeWithDataResult,
-  optimizeWithData,
-} from '@/optimization/optimizer-core';
 import type { BenchmarkCandle, PipelineConfig } from '@/types';
 
 export {
@@ -25,15 +20,7 @@ export {
   DEFAULT_QUALITY_PIPELINE_CONFIG,
 } from '@/constants';
 export type { BenchmarkCandle, PipelineConfig } from '@/types';
-export type {
-  BacktestSignal,
-  Candle,
-  EquityCurveResult,
-  OptimizeProgress,
-  OptimizeWithDataResult,
-  WinRateResult,
-};
-export { optimizeWithData };
+export type { BacktestSignal, Candle, EquityCurveResult, WinRateResult };
 
 export interface RunBacktestResult {
   winRate: WinRateResult;

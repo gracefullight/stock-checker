@@ -2,6 +2,7 @@ import { readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DateTime } from 'luxon';
+import { DEFAULT_ROUND_TRIP_COST_PCT } from '@/constants';
 import { MarketScreenJobNotFoundError } from '@/reports/market-screen';
 import {
   acquireMarketScreenLease,
@@ -11,6 +12,9 @@ import {
   writeMarketScreenJson,
 } from '@/reports/market-screen-store';
 import type { StockScreenMatch } from '@/reports/stock-screen';
+import type { PipelineConfig } from '@/types';
+import { strategyConfigFingerprint } from '@/utils/config-fingerprint';
+import { type PercentInterval, wilsonInterval } from '@/utils/statistics';
 import {
   isSession,
   isSupportedDate,
@@ -50,6 +54,10 @@ export interface MarketScreenPerformanceRow {
   exitPrice: number | null;
   grossReturnPct: number | null;
   netReturnPct: number | null;
+  /** SPY over the same entry open to exit close, charged the same cost; null before completion or on older rows. */
+  spyNetReturnPct: number | null;
+  /** netReturnPct − spyNetReturnPct; the passive alternative on the same sessions. */
+  excessReturnPct: number | null;
   outcome: 'win' | 'loss' | 'breakeven' | null;
   updatedAt: string | null;
 }
@@ -66,7 +74,13 @@ export interface MarketScreenPerformanceSummary {
   ineligible: number;
   legacyUntracked: number;
   winRatePct: number | null;
+  /** Wilson 95% interval of the completed win rate; null without completed rows. */
+  winRateWilson95: PercentInterval | null;
   averageNetReturnPct: number | null;
+  /** Completed rows that carry a matched SPY window. */
+  spyMatched: number;
+  averageSpyNetReturnPct: number | null;
+  averageExcessReturnPct: number | null;
 }
 
 export interface MarketScreenPerformanceSnapshot {
@@ -126,6 +140,8 @@ const POLICY: MarketScreenPerformancePolicy = Object.freeze({
   costBpsRoundTrip: 10,
   adjustment: 'same-fetched-adjusted-series',
 });
+/** The frozen forward-paper policy; its cost must equal the shared validation constant. */
+export const MARKET_SCREEN_PERFORMANCE_POLICY: Readonly<MarketScreenPerformancePolicy> = POLICY;
 const DEFAULT_ROOT = fileURLToPath(new URL('../../../../data/market-scans/', import.meta.url));
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const REFRESH_PURPOSE = 'forward-paper-performance';
@@ -296,6 +312,8 @@ async function recommendations(root: string, id: string): Promise<Recommendation
       exitPrice: null,
       grossReturnPct: null,
       netReturnPct: null,
+      spyNetReturnPct: null,
+      excessReturnPct: null,
       outcome: null,
       updatedAt: null,
     };
@@ -318,13 +336,23 @@ async function recommendations(root: string, id: string): Promise<Recommendation
               !Number.isFinite(cached.grossReturnPct) ||
               !Number.isFinite(cached.netReturnPct) ||
               !['win', 'loss', 'breakeven'].includes(cached.outcome as string))) ||
+          (cached.status === 'completed' &&
+            cached.spyNetReturnPct != null &&
+            (!Number.isFinite(cached.spyNetReturnPct) ||
+              !Number.isFinite(cached.excessReturnPct))) ||
           (cached.status !== 'completed' &&
             (cached.outcome !== null ||
               cached.netReturnPct !== null ||
-              cached.grossReturnPct !== null))
+              cached.grossReturnPct !== null ||
+              cached.spyNetReturnPct != null))
         )
           throw new Error('Invalid cached performance');
-        row = cached;
+        // Rows cached before the benchmark columns existed stay comparable with null SPY fields.
+        row = {
+          ...cached,
+          spyNetReturnPct: cached.spyNetReturnPct ?? null,
+          excessReturnPct: cached.excessReturnPct ?? null,
+        };
       } catch (error) {
         if (!missing(error)) throw new Error('Cached paper performance is unreadable.');
       }
@@ -353,9 +381,15 @@ async function snapshot(
     ineligible: 0,
     legacyUntracked: 0,
     winRatePct: null,
+    winRateWilson95: null,
     averageNetReturnPct: null,
+    spyMatched: 0,
+    averageSpyNetReturnPct: null,
+    averageExcessReturnPct: null,
   };
   let averageNet = 0;
+  let averageSpy = 0;
+  let averageExcess = 0;
   let updatedAt: string | null = null;
   for (const row of all) {
     if (row.updatedAt && (!updatedAt || row.updatedAt > updatedAt)) updatedAt = row.updatedAt;
@@ -366,11 +400,21 @@ async function snapshot(
       if (row.outcome === 'loss') summary.losses++;
       if (row.outcome === 'breakeven') summary.breakeven++;
       averageNet += ((row.netReturnPct as number) - averageNet) / summary.completed;
+      if (row.spyNetReturnPct !== null && row.excessReturnPct !== null) {
+        summary.spyMatched++;
+        averageSpy += (row.spyNetReturnPct - averageSpy) / summary.spyMatched;
+        averageExcess += (row.excessReturnPct - averageExcess) / summary.spyMatched;
+      }
     }
   }
   if (summary.completed) {
     summary.winRatePct = (summary.wins / summary.completed) * 100;
+    summary.winRateWilson95 = wilsonInterval(summary.wins, summary.completed);
     summary.averageNetReturnPct = averageNet;
+  }
+  if (summary.spyMatched) {
+    summary.averageSpyNetReturnPct = averageSpy;
+    summary.averageExcessReturnPct = averageExcess;
   }
   let refresh: MarketScreenPerformanceSnapshot['refresh'] = {
     status: 'idle',
@@ -496,8 +540,16 @@ function evaluate(
   const entryPrice = (bars.get(sessions[0]) as MarketScreenPerformanceCandle).open;
   const exitPrice = (bars.get(sessions[4]) as MarketScreenPerformanceCandle).close;
   const grossReturnPct = (exitPrice / entryPrice - 1) * 100;
-  const calculated = grossReturnPct - POLICY.costBpsRoundTrip / 100;
-  if (!Number.isFinite(grossReturnPct) || !Number.isFinite(calculated))
+  const calculated = grossReturnPct - DEFAULT_ROUND_TRIP_COST_PCT;
+  // The same sessions in SPY, bought at the entry open and sold at the exit close with the same cost.
+  const spyEntry = spy.get(sessions[0]) as MarketScreenPerformanceCandle;
+  const spyExit = spy.get(sessions[4]) as MarketScreenPerformanceCandle;
+  const spyNetReturnPct = (spyExit.close / spyEntry.open - 1) * 100 - DEFAULT_ROUND_TRIP_COST_PCT;
+  if (
+    !Number.isFinite(grossReturnPct) ||
+    !Number.isFinite(calculated) ||
+    !Number.isFinite(spyNetReturnPct)
+  )
     throw new Error('The paper return cannot be represented as a finite number');
   const netReturnPct = Math.abs(calculated) < 1e-9 ? 0 : calculated;
   return {
@@ -507,6 +559,8 @@ function evaluate(
     exitPrice,
     grossReturnPct,
     netReturnPct,
+    spyNetReturnPct,
+    excessReturnPct: netReturnPct - spyNetReturnPct,
     outcome: netReturnPct > 0 ? 'win' : netReturnPct < 0 ? 'loss' : 'breakeven',
   };
 }
@@ -611,6 +665,8 @@ export async function refreshMarketScreenPerformance(
             outcome: null,
             grossReturnPct: null,
             netReturnPct: null,
+            spyNetReturnPct: null,
+            excessReturnPct: null,
             exitPrice: null,
             reason:
               'Market data could not verify the frozen paper holding window; explicitly refresh to retry.',
@@ -640,4 +696,178 @@ export async function refreshMarketScreenPerformance(
   };
   void execute().catch(() => {});
   return snapshot(root, jobId, 0, 20);
+}
+
+const STATUS_PRIORITY: Record<MarketScreenPerformanceStatus, number> = {
+  completed: 0,
+  open: 1,
+  pending: 2,
+  unavailable: 3,
+  ineligible: 4,
+  'legacy-untracked': 5,
+};
+
+export interface MarketScreenPerformanceLedgerRow extends MarketScreenPerformanceRow {
+  jobId: string;
+  configSha256: string | null;
+}
+
+export interface MarketScreenPerformanceLedger {
+  policy: MarketScreenPerformancePolicy;
+  jobs: number;
+  unreadableJobs: number;
+  /** Rows dropped because another job already tracked the same ticker, signal session and configuration. */
+  duplicatesRemoved: number;
+  summary: MarketScreenPerformanceSummary;
+  byConfig: Array<{
+    configSha256: string | null;
+    recommendations: number;
+    completed: number;
+    wins: number;
+    winRatePct: number | null;
+  }>;
+  /** Completed rows, newest exit first, bounded by `limit`. */
+  completedRows: MarketScreenPerformanceLedgerRow[];
+}
+
+async function jobConfigSha256(root: string, id: string): Promise<string | null> {
+  try {
+    const state = (await readMarketScreenJson(file(root, id, 'state.json'))) as {
+      criteria?: { pipelineConfig?: PipelineConfig };
+    };
+    const config = state?.criteria?.pipelineConfig;
+    return config && typeof config === 'object' ? strategyConfigFingerprint(config) : null;
+  } catch {
+    return null;
+  }
+}
+
+function summarize(rows: MarketScreenPerformanceRow[]): MarketScreenPerformanceSummary {
+  const summary: MarketScreenPerformanceSummary = {
+    totalRecommendations: rows.length,
+    completed: 0,
+    wins: 0,
+    losses: 0,
+    breakeven: 0,
+    pending: 0,
+    open: 0,
+    unavailable: 0,
+    ineligible: 0,
+    legacyUntracked: 0,
+    winRatePct: null,
+    winRateWilson95: null,
+    averageNetReturnPct: null,
+    spyMatched: 0,
+    averageSpyNetReturnPct: null,
+    averageExcessReturnPct: null,
+  };
+  let net = 0,
+    spy = 0,
+    excess = 0;
+  for (const row of rows) {
+    if (row.status === 'legacy-untracked') summary.legacyUntracked++;
+    else summary[row.status]++;
+    if (row.status !== 'completed') continue;
+    if (row.outcome === 'win') summary.wins++;
+    if (row.outcome === 'loss') summary.losses++;
+    if (row.outcome === 'breakeven') summary.breakeven++;
+    net += row.netReturnPct as number;
+    if (row.spyNetReturnPct !== null && row.excessReturnPct !== null) {
+      summary.spyMatched++;
+      spy += row.spyNetReturnPct;
+      excess += row.excessReturnPct;
+    }
+  }
+  if (summary.completed) {
+    summary.winRatePct = (summary.wins / summary.completed) * 100;
+    summary.winRateWilson95 = wilsonInterval(summary.wins, summary.completed);
+    summary.averageNetReturnPct = net / summary.completed;
+  }
+  if (summary.spyMatched) {
+    summary.averageSpyNetReturnPct = spy / summary.spyMatched;
+    summary.averageExcessReturnPct = excess / summary.spyMatched;
+  }
+  return summary;
+}
+
+/**
+ * Read-only forward track record across every saved screen: rows are
+ * deduplicated on ticker + signal session + configuration fingerprint so a
+ * session re-scanned by several jobs counts once. Reading never fetches market
+ * data, resumes a scan, or rewrites cached outcomes.
+ */
+export async function summarizeMarketScreenPerformanceLedger(
+  options: { limit?: number } = {},
+  dependencies: MarketScreenPerformanceDependencies = {}
+): Promise<MarketScreenPerformanceLedger> {
+  const limit = integer(options.limit, 50, 1, 500, 'limit');
+  const root = await rootDirectory(dependencies);
+  const entries = await readdir(root, { withFileTypes: true });
+  const ids = entries
+    .filter((entry) => entry.isDirectory() && UUID.test(entry.name))
+    .map((entry) => entry.name.toLowerCase())
+    .sort();
+  const unique = new Map<string, MarketScreenPerformanceLedgerRow>();
+  let unreadableJobs = 0;
+  let duplicatesRemoved = 0;
+  for (const id of ids) {
+    let rows: Recommendation[];
+    try {
+      rows = await recommendations(root, id);
+    } catch {
+      unreadableJobs++;
+      continue;
+    }
+    const configSha256 = await jobConfigSha256(root, id);
+    for (const { row } of rows) {
+      const candidate = { ...row, jobId: id, configSha256 };
+      const key = `${row.ticker}\u0000${row.dataAsOf ?? ''}\u0000${configSha256 ?? ''}`;
+      const current = unique.get(key);
+      if (!current) {
+        unique.set(key, candidate);
+        continue;
+      }
+      duplicatesRemoved++;
+      const better =
+        STATUS_PRIORITY[candidate.status] - STATUS_PRIORITY[current.status] ||
+        (candidate.recommendedAt ?? '').localeCompare(current.recommendedAt ?? '');
+      if (better < 0) unique.set(key, candidate);
+    }
+  }
+  const rows = [...unique.values()];
+  const byConfigMap = new Map<string | null, MarketScreenPerformanceRow[]>();
+  for (const row of rows) {
+    const group = byConfigMap.get(row.configSha256) ?? [];
+    group.push(row);
+    byConfigMap.set(row.configSha256, group);
+  }
+  const byConfig = [...byConfigMap]
+    .map(([configSha256, group]) => {
+      const completed = group.filter((row) => row.status === 'completed');
+      const wins = completed.filter((row) => row.outcome === 'win').length;
+      return {
+        configSha256,
+        recommendations: group.length,
+        completed: completed.length,
+        wins,
+        winRatePct: completed.length ? (wins / completed.length) * 100 : null,
+      };
+    })
+    .sort((left, right) => right.recommendations - left.recommendations);
+  return {
+    policy: { ...POLICY },
+    jobs: ids.length,
+    unreadableJobs,
+    duplicatesRemoved,
+    summary: summarize(rows),
+    byConfig,
+    completedRows: rows
+      .filter((row) => row.status === 'completed')
+      .sort(
+        (left, right) =>
+          (right.exitDate ?? '').localeCompare(left.exitDate ?? '') ||
+          left.ticker.localeCompare(right.ticker)
+      )
+      .slice(0, limit),
+  };
 }

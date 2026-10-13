@@ -1,15 +1,12 @@
 import { Command } from 'commander';
 import pino from 'pino';
 import { backtest } from '@/commands/backtest';
-import { learn } from '@/commands/learn';
-import { optimize } from '@/commands/optimize';
 import { predict } from '@/commands/predict';
 import type { CliOptions } from '@/types';
 import {
   p,
   pc,
   promptExtraOptions,
-  promptOptimize,
   promptOutputFormat,
   promptPortfolioAction,
   promptSortOrder,
@@ -145,46 +142,18 @@ program
   });
 
 program
-  .command('learn')
-  .description('Run the learning loop')
-  .action(async () => {
-    try {
-      await learn();
-    } catch (error) {
-      logger.error({ err: error }, 'Learn command failed');
-      process.exit(1);
-    }
-  });
-
-program
-  .command('optimize [symbol]')
-  .description('Optimize parameters for a symbol (default: TSLA)')
-  .option('--trials <number>', 'Number of trials', '200')
-  .action(async (symbol, options) => {
-    try {
-      if (!symbol) {
-        p.intro(pc.bgCyan(pc.black(' stock-checker optimize ')));
-        const prompted = await promptOptimize();
-        await optimize(prompted.symbol, { trials: String(prompted.trials) });
-        p.outro(pc.green('Optimization complete!'));
-        return;
-      }
-      await optimize(symbol, options);
-    } catch (error) {
-      logger.error({ err: error }, 'Optimize command failed');
-      process.exit(1);
-    }
-  });
-
-program
   .command('backtest')
-  .description('Run backtest with Pipeline V2 against historical data')
+  .description('Measure the active leader-pullback configuration against historical data')
   .option(
     '--cost-bps <number>',
     'Round-trip transaction cost in basis points deducted from every trade',
     '10'
   )
-  .option('--quick', 'Stop after the version comparison and gate tuning (fast iteration)')
+  .option(
+    '--research',
+    'Also run the retired V2–V10 research variants and grid searches (exploratory output)'
+  )
+  .option('--quick', 'With --research, stop after the variant comparison and gate tuning')
   .action(async (options) => {
     try {
       const costBps = Number(options.costBps);
@@ -192,7 +161,11 @@ program
         logger.error('--cost-bps must be a non-negative number');
         process.exit(1);
       }
-      await backtest({ costBps, quick: Boolean(options.quick) });
+      await backtest({
+        costBps,
+        quick: Boolean(options.quick),
+        research: Boolean(options.research),
+      });
     } catch (error) {
       logger.error({ err: error }, 'Backtest failed');
       process.exit(1);

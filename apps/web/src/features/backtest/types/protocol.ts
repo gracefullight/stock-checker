@@ -1,4 +1,3 @@
-import type { BacktestMetrics } from '@stock-checker/core/src/optimization/types';
 import type { PipelineConfig } from '@stock-checker/core/src/types';
 
 // JSON-serialized candle shapes as returned by /api/screener/:ticker/backtest-data.
@@ -69,17 +68,14 @@ export interface RunResultDTO {
   signals: SignalMarkerDTO[];
 }
 
-export type BacktestWorkerRequest =
-  | { type: 'run'; data: BacktestDataPayload; config: PipelineConfig }
-  | { type: 'optimize'; data: BacktestDataPayload; nTrials: number; baseConfig: PipelineConfig };
+// The worker only measures; the in-browser parameter optimizer was removed
+// because it selected parameters on the same bars it reported.
+export type BacktestWorkerRequest = {
+  type: 'run';
+  data: BacktestDataPayload;
+  config: PipelineConfig;
+};
 
 export type BacktestWorkerResponse =
   | { type: 'run-result'; result: RunResultDTO }
-  | { type: 'progress'; trial: number; nTrials: number; bestValue: number }
-  | {
-      type: 'optimize-result';
-      bestParams: PipelineConfig;
-      bestValue: number;
-      metrics: BacktestMetrics;
-    }
   | { type: 'error'; message: string };

@@ -274,16 +274,6 @@ description = "Run stock prediction  [usage: mise run predict -- --ticker=TSLA,P
 dir = "packages/core"
 run = "bun src/index.ts predict $@"
 
-[tasks.optimize]
-description = "Run parameter optimizer"
-dir = "packages/core"
-run = "bun src/index.ts optimize $@"
-
-[tasks.learn]
-description = "Run learning from feedback"
-dir = "packages/core"
-run = "bun src/index.ts learn $@"
-
 [tasks.backtest]
 description = "Run backtest"
 dir = "packages/core"

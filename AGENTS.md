@@ -47,7 +47,7 @@
 - Naming: `lowerCamelCase` for vars/functions, `UpperCamelCase` for types/interfaces, `UPPER_SNAKE_CASE` for constants.
 - Logging: Use `pino` on stderr for diagnostics (avoid `console.log` for logs). Intentional CLI output such as summary tables and CSV/JSON exports may write to stdout; MCP code paths must keep stdout for JSON-RPC.
 - Structure: Keep CLI and route handlers thin; place helpers in the owning workspace's `src/`.
-- Signal settings: CLI, API/web, MCP, screening, and backtests resolve the same complete leader-pullback configuration through `loadPipelineConfig`; ignore legacy partial weight files. Preserve quality, trend, and cluster gates during optimization, and freeze the configuration for each batch or saved scan.
+- Signal settings: CLI, API/web, MCP, screening, and backtests resolve the same complete leader-pullback configuration through `loadPipelineConfig`; ignore legacy partial weight files. No command rewrites the saved configuration (the optimize/learn loop was removed); freeze the configuration for each batch or saved scan.
 
 ## Testing Guidelines
 - `packages/core`, `apps/api`, and `apps/web` use Vitest; suites live next to their sources as `*.test.ts` / `*.test.tsx` or in sibling `__tests__/` directories under `src/`.

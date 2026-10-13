@@ -51,9 +51,8 @@ Browser alerts run while the app or PWA is open; they stop when it closes.
 ```bash
 mise run predict -- --ticker=TSLA,PLTR --sort=asc
 mise run predict -- --ticker=OII --format=json
-mise run backtest -- --cost-bps=20 --quick
-mise run optimize -- TSLA --trials 200
-mise run learn
+mise run backtest -- --cost-bps=20
+mise run backtest -- --research --quick
 ```
 
 Default predictions append monthly CSV rows under `packages/core/public/`;
@@ -65,7 +64,11 @@ For Slack BUY/SELL summaries, set `SLACK_WEBHOOK_URL` or pass `--slack-webhook`.
 CLI, web, MCP, screening, and backtests share the leader-pullback strategy and
 the complete configuration in `data/config/optimized_weights.json` (v3).
 Without a compatible file, all use `DEFAULT_QUALITY_PIPELINE_CONFIG`; legacy
-partial weight files are ignored. Optimization preserves this strategy.
+partial weight files are ignored. No command rewrites that file: the former
+`optimize`/`learn` loop and the weekly optimization workflow were removed
+because they overwrote the validated configuration with a winner fitted on a
+single ticker. `backtest` measures the active configuration; `--research`
+replays the retired exploratory variants without saving anything.
 See [trading principles](docs/TRADING_PRINCIPLES.md) and the
 [measured win rates](docs/validation/leader-pullback-2026-10-06.md).
 
@@ -225,8 +228,8 @@ uses `.mts` and `tsx`; `typecheck:automation` is included in the same quality ga
 Python uses `packages/finance/uv.lock`; `finance:run` executes scripts, and
 `finance:deps:outdated` / `finance:deps:update` maintain the lock.
 [Quality](.github/workflows/quality.yml) includes application and Python checks;
-[daily data](.github/workflows/daily-data.yml) commits CSV predictions, and
-[weekly optimization](.github/workflows/weekly-optimize.yml) uploads artifacts.
+[daily data](.github/workflows/daily-data.yml) commits CSV predictions on US
+weekdays, tagging each row with `StrategyId` and `ConfigSha256`.
 
 Main pushes run [Release Please](.github/workflows/release.yml): synchronize
 versions and `bun.lock`, validate the release PR, then merge and create the release.
