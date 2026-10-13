@@ -28,7 +28,9 @@ import {
   getOHLCV,
   getPortfolio,
   getScreener,
+  getScreenerResponse,
   getTickerDetail,
+  parseMarketScreenJobId,
   removeFromPortfolio,
 } from '@/lib/api';
 
@@ -98,7 +100,51 @@ describe('api fetcher', () => {
     );
   });
 
-  it('normalizes network errors via the response interceptor', () => {
-    expect(() => holder.err?.({ message: 'Network Error' })).toThrow('API error: Network Error');
+  it("surfaces the server's actionable error text instead of the bare status", () => {
+    expect(() =>
+      holder.err?.({
+        response: {
+          status: 404,
+          statusText: 'Not Found',
+          data: { error: 'No data found for ticker: ZZZZ' },
+        },
+      })
+    ).toThrow('API error 404: No data found for ticker: ZZZZ');
+  });
+
+  it('normalizes network errors and adds a reachability hint', () => {
+    expect(() => holder.err?.({ message: 'Network Error', code: 'ERR_NETWORK' })).toThrow(
+      'API error: Network Error'
+    );
+    expect(() => holder.err?.({ message: 'Network Error', code: 'ERR_NETWORK' })).toThrow(
+      /mise run dev:api/
+    );
+    expect(() => holder.err?.({ message: 'Request aborted' })).not.toThrow(/mise run dev:api/);
+  });
+
+  it('getScreenerResponse keeps the unavailable list and generation time when present', async () => {
+    requestMock.mockResolvedValue({
+      data: {
+        results: [{ ticker: 'AAPL' }],
+        unavailable: [{ ticker: 'ZZZZ', reason: 'history-unavailable' }, { bad: true }],
+        generatedAt: '2026-10-14T00:00:00.000Z',
+      },
+    });
+    await expect(getScreenerResponse(['AAPL', 'ZZZZ'])).resolves.toEqual({
+      results: [{ ticker: 'AAPL' }],
+      unavailable: [{ ticker: 'ZZZZ', reason: 'history-unavailable' }],
+      generatedAt: '2026-10-14T00:00:00.000Z',
+    });
+  });
+
+  it('parses market-screen deep-link ids defensively', () => {
+    expect(parseMarketScreenJobId('11111111-1111-4111-8111-111111111111')).toBe(
+      '11111111-1111-4111-8111-111111111111'
+    );
+    expect(parseMarketScreenJobId(['22222222-2222-4222-8222-222222222222'])).toBe(
+      '22222222-2222-4222-8222-222222222222'
+    );
+    expect(parseMarketScreenJobId('not-a-job')).toBeNull();
+    expect(parseMarketScreenJobId(undefined)).toBeNull();
   });
 });
