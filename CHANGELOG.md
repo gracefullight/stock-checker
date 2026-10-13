@@ -1,5 +1,89 @@
 # Changelog
 
+## [0.8.0](https://github.com/gracefullight/stock-checker/compare/v0.7.13...v0.8.0) (2026-10-13)
+
+
+### Features
+
+* **api:** support job deep links on the market-screen list ([6b1ce0b](https://github.com/gracefullight/stock-checker/commit/6b1ce0be94a7d5d532bb8557ddcffe3a006a532c))
+* **core:** add configured-universe provenance to market screens ([3353844](https://github.com/gracefullight/stock-checker/commit/335384420b10607585607be4d2851a858237fb9b))
+* **core:** add matched SPY benchmarks to strategy validation ([ac3a292](https://github.com/gracefullight/stock-checker/commit/ac3a2928041ea701204a3699e883ddccb90b24d8))
+* **core:** add opt-in pruning for saved market scans ([c6b8075](https://github.com/gracefullight/stock-checker/commit/c6b8075fb7d761f7e76cb27f563f56c53872e727))
+* **core:** add position ledger with five-session exit plan and digest ([eb0120e](https://github.com/gracefullight/stock-checker/commit/eb0120e4cf1b521745c3ee3efad88b53132fac47))
+* **core:** add trade plan, cohort and heartbeat to whatsapp reports ([6676375](https://github.com/gracefullight/stock-checker/commit/6676375fd77f1e740c5672e607a1e71966c2da08))
+* **core:** judge forward paper outcomes against SPY ([ef87918](https://github.com/gracefullight/stock-checker/commit/ef87918be5662229254a5ac9557333065d188696))
+* **core:** scan the validated universe daily with a session gate ([62daa46](https://github.com/gracefullight/stock-checker/commit/62daa4693aa42a5e8668cc8a7cd99790896b3560))
+* **core:** structured gate blockers, eligibility floors and cluster options ([d35932f](https://github.com/gracefullight/stock-checker/commit/d35932f9bf96b35c466dde2e774c5dcc572a1bc6))
+* **daily-report:** append position digest and add positions task ([7af457b](https://github.com/gracefullight/stock-checker/commit/7af457b909d92c8191e03865de67028705ffbd13))
+* **mcp:** add list_market_screens and get_daily_report with compact output ([2a53986](https://github.com/gracefullight/stock-checker/commit/2a539866f93973cd1c69ef5170927767db54e687))
+* **web:** derive score visuals from final decision and frozen thresholds ([9b525bc](https://github.com/gracefullight/stock-checker/commit/9b525bc02a108b7e0d4483a5dca66de51adc10a6))
+* **web:** korean decision reasons, validated stat and hold-window earnings warning ([d37a3ce](https://github.com/gracefullight/stock-checker/commit/d37a3cea56af9c552fb5968f23f505ac8382f56b))
+* **web:** market-screen deep links, near-miss view and job lane labels ([8b5d51c](https://github.com/gracefullight/stock-checker/commit/8b5d51c32eddd8eb61e054d1a614c4ff5c8a2759))
+* **web:** proxy /api same-origin and surface server error text ([a1df0ce](https://github.com/gracefullight/stock-checker/commit/a1df0ce20089e37fb7bf374a2aba4e201e5cc560))
+* **web:** separate legacy and current-config chart signal markers ([9d5893b](https://github.com/gracefullight/stock-checker/commit/9d5893b296596aff2402a1acf861226155240f79))
+* **whatsapp:** probe gateway, retry definite non-sends, pin recipients ([fffdc9a](https://github.com/gracefullight/stock-checker/commit/fffdc9a1b4184468984632f3e90fa657696ce908))
+
+
+### Bug Fixes
+
+* **api:** bind to loopback, restrict CORS, and guard every write ([1783c7b](https://github.com/gracefullight/stock-checker/commit/1783c7bfe14ee654a7347a8d042b2edf25738ee3))
+* **api:** cap and throttle screener fan-out and report unavailable tickers ([f589e4e](https://github.com/gracefullight/stock-checker/commit/f589e4e721f95dce74f59bbf51e732a4097c4a23))
+* **cli:** apply extra-data flags to all tickers, print portfolio reports, add --sort-by ([de7f9e0](https://github.com/gracefullight/stock-checker/commit/de7f9e0efdccdc1fa80a6695842866afaaec6d96))
+* **core:** anchor portfolio and watchlist stores under data/ ([7a724a9](https://github.com/gracefullight/stock-checker/commit/7a724a9b85c4e248295f7403036799108536ba7f))
+* **core:** fail explicit config paths with the violated validator rule ([979b893](https://github.com/gracefullight/stock-checker/commit/979b89346ff5a79688939e4838f178db29dddaf3))
+* **core:** fingerprint prediction CSV rows and read only the validated strategy ([f1b6dbe](https://github.com/gracefullight/stock-checker/commit/f1b6dbe5c96d468a37c61a2b5f7c15516226f5c3))
+* **core:** report real slack webhook status and drop sell levels ([5e0bacc](https://github.com/gracefullight/stock-checker/commit/5e0baccfef128a20244b05ae0eafa074a183c337))
+* **core:** report unavailable benchmarks and stale sessions instead of hold ([bfdd6fe](https://github.com/gracefullight/stock-checker/commit/bfdd6feb06e286096b994a8ad34fd2e61310179f))
+* **web:** never serve signal pages from the service worker cache ([b27269a](https://github.com/gracefullight/stock-checker/commit/b27269a7368fbb562dec7cd0107b506381d336f0))
+* **web:** resolve core alias imports and normalize engine gate blockers ([2aded8a](https://github.com/gracefullight/stock-checker/commit/2aded8a821b84841fa68bc36368fd22521d641d7))
+
+
+### Refactoring
+
+* **core:** extract shared NYSE session calendar ([06aebe1](https://github.com/gracefullight/stock-checker/commit/06aebe1a8e8e4bb52fbd2ebf74b84234188d2ca7))
+* **core:** extract shared NYSE session calendar ([ed60a4c](https://github.com/gracefullight/stock-checker/commit/ed60a4cc7ecfcea27e098f89ac954d550492f185))
+* **core:** remove dead gaussian pre-pass and fix filter comments ([61273a9](https://github.com/gracefullight/stock-checker/commit/61273a93da5088d1f45e52b1407aaa782c8882ab))
+* **core:** remove the optimize/learn config-overwrite path ([b75f652](https://github.com/gracefullight/stock-checker/commit/b75f652b79a2cbeb3b4476f31eb7c3b3104cbd49))
+* **mcp:** move dashboard client into a type-checked js module ([d02e7ee](https://github.com/gracefullight/stock-checker/commit/d02e7ee450d932a550920387df85c1d1d1724d64))
+
+
+### Documentation
+
+* align agents, readme, and design docs with the code ([faf49c6](https://github.com/gracefullight/stock-checker/commit/faf49c687a38e19afd620fb2c42abf03dc5f2633))
+* describe CLI sort-by, portfolio report, MCP discovery tools, and API hardening ([56e7598](https://github.com/gracefullight/stock-checker/commit/56e759809d6da24fa3b5bbf1bfab6e4966569a32))
+* describe the validated-universe daily report and prune task ([5f8f72d](https://github.com/gracefullight/stock-checker/commit/5f8f72d814da43c63f6ba8cb160cc34b7dab34cb))
+* state the leader-pullback result relative to SPY ([f41b4db](https://github.com/gracefullight/stock-checker/commit/f41b4db8e5781593f820a1a683ae7ec8653313fc))
+
+
+### Tests
+
+* align api and mcp fixtures with benchmark and daily state fields ([c1d6452](https://github.com/gracefullight/stock-checker/commit/c1d6452b2c5968fd2d9ef57966b49fc145a1ef29))
+* **core:** accept collapsed price-tier causes in screen summaries ([e2102fd](https://github.com/gracefullight/stock-checker/commit/e2102fdd42695c3b62f742ce397d5baf64ad72a5))
+* **core:** strip comments before scanning browser entry imports ([0912353](https://github.com/gracefullight/stock-checker/commit/0912353e8383e880977d70db5b926158e8e0e298))
+* **mcp:** raise stdio timeouts and keep sibling suites running ([774ceb1](https://github.com/gracefullight/stock-checker/commit/774ceb15a0a425c28007e5751e78b0f8f3acaa5e))
+* **web:** align market-screen fixtures with universe union and benchmark fields ([018e772](https://github.com/gracefullight/stock-checker/commit/018e7720b28499ed43b7083877c85b6e45a40053))
+
+
+### Build System
+
+* **finance:** scope python quality gates to packages/finance ([82e0694](https://github.com/gracefullight/stock-checker/commit/82e0694c426a5eec17585c907f5602e7cd9e8fbf))
+
+
+### Continuous Integration
+
+* **release:** exclude nightly data commits from releases ([54d18f4](https://github.com/gracefullight/stock-checker/commit/54d18f41c854b8fdf69bf8d0af8dbbe396e94e2a))
+
+
+### Maintenance
+
+* **main:** release 0.7.10 ([420c573](https://github.com/gracefullight/stock-checker/commit/420c5732c81e6e2c3bc4454798eebc697b9453b7))
+* **main:** release 0.7.11 ([959921c](https://github.com/gracefullight/stock-checker/commit/959921cc688a3c808afa014abccd61464cc8cf96))
+* **main:** release 0.7.12 ([548182c](https://github.com/gracefullight/stock-checker/commit/548182ccb38aee37c989fd388427e61029f7ca1d))
+* **main:** release 0.7.13 ([1744d18](https://github.com/gracefullight/stock-checker/commit/1744d181c02750a4a83a027f4fbab518bc2f0672))
+* **main:** release 0.7.8 ([66e185f](https://github.com/gracefullight/stock-checker/commit/66e185f1f483e07a31a930f1a13cffd9cbb96824))
+* **main:** release 0.7.9 ([2fdcad4](https://github.com/gracefullight/stock-checker/commit/2fdcad42892ab9629f4326ab52adb059509305d9))
+* untrack stale memories, plans, and runtime artifacts ([d8aa9da](https://github.com/gracefullight/stock-checker/commit/d8aa9da40d5486232276bba54a5a6654716e1519))
+
 ## [0.7.13](https://github.com/gracefullight/stock-checker/compare/v0.7.12...v0.7.13) (2026-10-13)
 
 
