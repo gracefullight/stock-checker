@@ -1,9 +1,9 @@
 /* biome-ignore-all lint/a11y/noNoninteractiveTabindex: The ARIA tabpanel is intentionally focusable so keyboard users can reach empty and loading results. */
 'use client';
 
-import type { StockScreenMatch } from '@stock-checker/core/src/reports/stock-screen.ts';
 import Link from 'next/link';
 import { SignalBadge } from '@/components/signal-badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -13,11 +13,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { MarketScreenJobSnapshot, MarketScreenResultKind } from '@/lib/api';
+import {
+  type NearMissTierInfo,
+  sortByNearMiss,
+} from '@/features/market-screen/utils/classify-near-miss';
+import type { MarketScreenJobSnapshot, MarketScreenResultKind, StockScreenMatch } from '@/lib/api';
+import { describeBlock, translateGateReason } from '@/lib/signal-reasons.locale';
+import { deriveSignalVisual, signalThresholdsFromConfig } from '@/lib/signal-visuals';
 
 const TABS: Array<{ kind: MarketScreenResultKind; label: string }> = [
   { kind: 'matches', label: 'MATCHED' },
-  { kind: 'excluded', label: 'EXCLUDED' },
+  { kind: 'excluded', label: 'NEAR MISS · EXCLUDED' },
   { kind: 'unavailable', label: 'UNAVAILABLE' },
 ];
 const number = (value: number | null | undefined) =>
@@ -28,6 +34,8 @@ interface MarketScreenResultsProps {
   kind: MarketScreenResultKind;
   offset: number;
   loading: boolean;
+  /** True when the view auto-switched to near misses because no match exists. */
+  nearMissView?: boolean;
   onKindChange: (kind: MarketScreenResultKind) => void;
   onOffsetChange: (offset: number) => void;
 }
@@ -37,12 +45,23 @@ export function MarketScreenResults({
   kind,
   offset,
   loading,
+  nearMissView = false,
   onKindChange,
   onOffsetChange,
 }: MarketScreenResultsProps) {
   const page =
     snapshot?.page.kind === kind && snapshot.page.offset === offset ? snapshot.page : null;
   const pending = !!snapshot && snapshot.job.progress.pending + snapshot.job.progress.inFlight > 0;
+  const config = snapshot?.job.criteria.pipelineConfig;
+  const thresholds = signalThresholdsFromConfig(config);
+  const matches = page?.items.filter((item): item is StockScreenMatch => 'decision' in item) ?? [];
+  const ranked: Array<{ item: StockScreenMatch; info: NearMissTierInfo | null }> =
+    kind === 'excluded'
+      ? sortByNearMiss(matches, {
+          buyThreshold: thresholds.buy,
+          rsMin: config?.qualityGate?.rsMin,
+        })
+      : matches.map((item) => ({ item, info: null }));
   return (
     <div className="min-w-0 space-y-4">
       <div role="tablist" aria-label="Market-screen results" className="flex flex-wrap gap-2">
@@ -73,6 +92,12 @@ export function MarketScreenResults({
           </Button>
         ))}
       </div>
+      {nearMissView && (
+        <p role="status" className="text-sm text-warning" lang="ko">
+          이 작업에는 {snapshot?.job.criteria.decision ?? 'BUY'} 매치가 없습니다. 가장 가까웠던 제외
+          종목(근접 후보)을 티어 순으로 보여줍니다. 근접 후보는 추천이 아닙니다.
+        </p>
+      )}
       <div
         id="market-screen-result-panel"
         role="tabpanel"
@@ -113,15 +138,20 @@ export function MarketScreenResults({
                   <TableHead>TICKER</TableHead>
                   <TableHead>SESSION</TableHead>
                   <TableHead>FINAL SIGNAL</TableHead>
+                  {kind === 'excluded' && <TableHead>NEAR-MISS TIER</TableHead>}
                   <TableHead className="text-right">BUY SCORE</TableHead>
                   <TableHead className="text-right">SELL SCORE</TableHead>
                   <TableHead className="text-right">REFERENCE CLOSE (USD)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {page.items.map((row) => {
-                  if (!('decision' in row)) return null;
-                  const item = row as StockScreenMatch;
+                {ranked.map(({ item, info }) => {
+                  const visual = deriveSignalVisual({
+                    decision: item.decision,
+                    score: item.score,
+                    buyScore: item.buyScore,
+                    thresholds,
+                  });
                   return (
                     <TableRow key={item.ticker}>
                       <TableCell className="font-mono">
@@ -137,8 +167,18 @@ export function MarketScreenResults({
                         {item.dataAsOf ?? 'N/A'}
                       </TableCell>
                       <TableCell>
-                        <SignalBadge signal={item.decision} />
+                        <SignalBadge signal={item.decision} blocked={visual.state === 'blocked'} />
                       </TableCell>
+                      {info && (
+                        <TableCell>
+                          <Badge variant="outline" className="font-mono text-[10px]">
+                            {info.label}
+                          </Badge>
+                          <p className="mt-1 max-w-72 whitespace-normal text-xs text-muted-foreground">
+                            {info.detail}
+                          </p>
+                        </TableCell>
+                      )}
                       <TableCell className="text-right font-mono tabular-nums">
                         {number(item.buyScore)}
                       </TableCell>
@@ -154,23 +194,27 @@ export function MarketScreenResults({
               </TableBody>
             </Table>
             <div className="space-y-3">
-              {page.items.map((item) =>
-                'decision' in item ? (
-                  <details
-                    key={item.ticker}
-                    className="rounded-md border border-border px-3 py-2 text-sm"
-                  >
-                    <summary className="cursor-pointer font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                      {item.ticker} — SIGNAL REASONS
-                    </summary>
-                    <ul className="mt-2 list-disc space-y-1 pl-4 text-muted-foreground">
-                      {item.gateReasons.map((reason, index) => (
-                        <li key={String(index) + reason}>{reason}</li>
+              {ranked.map(({ item }) => (
+                <details
+                  key={item.ticker}
+                  className="rounded-md border border-border px-3 py-2 text-sm"
+                >
+                  <summary className="cursor-pointer font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    {item.ticker} — 결정 사유 (SIGNAL REASONS)
+                  </summary>
+                  <ul className="mt-2 list-disc space-y-1 pl-4 text-muted-foreground" lang="ko">
+                    {item.blockedBy &&
+                      describeBlock(item.blockedBy).map((line, index) => (
+                        <li key={`block-${String(index)}${line}`} className="text-foreground">
+                          {line}
+                        </li>
                       ))}
-                    </ul>
-                  </details>
-                ) : null
-              )}
+                    {item.gateReasons.map((reason, index) => (
+                      <li key={String(index) + reason}>{translateGateReason(reason)}</li>
+                    ))}
+                  </ul>
+                </details>
+              ))}
             </div>
           </>
         )}
@@ -204,6 +248,14 @@ export function MarketScreenResults({
           </nav>
         )}
       </div>
+      {kind === 'excluded' && (
+        <p className="text-base text-muted-foreground sm:text-sm" lang="ko">
+          근접 티어는 이 페이지 안에서만 정렬됩니다 (서버는 원시 매수 점수 순으로 페이지를
+          나눕니다). T1 = 점수·추세 통과 후 게이트 차단, T2 = 점수가 기준의 80% 이상, T3 = 추세와
+          상대강도 통과, T4 = 추세만 통과, T5 = 추세 미통과. SMA50 풀백 여부는 구조화된 검사 결과가
+          있을 때만 표시됩니다.
+        </p>
+      )}
       <p className="text-base text-muted-foreground sm:text-sm">
         Scores measure signal strength, not win or stop-loss probabilities. Future next-session
         entry prices are unknown; price and average daily price range risk references are in USD and

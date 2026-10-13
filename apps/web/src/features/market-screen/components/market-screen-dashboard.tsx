@@ -1,12 +1,23 @@
 'use client';
 
+import { useEffect, useMemo, useState } from 'react';
+import { ValidatedStrategyNote } from '@/components/common/validated-strategy-note';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
 import { Progress, ProgressLabel, ProgressValue } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
 import { MarketScreenPerformance } from '@/features/market-screen/components/market-screen-performance';
 import { MarketScreenResults } from '@/features/market-screen/components/market-screen-results';
+import {
+  isStalePausedJob,
+  isValidatedUniverseJob,
+  jobOrigin,
+  jobSessionDate,
+  universeLabel,
+} from '@/features/market-screen/utils/market-screen-universe';
 import {
   MARKET_SCREEN_PAGE_SIZE,
   useMarketScreenDashboard,
@@ -19,7 +30,10 @@ const FILTER_LABELS: Record<string, string> = {
   sh_avgvol_o500: 'Average volume over 500k shares',
   sh_price_o5: 'Price over $5',
 };
-function publicSource(value: string): string | null {
+const HIDE_STALE_STORAGE_KEY = 'market-screen-hide-stale-paused';
+
+function publicSource(value: string | null): string | null {
+  if (!value) return null;
   try {
     const url = new URL(value);
     return url.protocol === 'https:' &&
@@ -59,27 +73,78 @@ function RequestError({
   );
 }
 
-export function MarketScreenDashboard() {
-  const state = useMarketScreenDashboard();
+interface MarketScreenDashboardProps {
+  /** Job id from the `?job=` deep link. */
+  initialJobId?: string | null;
+  /** Injectable clock for stale-job filtering (tests). */
+  now?: () => number;
+}
+
+export function MarketScreenDashboard({ initialJobId = null, now }: MarketScreenDashboardProps) {
+  const state = useMarketScreenDashboard({ initialJobId });
   const { jobs, snapshot } = state;
   const job = snapshot?.job;
   const processed = job ? job.progress.analyzed + job.progress.unavailable : 0;
   const source = job ? publicSource(job.universe.url) : null;
+  const [hideStale, setHideStale] = useState(false);
+  useEffect(() => {
+    try {
+      setHideStale(window.localStorage.getItem(HIDE_STALE_STORAGE_KEY) === '1');
+    } catch {
+      /* private mode etc. */
+    }
+  }, []);
+  function toggleHideStale(checked: boolean) {
+    setHideStale(checked);
+    try {
+      window.localStorage.setItem(HIDE_STALE_STORAGE_KEY, checked ? '1' : '0');
+    } catch {
+      /* selection just won't persist */
+    }
+  }
+  const nowMs = now ? now() : Date.now();
+  const visibleJobs = useMemo(
+    () =>
+      jobs?.jobs.filter(
+        (saved) => !hideStale || saved.id === state.selectedId || !isStalePausedJob(saved, nowMs)
+      ) ?? [],
+    [jobs, hideStale, nowMs, state.selectedId]
+  );
+  const hiddenCount = (jobs?.jobs.length ?? 0) - visibleJobs.length;
+  const deepLinkMissing =
+    !!initialJobId && !!jobs && !jobs.jobs.some((saved) => saved.id === initialJobId);
   return (
     <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-sm font-bold font-mono tracking-widest text-primary">MARKET SCREEN</h1>
         <span className="text-xs font-mono text-muted-foreground">
-          FINVIZ CANDIDATES → STOCK CHECKER
+          SAVED CANDIDATE JOBS → STOCK CHECKER
         </span>
       </div>
       <p className="text-base text-muted-foreground sm:text-sm">
-        Read saved candidate jobs created with Stock Checker MCP. Opening this page only reads
-        progress; analysis starts when you choose Resume.
+        Read saved candidate jobs created with Stock Checker MCP or the daily report. Opening this
+        page only reads progress; analysis starts when you choose Resume. Deep link:{' '}
+        <code className="font-mono text-xs">/market-screen?job=&lt;id&gt;</code>.
       </p>
       <Card className="min-w-0">
-        <CardHeader className="border-b border-border">
-          <CardTitle className="text-sm font-mono">SAVED JOBS</CardTitle>
+        <CardHeader className="gap-3 border-b border-border">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="text-sm font-mono">SAVED JOBS</CardTitle>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="market-screen-hide-stale"
+                size="sm"
+                checked={hideStale}
+                onCheckedChange={toggleHideStale}
+              />
+              <Label htmlFor="market-screen-hide-stale" className="text-xs">
+                Hide stale paused jobs (48h+)
+                {hiddenCount > 0 && (
+                  <span className="font-mono text-muted-foreground">· {hiddenCount} hidden</span>
+                )}
+              </Label>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="min-w-0 space-y-4">
           {state.jobsError && (
@@ -89,6 +154,12 @@ export function MarketScreenDashboard() {
               onRetry={state.retryList}
             />
           )}
+          {deepLinkMissing && (
+            <p role="status" className="text-sm text-warning">
+              Linked job {initialJobId} is not on this page of saved jobs; its status is loaded
+              directly below if it exists.
+            </p>
+          )}
           {!jobs && !state.jobsError ? (
             <p role="status" className="text-sm text-muted-foreground">
               Loading saved jobs...
@@ -96,14 +167,19 @@ export function MarketScreenDashboard() {
           ) : jobs?.jobs.length === 0 ? (
             <p className="text-base text-muted-foreground sm:text-sm">
               No saved jobs on this page. Use prepare_finviz_screen and create_market_screen in
-              Stock Checker MCP to collect candidates and create a saved job.
+              Stock Checker MCP, or run the daily report, to create a saved job.
+            </p>
+          ) : visibleJobs.length === 0 ? (
+            <p className="text-base text-muted-foreground sm:text-sm">
+              All {jobs?.jobs.length} jobs on this page are stale paused jobs. Turn the toggle off
+              to show them.
             </p>
           ) : (
             <ul
               className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3"
               aria-label="Saved market-screen jobs"
             >
-              {jobs?.jobs.map((saved) => (
+              {visibleJobs.map((saved) => (
                 <li key={saved.id} className="min-w-0">
                   <Button
                     variant={state.selectedId === saved.id ? 'secondary' : 'outline'}
@@ -116,11 +192,16 @@ export function MarketScreenDashboard() {
                         {saved.criteria.decision} · {saved.status.toUpperCase()} ·{' '}
                         {saved.universe.collectedCount} CANDIDATES
                       </span>
-                      <span className="block break-all font-mono text-xs text-muted-foreground">
-                        {saved.id}
+                      <span className="block text-xs">
+                        {universeLabel(saved)} · {jobOrigin(saved)}
+                      </span>
+                      <span className="block font-mono text-xs text-muted-foreground">
+                        US 세션 {jobSessionDate(saved) ?? 'N/A'} · #{saved.id.slice(0, 8)}
+                        <span className="sr-only"> full id {saved.id}</span>
                       </span>
                       <span className="block text-xs text-muted-foreground">
-                        {date(saved.updatedAt)}
+                        Updated {date(saved.updatedAt)}
+                        {isStalePausedJob(saved, nowMs) && ' · STALE PAUSED'}
                       </span>
                     </span>
                   </Button>
@@ -195,6 +276,7 @@ export function MarketScreenDashboard() {
                 <CardTitle className="text-sm font-mono">JOB PROGRESS</CardTitle>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline">{job.status.toUpperCase()}</Badge>
+                  <Badge variant="outline">{universeLabel(job)}</Badge>
                   <Button
                     size="sm"
                     variant="outline"
@@ -232,7 +314,9 @@ export function MarketScreenDashboard() {
                   </Button>
                 </div>
               </div>
-              <p className="break-all text-xs font-mono text-muted-foreground">{job.id}</p>
+              <p className="break-all text-xs font-mono text-muted-foreground">
+                {jobOrigin(job)} · US 세션 {jobSessionDate(job) ?? 'N/A'} · {job.id}
+              </p>
             </CardHeader>
             <CardContent className="space-y-4">
               <Progress value={processed} max={job.progress.total}>
@@ -261,6 +345,9 @@ export function MarketScreenDashboard() {
               <p className="text-sm text-muted-foreground">
                 History: {job.criteria.lookbackDays} calendar days. Last checkpoint:{' '}
                 {date(job.updatedAt)}.
+                {job.criteria.pipelineConfig
+                  ? ' Frozen pipeline configuration attached.'
+                  : ' Legacy job without a frozen configuration; default thresholds are shown.'}
               </p>
               {job.pauseReason && (
                 <p role="status" className="text-base text-warning sm:text-sm">
@@ -279,17 +366,29 @@ export function MarketScreenDashboard() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">FINVIZ · {job.universe.completeness.toUpperCase()}</Badge>
+                <Badge variant="outline">
+                  {isValidatedUniverseJob(job) ? 'CONFIGURED UNIVERSE' : 'FINVIZ'} ·{' '}
+                  {job.universe.completeness.toUpperCase()}
+                </Badge>
+                <Badge variant={isValidatedUniverseJob(job) ? 'secondary' : 'outline'}>
+                  {universeLabel(job)}
+                </Badge>
                 <span className="font-mono text-sm tabular-nums">
                   {job.universe.collectedCount} / {job.universe.sourceTotal} FILTERED CANDIDATES
                   COLLECTED
                 </span>
               </div>
+              {!isValidatedUniverseJob(job) && (
+                <p className="text-sm text-warning" lang="ko">
+                  Finviz 후보는 검증 유니버스(538종목 재측정) 밖의 모집단입니다. 아래 검증 통계는 이
+                  작업의 후보 집합에 그대로 적용되지 않습니다.
+                </p>
+              )}
               <p className="text-sm text-muted-foreground">
                 Captured: {date(job.universe.capturedAt)}. Completeness is caller-declared; counts
                 do not independently verify source coverage.
               </p>
-              <ul className="flex flex-wrap gap-2" aria-label="Finviz source filters">
+              <ul className="flex flex-wrap gap-2" aria-label="Source filters">
                 {job.universe.filters.map((filter, index) => (
                   <li key={String(index) + filter}>
                     <Badge variant="secondary" className="max-w-full whitespace-normal break-all">
@@ -298,7 +397,7 @@ export function MarketScreenDashboard() {
                   </li>
                 ))}
               </ul>
-              {!job.universe.filters.includes('ta_sma50_pb') && (
+              {!isValidatedUniverseJob(job) && !job.universe.filters.includes('ta_sma50_pb') && (
                 <p className="text-sm text-muted-foreground">
                   No below-SMA50 candidate cut is recorded for this job.
                 </p>
@@ -314,9 +413,9 @@ export function MarketScreenDashboard() {
                 </a>
               )}
               <p className="text-base text-muted-foreground sm:text-sm">
-                Finviz selects candidates. The Stock Checker final decision determines matches.
-                Intraday quotes, price adjustments and averaging periods can differ; optional size,
-                price and volume cuts are not engine BUY rules.
+                The candidate source selects candidates. The Stock Checker final decision determines
+                matches. Intraday quotes, price adjustments and averaging periods can differ;
+                optional size, price and volume cuts are not engine BUY rules.
               </p>
               <details className="text-sm">
                 <summary className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -342,11 +441,18 @@ export function MarketScreenDashboard() {
                 kind={state.kind}
                 offset={state.offset}
                 loading={state.jobLoading}
+                nearMissView={state.nearMissView}
                 onKindChange={state.selectKind}
                 onOffsetChange={state.setOffset}
               />
             </CardContent>
           </Card>
+          <ValidatedStrategyNote
+            perSample={[
+              { label: '이 작업 BUY 매치', value: String(job.progress.matched) },
+              { label: '이 작업 후보 수', value: String(job.progress.total) },
+            ]}
+          />
           <MarketScreenPerformance key={job.id} jobId={job.id} />
         </>
       )}
