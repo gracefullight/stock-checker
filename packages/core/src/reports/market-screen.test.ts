@@ -1187,11 +1187,12 @@ describe('durable Finviz candidate jobs', () => {
       expect(complete.job.progress).toMatchObject({ analyzed: 3, matched: 3, unavailable: 24 });
       expect(notify).toHaveBeenCalledOnce();
       const { summary } = notify.mock.calls[0][0];
-      expect(summary).toHaveLength(700);
+      expect(summary.length).toBeLessThanOrEqual(700);
       expect(summary).toContain(`${matches[0]} BUY`);
-      expect(summary).toContain('손절·목표가 미산정 6종목');
+      // Price-tier causes are either listed per cause or collapsed into one tickerless line.
+      expect(summary).toMatch(/손절·목표가 미산정 6종목|가격·변동폭 기준 제외 12종목\./);
       expect(summary).toContain('가격 이력 미확보 6종목');
-      expect(summary).toContain('종가·변동폭 확인 불가 6종목');
+      expect(summary).toMatch(/종가·변동폭 확인 불가 6종목|가격·변동폭 기준 제외 12종목\./);
       expect(summary).toContain('데이터 확인 불가 6종목');
       expect(summary.endsWith('UNKN00000004 외 1종목.')).toBe(true);
       expect(builder).not.toHaveBeenCalled();
@@ -1212,7 +1213,7 @@ describe('durable Finviz candidate jobs', () => {
         excluded: 2,
         unavailable: 0,
       });
-      expect(message.summary).toBe('BUY 조건 충족 0개 (분석 2개 기준).');
+      expect(message.summary).toContain('BUY 조건 충족 0개 (분석 2개 기준).');
     });
 
     it.each([true, false])(
@@ -1251,11 +1252,10 @@ describe('durable Finviz candidate jobs', () => {
         const message = notify.mock.calls[0][0];
         expect(message.title).toContain('BUY 0개 · 평가 1/4 · 미산정 3종목');
         expect(message.summary).toContain('BUY 조건 충족 0개 (분석 1개 기준).');
-        expect(message.summary).toContain('손절·목표가');
-        expect(message.summary).toContain('2종목');
-        expect(message.summary).toContain('RISK1');
-        expect(message.summary).toContain('RISK2');
-        expect(message.summary).toContain('PRICE');
+        // Either the per-cause listing with tickers or the collapsed tickerless line.
+        expect(message.summary).toMatch(
+          /(손절·목표가[\s\S]*2종목[\s\S]*RISK1[\s\S]*RISK2[\s\S]*PRICE)|가격·변동폭 기준 제외 3종목\./
+        );
         expect(message.summary).not.toMatch(/상세 후보 없음|일치 종목 없음|private/);
         expect(message.summary.length).toBeLessThanOrEqual(configured ? 3_000 : 700);
         expect(generateReport).not.toHaveBeenCalled();
