@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_ROUND_TRIP_COST_PCT } from '@/constants';
 import {
   createMarketScreenJob,
   getMarketScreenJob,
@@ -11,8 +12,10 @@ import {
   runMarketScreenJob,
 } from '@/reports/market-screen';
 import {
+  MARKET_SCREEN_PERFORMANCE_POLICY,
   type MarketScreenPerformanceCandle,
   registerMarketScreenRecommendation,
+  summarizeMarketScreenPerformanceLedger,
 } from '@/reports/market-screen-performance';
 import {
   acquireMarketScreenLease,
@@ -52,6 +55,15 @@ async function waitUntil(check: () => Promise<boolean>): Promise<void> {
 }
 
 describe('frozen forward paper recommendation registration', () => {
+  it('charges the same round-trip cost as the frozen validation', () => {
+    expect(MARKET_SCREEN_PERFORMANCE_POLICY.costBpsRoundTrip).toBe(
+      DEFAULT_ROUND_TRIP_COST_PCT * 100
+    );
+    expect(registerMarketScreenRecommendation(SIGNAL, PUBLICATION).policy.costBpsRoundTrip).toBe(
+      DEFAULT_ROUND_TRIP_COST_PCT * 100
+    );
+  });
+
   it('uses the next actual holiday-aware session and exactly five sessions', () => {
     expect(
       registerMarketScreenRecommendation('2026-01-16', '2026-01-17T01:00:00Z').sessions
@@ -253,6 +265,15 @@ describe('durable recommendation paper performance', () => {
     });
     expect(result.page.items[0]?.netReturnPct).toBeCloseTo(1.9, 10);
     expect(result.page.items[2]?.netReturnPct).toBe(0);
+    // SPY settles at 100.1 here: +0.1% gross, 0% net over the same sessions.
+    expect(result.page.items[0]?.spyNetReturnPct).toBeCloseTo(0, 10);
+    expect(result.page.items[0]?.excessReturnPct).toBeCloseTo(1.9, 10);
+    expect(result.page.items[1]?.excessReturnPct).toBeCloseTo(-1.1, 10);
+    expect(result.summary.spyMatched).toBe(3);
+    expect(result.summary.averageSpyNetReturnPct).toBeCloseTo(0, 10);
+    expect(result.summary.averageExcessReturnPct).toBeCloseTo((1.9 - 1.1 + 0) / 3, 10);
+    expect(result.summary.winRateWilson95?.lowerPct).toBeCloseTo(6.15, 1);
+    expect(result.summary.winRateWilson95?.upperPct).toBeCloseTo(79.23, 1);
     expect(provider.mock.calls.map((call) => call[0])).toEqual(['SPY', 'T0', 'T1', 'T2']);
     expect(provider.mock.calls.every((call) => call[1] >= 30 && call[1] <= 3650)).toBe(true);
   });
@@ -484,5 +505,57 @@ describe('durable recommendation paper performance', () => {
     expect(page.page).toMatchObject({ offset: 3, limit: 2, total: 12, hasMore: true });
     expect(page.page.items.map((row) => row.ticker)).toEqual(['T3', 'T4']);
     expect((await getMarketScreenJob(id, {}, { rootDirectory: root })).job.status).toBe('paused');
+  });
+
+  it('summarizes the cross-job ledger read-only, deduplicating ticker + session + configuration', async () => {
+    await seed(0);
+    await seed(1);
+    provider.mockImplementation(async (ticker) => candles(ticker === 'T1' ? 99 : 102));
+    await refreshMarketScreenPerformance(id, {}, deps());
+    await settled();
+    const firstJob = id;
+    const second = await createMarketScreenJob(
+      {
+        tickers: ['T0', 'T1', 'T2'],
+        autoStart: false,
+        provenance: {
+          source: 'Finviz',
+          url: 'https://finviz.com/screener?f=ind_stocksonly',
+          filters: ['ind_stocksonly'],
+          sourceTotal: 3,
+          capturedAt: PUBLICATION,
+          completeness: 'complete',
+        },
+      },
+      { rootDirectory: root, minIntervalMs: 0 }
+    );
+    id = second.job.id;
+    await seed(0);
+    await seed(2);
+    await mkdir(path.join(root, 'not-a-job'), { recursive: true });
+    provider.mockClear();
+    const ledger = await summarizeMarketScreenPerformanceLedger({}, { rootDirectory: root });
+    expect(provider).not.toHaveBeenCalled();
+    expect(ledger).toMatchObject({ jobs: 2, unreadableJobs: 0, duplicatesRemoved: 1 });
+    expect(ledger.summary).toMatchObject({
+      totalRecommendations: 3,
+      completed: 2,
+      wins: 1,
+      losses: 1,
+      pending: 1,
+      spyMatched: 2,
+      winRatePct: 50,
+    });
+    expect(ledger.summary.winRateWilson95?.lowerPct).toBeCloseTo(9.45, 1);
+    expect(ledger.summary.averageExcessReturnPct).toBeCloseTo((0 + -1.1 - 1.9) / 2, 10);
+    expect(ledger.completedRows.map((row) => [row.ticker, row.jobId])).toEqual([
+      ['T0', firstJob],
+      ['T1', firstJob],
+    ]);
+    expect(ledger.byConfig).toHaveLength(1);
+    expect(ledger.byConfig[0]).toMatchObject({ recommendations: 3, completed: 2, wins: 1 });
+    expect(ledger.byConfig[0].configSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(ledger.policy.costBpsRoundTrip).toBe(DEFAULT_ROUND_TRIP_COST_PCT * 100);
+    await rm(path.join(root, 'not-a-job'), { recursive: true, force: true });
   });
 });
