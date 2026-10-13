@@ -41,7 +41,8 @@ function collectGraph(entry: string, seen = new Set<string>()): Set<string> {
   const text = readFileSync(entry, 'utf-8');
   // Statement-wise scan (imports span multiple lines). Runtime imports only:
   // `import type` / `export type` statements are erased by the bundler.
-  const statements = text.split(';');
+  // Strip block comments first so a doc comment cannot hide the import after it.
+  const statements = text.replace(/\/\*[\s\S]*?\*\//g, '').split(';');
   const specs: string[] = [];
   for (const stmt of statements) {
     const trimmed = stmt.trim();
