@@ -1,6 +1,8 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
     "paths": {
       "@/*": ["../../packages/core/src/*"],
       "@mcp/*": ["./src/*"],
