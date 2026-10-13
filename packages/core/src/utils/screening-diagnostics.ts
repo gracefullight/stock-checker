@@ -14,12 +14,23 @@ export interface ScreeningNotificationContext {
   unavailable: readonly ScreenAnalysisUnavailable[];
 }
 
+/**
+ * Price-tier rejections (sub-dollar names whose ATR levels cannot be placed) are
+ * counted but never named: the user cannot trade them and the tickers only add noise.
+ * Provider-type failures keep their tickers so a data outage stays visible.
+ */
 const NOTIFICATION_DIAGNOSTIC_GROUPS = [
-  { code: 'risk-levels-infeasible', label: '손절·목표가 미산정' },
-  { code: 'history-unavailable', label: '가격 이력 미확보' },
-  { code: 'invalid-price-or-atr', label: '종가·변동폭 확인 불가' },
-  { code: 'unknown', label: '데이터 확인 불가' },
+  {
+    codes: ['risk-levels-infeasible', 'invalid-price-or-atr'],
+    label: '가격·변동폭 기준 제외',
+    listTickers: false,
+  },
+  { codes: ['history-unavailable'], label: '가격 이력 미확보', listTickers: true },
+  { codes: [], label: '데이터 확인 불가', listTickers: true },
 ] as const;
+const KNOWN_DIAGNOSTIC_CODES = new Set<string>(
+  NOTIFICATION_DIAGNOSTIC_GROUPS.flatMap((group) => group.codes)
+);
 
 function notificationCount(value: number): number {
   return Number.isFinite(value)
@@ -30,6 +41,25 @@ function notificationCount(value: number): number {
 function notificationTicker(ticker: string): string | null {
   const normalized = ticker.trim().toUpperCase();
   return /^[A-Z0-9^][A-Z0-9.^=-]{0,11}$/.test(normalized) ? normalized : null;
+}
+
+/** Display a known UTC instant to minute precision without using the host timezone. */
+export function formatScreenTimestamp(value: string): string {
+  const timestamp = Date.parse(value);
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) ||
+    !Number.isFinite(timestamp) ||
+    new Date(timestamp).toISOString() !== value
+  ) {
+    return value;
+  }
+  return `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`;
+}
+
+/** Short, display-safe job reference; anything that is not a UUID-like id is withheld. */
+export function formatShortJobId(jobId: string | undefined): string | null {
+  if (!jobId || !/^[a-f0-9-]{8,64}$/i.test(jobId)) return null;
+  return jobId.slice(0, 8).toLowerCase();
 }
 
 export function formatScreeningOutcome(context: ScreeningNotificationContext): string {
@@ -46,14 +76,19 @@ export function formatScreeningOutcome(context: ScreeningNotificationContext): s
         : `분석 결과가 없어 ${decision} 조건 충족 여부를 확인할 수 없습니다.`;
   const lines = [outcome];
 
-  for (const { code, label } of NOTIFICATION_DIAGNOSTIC_GROUPS) {
+  for (const { codes, label, listTickers } of NOTIFICATION_DIAGNOSTIC_GROUPS) {
+    const members = new Set<string>(codes);
     const failures = unavailable.filter((failure) => {
-      const known = NOTIFICATION_DIAGNOSTIC_GROUPS.some(
-        (group) => group.code !== 'unknown' && group.code === failure.diagnostics?.code
-      );
-      return code === 'unknown' ? !known : failure.diagnostics?.code === code;
+      const code = failure.diagnostics?.code;
+      return members.size === 0
+        ? code === undefined || !KNOWN_DIAGNOSTIC_CODES.has(code)
+        : code !== undefined && members.has(code);
     });
     if (failures.length === 0) continue;
+    if (!listTickers) {
+      lines.push(`${label} ${failures.length}종목.`);
+      continue;
+    }
     const tickers = [...new Set(failures.map(({ ticker }) => notificationTicker(ticker)))].filter(
       (ticker): ticker is string => ticker !== null
     );

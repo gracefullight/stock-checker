@@ -43,7 +43,6 @@ export async function buildStockSignalReportNotification(
   const actionable = results.filter((item) => item.opinion === 'BUY' || item.opinion === 'SELL');
   if (!actionable.length) return null;
   const dates = [...new Set(actionable.map((item) => item.date))].sort();
-  const buyCount = actionable.filter((item) => item.opinion === 'BUY').length;
   const candidates: StockReportAlertCandidate[] = actionable.map((item) => {
     const context = contexts.get(item.ticker);
     return {
@@ -56,15 +55,21 @@ export async function buildStockSignalReportNotification(
         takeProfit: item.takeProfit,
         atr: item.atr,
       },
-      ...(context ? { context, gateReasons: gateReasons(context) } : {}),
+      ...(context
+        ? {
+            context,
+            gateReasons: gateReasons(context),
+            gates: context.pipelineResult.gateResults,
+          }
+        : {}),
     };
   });
   return buildStockReportWhatsAppNotification(
     {
       title: '주식 신호',
       asOf: `종가 ${dates.length === 1 ? dates[0] : `${dates[0]}~${dates[dates.length - 1]}`}`,
-      coverageSummary: `BUY ${buyCount} · SELL ${actionable.length - buyCount} · 알림 ${Math.min(3, actionable.length)}/${actionable.length}개`,
       lookbackDays: 730,
+      universeSource: 'configured-universe',
       candidates,
     },
     dependencies

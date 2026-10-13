@@ -1,3 +1,4 @@
+import { DateTime } from 'luxon';
 import { buildTickerContext, runSignalsWithContext } from '@/optimization/engine';
 import {
   type HistoricalOutcomesReport,
@@ -6,18 +7,31 @@ import {
 import { gateReasons } from '@/reports/signal-reasons';
 import type { AnalystTargetsReport, getAnalystTargets } from '@/services/analyst-targets';
 import type { analyzeTickerContext, TickerAnalysisContext } from '@/services/ticker-analysis';
-import type { PipelineConfig } from '@/types';
+import type { PipelineConfig, PipelineResult } from '@/types';
 import {
   formatScreeningOutcome,
+  formatScreenTimestamp,
+  formatShortJobId,
   type ScreeningNotificationContext,
 } from '@/utils/screening-diagnostics';
-import type { WhatsAppNotification } from '@/utils/whatsapp';
+import {
+  latestCompletedSession,
+  NYSE_EARLY_CLOSES,
+  parseSessionDate,
+  sessionCloseAt,
+  sessionOpenAt,
+  sessionsAfter,
+  US_MARKET_TIMEZONE,
+} from '@/utils/us-market-calendar';
+import { sanitizeNotificationText, type WhatsAppNotification } from '@/utils/whatsapp';
 
 export interface StockReportAlertCandidate {
   ticker: string;
   decision: 'BUY' | 'SELL' | 'HOLD';
   dataAsOf: string | null;
   gateReasons?: readonly string[];
+  /** Structured gates from the saved decision; feeds the plain-language setup line. */
+  gates?: PipelineResult['gateResults'];
   reference?: {
     price: number;
     stopLoss: number;
@@ -27,15 +41,33 @@ export interface StockReportAlertCandidate {
   context?: TickerAnalysisContext;
 }
 
+export interface PositionSizing {
+  /** Maximum concurrent positions; each BUY is sized as 1/maxPositions of capital. */
+  maxPositions: number;
+  /** Optional trading capital (currency unknown to the formatter). */
+  capital?: number;
+}
+
 export interface StockReportAlertInput {
   title: string;
   asOf: string;
-  coverageSummary: string;
+  /** @deprecated Ignored: coverage lives in the title and the screening context. */
+  coverageSummary?: string;
   lookbackDays: number;
   /** Complete configuration frozen when the saved screening decisions were generated. */
   pipelineConfig?: PipelineConfig;
   candidates: readonly StockReportAlertCandidate[];
   screening?: ScreeningNotificationContext;
+  /** Completed US session the decisions refer to; derived from candidates or the calendar otherwise. */
+  usSession?: string | null;
+  /** Saved job id; rendered as a short reference. */
+  jobId?: string;
+  /** 'configured-universe' (validated) or 'finviz-candidates' (outside the measured universe). */
+  universeSource?: string;
+  /** Every ticker matching the screening decision, so names beyond the detailed ones are listed. */
+  matchedTickers?: readonly string[];
+  /** Position-size hint; resolved from the environment when omitted. */
+  sizing?: PositionSizing;
 }
 
 export interface StockReportAlertDetail {
@@ -65,26 +97,37 @@ export interface StockReportAlertDependencies {
   timeBudgetMs?: number;
 }
 
+/**
+ * In-sample remeasurement of the leader-pullback rule on the configured universe
+ * (docs/validation/leader-pullback-2026-10-06.md). Non-overlapping next-open to
+ * fifth-close trades after 10 bps; not a future win probability.
+ */
+export const VALIDATED_STRATEGY_COHORT = Object.freeze({
+  trades: 155,
+  wins: 89,
+  winRatePct: 57.4,
+  meanNetReturnPct: 0.63,
+  worstTradePct: -13.6,
+  entries: { from: '2019-08', to: '2026-09' },
+});
+
 const MAX_DETAILS = 3;
 const MAX_SUMMARY_LENGTH = 3000;
 const TIME_BUDGET_MS = 30_000;
 const TICKER = /^\^?[A-Z0-9]+(?:[.-][A-Z0-9]+)*(?:=[A-Z0-9]+)?$/;
+const MIN_PER_TICKER_SAMPLES = 10;
+const DEFAULT_MAX_POSITIONS = 5;
+const SYDNEY = 'Australia/Sydney';
+const WEEKDAYS_KO = ['월', '화', '수', '목', '금', '토', '일'];
 
-function text(value: string, maximum: number): string {
-  const clean = value
-    .toWellFormed()
-    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\s]+/gu, ' ')
-    .trim();
-  let output = '';
-  for (const character of clean) {
-    if (output.length + character.length > maximum) break;
-    output += character;
-  }
-  return output.trimEnd();
-}
+const text = (value: string, maximum: number) => sanitizeNotificationText(value, maximum);
 
 function number(value: number | null | undefined): string {
   return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '자료 없음';
+}
+
+function signed(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
 function count(value: number): boolean {
@@ -121,22 +164,107 @@ function sourceUrl(value: string | null): string | null {
 }
 
 function retrievedAt(value: string): string {
-  const instant = Date.parse(value);
-  if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) ||
-    !Number.isFinite(instant) ||
-    new Date(instant).toISOString() !== value
-  ) {
-    return text(value, 30);
+  const formatted = formatScreenTimestamp(value);
+  return formatted === value ? text(value, 30) : formatted;
+}
+
+/** Reads STOCK_CHECKER_MAX_POSITIONS (default 5) and STOCK_CHECKER_CAPITAL; invalid values fall back. */
+export function resolvePositionSizing(
+  environment: NodeJS.ProcessEnv = process.env
+): PositionSizing {
+  const positions = environment.STOCK_CHECKER_MAX_POSITIONS?.trim();
+  const capital = environment.STOCK_CHECKER_CAPITAL?.trim();
+  const maxPositions =
+    positions && /^\d{1,3}$/.test(positions) && Number(positions) >= 1 && Number(positions) <= 100
+      ? Number(positions)
+      : DEFAULT_MAX_POSITIONS;
+  const amount = capital && /^\d{1,15}(?:\.\d{1,2})?$/.test(capital) ? Number(capital) : undefined;
+  return amount && amount > 0 ? { maxPositions, capital: amount } : { maxPositions };
+}
+
+function validSizing(sizing: PositionSizing | undefined): PositionSizing {
+  if (!sizing || !Number.isSafeInteger(sizing.maxPositions) || sizing.maxPositions < 1) {
+    return { maxPositions: DEFAULT_MAX_POSITIONS };
   }
-  return `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`;
+  const capital =
+    typeof sizing.capital === 'number' && Number.isFinite(sizing.capital) && sizing.capital > 0
+      ? sizing.capital
+      : undefined;
+  return capital
+    ? { maxPositions: Math.min(100, sizing.maxPositions), capital }
+    : { maxPositions: Math.min(100, sizing.maxPositions) };
+}
+
+function isoDate(value: string | null | undefined): string | null {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value))
+    ? value
+    : null;
+}
+
+function usDay(date: string): string {
+  const parsed = DateTime.fromISO(date, { zone: US_MARKET_TIMEZONE });
+  return parsed.isValid
+    ? `${parsed.toFormat('MM-dd')}(${WEEKDAYS_KO[parsed.weekday - 1]})`
+    : text(date, 10);
+}
+
+function sydneyTime(millis: number): string {
+  const local = DateTime.fromMillis(millis, { zone: SYDNEY });
+  return `${local.toFormat('MM-dd')}(${WEEKDAYS_KO[local.weekday - 1]}) ${local.toFormat('HH:mm')}`;
+}
+
+/** Entry at the next session open and exit at the fifth session close, from the shared calendar. */
+export function tradePlanLines(dataAsOf: string | null): string[] {
+  const session = isoDate(dataAsOf);
+  const sessions = session && parseSessionDate(session) ? sessionsAfter(session, 5) : null;
+  if (!sessions) {
+    return [
+      '진입: 다음 세션 시가 · 조건 없음 · 가격 미정 (달력 범위 밖, 날짜 미산정)',
+      '청산: 5번째 세션 종가',
+    ];
+  }
+  const [entry] = sessions;
+  const exit = sessions[4];
+  const early = NYSE_EARLY_CLOSES.has(exit);
+  return [
+    `진입: ${usDay(entry)} 시가 → 시드니 ${sydneyTime(sessionOpenAt(entry))} · 조건 없음 · 가격 미정`,
+    `청산: ${usDay(exit)} 종가 → 시드니 ${sydneyTime(sessionCloseAt(exit))} · 5번째 세션${early ? ' · 조기 폐장 13:00 ET' : ''}`,
+  ];
+}
+
+function sizingLine(sizing: PositionSizing): string {
+  const share = `자본의 1/${sizing.maxPositions}`;
+  const amount =
+    sizing.capital !== undefined
+      ? ` ≈ ${(sizing.capital / sizing.maxPositions).toLocaleString('en-US', { maximumFractionDigits: 0 })} (자본 ${sizing.capital.toLocaleString('en-US', { maximumFractionDigits: 0 })})`
+      : '';
+  return `비중: ${share}${amount} · 동시 최대 ${sizing.maxPositions}종목`;
+}
+
+function cohortLine(): string {
+  const cohort = VALIDATED_STRATEGY_COHORT;
+  return `검증 기대치(표본 내 ${cohort.trades}건, ${cohort.entries.from}~${cohort.entries.to}): 승률 ${cohort.winRatePct.toFixed(1)}% · 평균 ${signed(cohort.meanNetReturnPct)} · 최악 ${cohort.worstTradePct.toFixed(1)}% · 미래 확률 아님`;
+}
+
+function month(value: string | null): string {
+  return value ? text(value, 7) : '자료 없음';
 }
 
 function historyLines(history: HistoricalOutcomesReport | null): string[] {
-  if (!history) return ['승률: 자료 없음 (과거 BUY 5거래일 순수익)', '관측기간: 자료 없음'];
+  if (!history) return ['종목 과거 BUY: 자료 없음 (5거래일 순수익)'];
   const { fixedHold, atrBarriers, method, period } = history;
+  const samples = count(fixedHold.samples) ? fixedHold.samples : 0;
+  const window = `${month(period.from)}~${month(period.to)}`;
+  if (samples === 0) return [`종목 과거 BUY: 0건 · ${window} · 표본 없음`];
+  if (samples < MIN_PER_TICKER_SAMPLES) {
+    const wins = count(fixedHold.wins) && fixedHold.wins <= samples ? fixedHold.wins : null;
+    return [
+      `종목 과거 BUY: ${samples}건${wins === null ? '' : ` 중 ${wins}승`} · ${window} · 표본 부족(비율 생략)`,
+      `방식: 다음 시가 진입→5거래일 종가 청산 · 왕복비용 ${number(method.roundTripCostBps)}bps`,
+    ];
+  }
   return [
-    `승률: ${frequency(fixedHold.winRatePct, fixedHold.wins, fixedHold.samples)}${fixedHold.samples > 0 && fixedHold.samples < 30 ? ' · 소표본' : ''}`,
+    `승률: ${frequency(fixedHold.winRatePct, fixedHold.wins, samples)}${samples < 30 ? ' · 소표본' : ''}`,
     `관측기간: ${text(period.from ?? '자료 없음', 10)} ~ ${text(period.to ?? '자료 없음', 10)}`,
     `방식: 다음 시가 진입→5거래일 종가 청산 · 왕복비용 ${number(method.roundTripCostBps)}bps`,
     `손절·목표선 도달 비율(체결률 아님): 손절 ${frequency(atrBarriers.stopTouchRatePct, atrBarriers.stopTouched, atrBarriers.samples)} · 목표 ${frequency(atrBarriers.targetTouchRatePct, atrBarriers.targetTouched, atrBarriers.samples)}`,
@@ -230,12 +358,70 @@ function reasonText(value: string): string {
     'SELL is a long-holder exit warning, not a short-entry recommendation.':
       '매도: 기존 보유분 청산 경고 (공매도 진입 권고 아님)',
     'BUY qualifies at the completed close; execution remains conditional on the next session open.':
-      '매수: 종가 기준 충족 (다음 거래일 시가에 조건부 실행)',
+      '매수: 종가 기준 충족 · 다음 세션 시가 진입 (조건 없음 · 가격 미정)',
   };
   return explanations[clean] ?? clean;
 }
 
+const BLOCKED_REASON =
+  /entry-quality gate rejected|; blocked\.|; not passed or not evaluated\.|; below threshold\./;
+
+function lastBar(candidate: StockReportAlertCandidate) {
+  const context = candidate.context;
+  if (!context || !candidate.dataAsOf) return null;
+  const bar = context.dailyPrices.at(-1);
+  return bar && bar.date.toISOString().slice(0, 10) === candidate.dataAsOf ? bar : null;
+}
+
+/** One plain-language line built from the structured gates and the frozen quality rules. */
+function setupLine(
+  candidate: StockReportAlertCandidate,
+  config: PipelineConfig | undefined
+): string {
+  const gate = config?.qualityGate;
+  const components =
+    candidate.gates?.institutional.components ??
+    candidate.context?.pipelineResult.gateResults.institutional.components;
+  const bar = lastBar(candidate);
+  const ibs =
+    bar && bar.high > bar.low && Number.isFinite(bar.close)
+      ? (bar.close - bar.low) / (bar.high - bar.low)
+      : null;
+  const reference = candidate.reference;
+  const atrPct =
+    reference &&
+    typeof reference.atr === 'number' &&
+    Number.isFinite(reference.atr) &&
+    Number.isFinite(reference.price) &&
+    reference.price > 0
+      ? (reference.atr / reference.price) * 100
+      : null;
+  const parts: string[] = [];
+  if (gate?.enabled && gate.rsMin !== undefined) {
+    const values =
+      components && Number.isFinite(components.rsSpy) && Number.isFinite(components.rsSector)
+        ? ` RS ${components.rsSpy.toFixed(2)}/${components.rsSector.toFixed(2)}`
+        : '';
+    parts.push(`시장·섹터 대비 강세${values} (기준 ≥ ${gate.rsMin})`);
+  }
+  if (gate?.enabled && gate.requireBelowSma50) parts.push('50일선 아래 눌림');
+  if (gate?.enabled && Number.isFinite(gate.ibsMax)) {
+    parts.push(
+      `종가 저점권 IBS${ibs === null ? '' : ` ${ibs.toFixed(2)}`} (기준 < ${gate.ibsMax})`
+    );
+  }
+  if (gate?.enabled && Number.isFinite(gate.atrPctMax)) {
+    parts.push(
+      `일변동폭${atrPct === null ? '' : ` ${atrPct.toFixed(1)}%`} (기준 < ${gate.atrPctMax}%)`
+    );
+  }
+  return parts.length
+    ? `셋업: 강한 주도주의 차분한 눌림 · ${parts.join(' · ')}`
+    : '셋업: 강한 주도주의 차분한 눌림 매수 (세부 기준 미제공)';
+}
+
 interface CandidateSection {
+  key: 'identity' | 'plan' | 'history' | 'reference' | 'targets' | 'reasons' | 'sources';
   heading?: string;
   required: string[];
   optional: string[];
@@ -244,14 +430,16 @@ interface CandidateSection {
 function candidateSections(
   candidate: StockReportAlertCandidate,
   detail: StockReportAlertDetail | undefined,
-  reasonBudget: number
+  reasonBudget: number,
+  config: PipelineConfig | undefined,
+  sizing: PositionSizing
 ): CandidateSection[] {
-  const action =
-    candidate.decision === 'BUY'
-      ? '다음 시가 조건부 진입'
-      : candidate.decision === 'SELL'
-        ? '보유 포지션 청산 경고'
-        : '신규 진입 보류';
+  const buy = candidate.decision === 'BUY';
+  const action = buy
+    ? '다음 세션 시가 진입 (조건 없음 · 가격 미정)'
+    : candidate.decision === 'SELL'
+      ? '보유 포지션 청산 경고'
+      : '신규 진입 보류';
   const identity = [
     `*${text(candidate.ticker, 32)} · ${candidate.decision}*`,
     `판정: ${action} · 종가일 ${text(candidate.dataAsOf ?? '자료 없음', 10)}`,
@@ -261,39 +449,51 @@ function candidateSections(
   if (candidate.reference) {
     const reference = candidate.reference;
     referenceLines.push(`종가: ${number(reference.price)}`);
-    if (candidate.decision === 'BUY') {
-      referenceLines.push(
-        `손절: ${number(reference.stopLoss)} · 목표: ${number(reference.takeProfit)}`
+    if (buy) {
+      referenceOptional.push(
+        `손절 ${number(reference.stopLoss)} · 목표 ${number(reference.takeProfit)} · ATR 기준, 검증 규칙 미포함`,
+        `평균 가격 변동폭: ${number(reference.atr)} · 진입 시가 미확정`
       );
-      referenceOptional.push(`평균 가격 변동폭: ${number(reference.atr)} · 진입 시가 미확정`);
     }
   } else {
     referenceLines.push('종가: 자료 없음');
   }
   const aligned =
     detail?.dataAsOf === candidate.dataAsOf && detail?.decision === candidate.decision;
-  const reasons = candidate.gateReasons ?? (aligned ? detail?.gateReasons : undefined) ?? [];
+  const rules = config ?? candidate.context?.config;
+  const reversalDisabled = rules?.reversalConfirm.enabled === false;
+  const reasons = (
+    candidate.gateReasons ??
+    (aligned ? detail?.gateReasons : undefined) ??
+    []
+  ).filter((line) => !(reversalDisabled && /^Reversal: /.test(line)));
   const reasonLines = reasons.map(reasonText);
-  const blocker = reasons.findIndex((line) =>
-    /entry-quality gate rejected|; blocked\.|; not passed or not evaluated\.|; below threshold\./.test(
-      line
-    )
-  );
-  const qualityBlocker = reasons.findIndex((line) => /entry-quality gate rejected/.test(line));
-  const holdingReason = reasons.findIndex((line) => /^No entry:/.test(line));
-  const mainReason =
-    qualityBlocker >= 0
-      ? qualityBlocker
-      : blocker >= 0
-        ? blocker
-        : candidate.decision === 'HOLD' && holdingReason >= 0
-          ? holdingReason
-          : 0;
+  const scoreReason = reasons.findIndex((line) => /^BUY score .+ \/ threshold /.test(line));
+  let mainReason: number;
+  if (buy) {
+    // Headline: the qualifying line, else the first passed/neutral line; never a failed check.
+    const qualifies = reasons.findIndex((line) => /^BUY qualifies/.test(line));
+    const clean = reasons.findIndex(
+      (line, index) => index !== scoreReason && !BLOCKED_REASON.test(line)
+    );
+    mainReason = qualifies >= 0 ? qualifies : clean >= 0 ? clean : Math.max(scoreReason, 0);
+  } else {
+    const blocker = reasons.findIndex((line) => BLOCKED_REASON.test(line));
+    const qualityBlocker = reasons.findIndex((line) => /entry-quality gate rejected/.test(line));
+    const holdingReason = reasons.findIndex((line) => /^No entry:/.test(line));
+    mainReason =
+      qualityBlocker >= 0
+        ? qualityBlocker
+        : blocker >= 0
+          ? blocker
+          : candidate.decision === 'HOLD' && holdingReason >= 0
+            ? holdingReason
+            : 0;
+  }
   const firstReason = reasonLines[mainReason] ?? '자료 없음';
   const shortened = text(firstReason, reasonBudget);
   const reason = `• ${shortened}${shortened.length < firstReason.length ? '…' : ''}`;
-  const scoreReason = reasons.findIndex((line) => /^BUY score .+ \/ threshold /.test(line));
-  const requiredReasons = [reason];
+  const requiredReasons = buy ? [`• ${setupLine(candidate, rules)}`, reason] : [reason];
   if (scoreReason >= 0 && scoreReason !== mainReason)
     requiredReasons.push(`• ${reasonLines[scoreReason]}`);
   if (detail && !aligned) {
@@ -306,26 +506,122 @@ function candidateSections(
   const targetSummary = targetLines(targets);
   const sources = targetSummary.filter((line) => /^(?:합의|개별) 출처 /.test(line));
   const history = historyLines(aligned ? (detail?.historical ?? null) : null);
-  return [
-    { required: identity, optional: [] },
-    { heading: '과거 BUY 순수익 관측', required: history.slice(0, 3), optional: history.slice(3) },
-    { heading: '참고 가격 (통화 미제공)', required: referenceLines, optional: referenceOptional },
+  const historyRequired = history.length === 1 ? history : history.slice(0, 2);
+  const historyOptional = history.length === 1 ? [] : history.slice(2);
+  const sections: CandidateSection[] = [{ key: 'identity', required: identity, optional: [] }];
+  if (buy) {
+    sections.push({
+      key: 'plan',
+      heading: '매매 계획',
+      required: [...tradePlanLines(candidate.dataAsOf), sizingLine(sizing), cohortLine()],
+      optional: ['주문: 시가 매수·종가 매도 주문을 전날 미리 예약'],
+    });
+  }
+  sections.push(
     {
+      key: 'history',
+      heading: '과거 BUY 순수익 관측',
+      required: buy ? historyRequired : [...historyRequired, cohortLine()],
+      optional: historyOptional,
+    },
+    {
+      key: 'reference',
+      heading: '검증 외 참고값 (통화 미제공)',
+      required: referenceLines,
+      optional: referenceOptional,
+    },
+    {
+      key: 'targets',
       heading: '애널리스트 목표가',
-      required: targetSummary.slice(0, targets?.consensus ? 3 : 1),
+      required: targetSummary.slice(0, targets?.consensus ? 2 : 1),
       optional: targetSummary
-        .slice(targets?.consensus ? 3 : 1)
+        .slice(targets?.consensus ? 2 : 1)
         .filter((line) => !sources.includes(line)),
     },
     {
+      key: 'reasons',
       heading: '원판정 근거',
       required: requiredReasons,
       optional: reasonLines
         .filter((_, index) => index !== mainReason && index !== scoreReason)
         .map((line) => `• ${line}`),
     },
-    { heading: '출처', required: [], optional: sources },
+    { key: 'sources', heading: '출처', required: [], optional: sources }
+  );
+  return sections;
+}
+
+const OPTIONAL_PRIORITY: CandidateSection['key'][] = [
+  'reference',
+  'sources',
+  'targets',
+  'history',
+  'reasons',
+  'plan',
+];
+/** Sections whose required lines may be dropped (last first) when a block cannot fit. */
+const TRIMMABLE: CandidateSection['key'][] = [
+  'sources',
+  'targets',
+  'reference',
+  'history',
+  'reasons',
+];
+
+function tickerList(tickers: readonly string[], maximum = 12): string {
+  const names = [...new Set(tickers.map((ticker) => ticker.trim().toUpperCase()))].filter(
+    (ticker) => ticker.length <= 32 && TICKER.test(ticker)
+  );
+  const shown = names.slice(0, maximum);
+  const remaining = names.length - shown.length;
+  return `${shown.join(', ')}${remaining > 0 ? ` 외 ${remaining}` : ''}`;
+}
+
+function resolveSession(input: StockReportAlertInput): string | null {
+  const explicit = isoDate(input.usSession);
+  if (explicit) return explicit;
+  const dates = input.candidates
+    .map((candidate) => isoDate(candidate.dataAsOf))
+    .filter((date): date is string => date !== null)
+    .sort();
+  return dates.at(-1) ?? latestCompletedSession();
+}
+
+function universeLabel(source: string | undefined): string {
+  if (source === 'finviz-candidates') return ' · 검증 유니버스 외 (Finviz 후보)';
+  if (source === 'configured-universe') return ' · 검증 유니버스';
+  return '';
+}
+
+/** First lines of every message: the US session, then which tickers matched. */
+function headerLines(input: StockReportAlertInput): string[] {
+  const session = resolveSession(input);
+  const lines = [
+    session
+      ? `미국 세션 ${session}(${usDay(session).slice(-2, -1)}) 종가 기준`
+      : '미국 세션 자료 없음',
   ];
+  const decision = input.screening?.decision;
+  const matched = input.matchedTickers ?? [];
+  if (matched.length) {
+    const label = decision && decision !== 'ALL' ? decision : 'BUY';
+    lines.push(
+      `${label} ${matched.length}종목: ${tickerList(matched)}${universeLabel(input.universeSource)}`
+    );
+    return lines;
+  }
+  const groups = (['BUY', 'SELL', 'HOLD'] as const)
+    .map((item) => ({
+      item,
+      tickers: input.candidates.filter((candidate) => candidate.decision === item),
+    }))
+    .filter((group) => group.tickers.length)
+    .map(
+      (group) =>
+        `${group.item} ${group.tickers.length}종목: ${tickerList(group.tickers.map((candidate) => candidate.ticker))}`
+    );
+  if (groups.length) lines.push(`${groups.join(' · ')}${universeLabel(input.universeSource)}`);
+  return lines;
 }
 
 /** Each ticker block keeps whole lines; no final price or URL is sliced mid-value. */
@@ -334,20 +630,47 @@ export function formatStockReportWhatsAppNotification(
   details: readonly StockReportAlertDetail[]
 ): WhatsAppNotification {
   const candidates = input.candidates.slice(0, MAX_DETAILS);
-  const outcome = input.screening ? formatScreeningOutcome(input.screening) : '';
-  const footer = candidates.length ? outcome.split('\n').slice(1).join('\n') : outcome;
+  const jobId = formatShortJobId(input.jobId);
+  const header = headerLines(input);
+  const outcome = input.screening ? formatScreeningOutcome(input.screening).split('\n') : [];
+  const title = text(input.title, 80);
+  const asOf = text(input.asOf, 60);
+  if (!candidates.length) {
+    // Heartbeat: session, outcome and job reference only; nothing to act on.
+    const lines = [
+      jobId ? `${header[0]} · 작업 ${jobId}` : header[0],
+      ...(outcome.length ? outcome : ['상세 후보 없음.']),
+    ];
+    return { title, asOf, summary: lines.join('\n') };
+  }
+  const diagnostics = outcome.slice(1);
+  const footerLines = [
+    ...(diagnostics.length ? ['*분석 제외*', ...diagnostics] : []),
+    ...(jobId ? [`작업 ${jobId}`] : []),
+  ];
+  const footer = footerLines.join('\n');
+  const headerText = header.join('\n');
+  const sizing = validSizing(input.sizing ?? resolvePositionSizing());
   const blocks: string[] = [];
-  const budget = candidates.length
-    ? Math.floor(
-        (MAX_SUMMARY_LENGTH - (candidates.length - 1) * 2 - (footer ? footer.length + 2 : 0)) /
-          candidates.length
-      )
-    : 0;
+  const budget = Math.floor(
+    (MAX_SUMMARY_LENGTH -
+      headerText.length -
+      2 -
+      (candidates.length - 1) * 2 -
+      (footer ? footer.length + 2 : 0)) /
+      candidates.length
+  );
   for (const candidate of candidates) {
     const detail = details.find(
       (item) => item.ticker === candidate.ticker && item.lookbackDays === input.lookbackDays
     );
-    const sections = candidateSections(candidate, detail, Math.min(140, Math.floor(budget / 8)));
+    const sections = candidateSections(
+      candidate,
+      detail,
+      Math.min(140, Math.max(24, Math.floor(budget / 10))),
+      input.pipelineConfig,
+      sizing
+    );
     const selected = sections.map((section) => [...section.required]);
     const render = () =>
       sections
@@ -360,13 +683,21 @@ export function formatStockReportWhatsAppNotification(
         .join('\n\n');
     let omitted = false;
     const omission = '일부 상세·출처는 길이 제한으로 생략.';
-    // Reserve each stock's period/method, original reason, wins/sample,
-    // consensus retrieval and reference prices before adding auxiliary lines.
-    const priority = [3, 5, 4, 1, 2];
-    for (const index of priority) {
+    const limit = budget - omission.length - 2;
+    // Required lines rarely overflow; when they do, drop auxiliary sections last-line first.
+    for (const key of TRIMMABLE) {
+      const index = sections.findIndex((section) => section.key === key);
+      while (render().length > limit && selected[index].length) {
+        selected[index].pop();
+        omitted = true;
+      }
+    }
+    for (const key of OPTIONAL_PRIORITY) {
+      const index = sections.findIndex((section) => section.key === key);
+      if (index < 0) continue;
       for (const line of sections[index].optional) {
         selected[index].push(line);
-        if (render().length > budget - omission.length - 2) {
+        if (render().length > limit) {
           selected[index].pop();
           omitted = true;
         }
@@ -375,9 +706,9 @@ export function formatStockReportWhatsAppNotification(
     blocks.push(`${render()}${omitted ? `\n${omission}` : ''}`);
   }
   return {
-    title: text(input.title, 80),
-    asOf: text(input.asOf, 60),
-    summary: [...blocks, ...(footer ? [footer] : [])].join('\n\n') || '상세 후보 없음.',
+    title,
+    asOf,
+    summary: [headerText, ...blocks, ...(footer ? [footer] : [])].join('\n\n'),
   };
 }
 
