@@ -17,6 +17,12 @@ const SERVICES = new Set(['whatsapp', 'daily-report']);
 const SAFE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 
 export type ServiceName = 'whatsapp' | 'daily-report';
+export type DailyReportSource = 'configured' | 'finviz';
+/** Daily-report lane settings frozen into the plist so later ticks and starts agree. */
+interface DailySettings {
+  source: DailyReportSource;
+  asideBin?: string;
+}
 export type ServiceCommand = 'install' | 'start' | 'restart' | 'stop' | 'status' | 'uninstall';
 type ServiceTask = 'whatsapp:gateway' | 'whatsapp:link' | 'daily-report';
 
@@ -62,7 +68,12 @@ export type ServiceConfiguration = {
   StockCheckerProjectRoot: string;
   ProgramArguments: [string, '--quiet', 'run', ServiceTask];
   WorkingDirectory: string;
-  EnvironmentVariables: { PATH: string; WHATSAPP_MANAGED_SERVICE?: string };
+  EnvironmentVariables: {
+    PATH: string;
+    WHATSAPP_MANAGED_SERVICE?: string;
+    DAILY_REPORT_SOURCE?: 'finviz';
+    ASIDE_BIN?: string;
+  };
   RunAtLoad: boolean;
   KeepAlive: boolean;
   StartInterval?: number;
@@ -84,7 +95,9 @@ export interface ServiceStatus {
   pairing?: boolean;
   timezone?: string;
   startWindow?: string;
+  lateWindow?: string;
   tickIntervalSeconds?: number;
+  universeSource?: DailyReportSource;
   pid?: number;
   lastExitCode?: number;
 }
@@ -205,6 +218,25 @@ const defaultRun: ServiceRunner = async (program, arguments_, options) => {
     encoding: 'utf8',
   });
 };
+
+function dailySettingsFrom(
+  environment: { DAILY_REPORT_SOURCE?: string; ASIDE_BIN?: string },
+  explicitAside?: string
+): DailySettings {
+  const raw = (environment.DAILY_REPORT_SOURCE ?? '').trim().toLowerCase();
+  const source: DailyReportSource =
+    raw === '' || raw === 'configured' || raw === 'configured-universe'
+      ? 'configured'
+      : raw === 'finviz' || raw === 'finviz-candidates'
+        ? 'finviz'
+        : (() => {
+            throw new ServiceError('invalid-daily-report-source');
+          })();
+  const asideBin = explicitAside ?? environment.ASIDE_BIN;
+  if (asideBin !== undefined && (!path.isAbsolute(asideBin) || /[\p{Cc}\p{Cf}]/u.test(asideBin)))
+    throw new ServiceError('invalid-arguments');
+  return source === 'finviz' && asideBin ? { source, asideBin } : { source };
+}
 
 function createServiceManager(options: ServiceManagerOptions = {}): ServiceManager {
   const service = options.service ?? 'whatsapp';
@@ -344,10 +376,18 @@ function createServiceManager(options: ServiceManagerOptions = {}): ServiceManag
     ) {
       throw new ServiceError('unmanaged-service');
     }
+    // Lane settings are read back from the plist so a start from a different
+    // shell environment still recognizes the installed configuration.
+    let savedSettings: DailySettings;
+    try {
+      savedSettings = dailySettingsFrom(configuration.EnvironmentVariables ?? {});
+    } catch {
+      throw new ServiceError('unmanaged-service');
+    }
     if (
       !isDeepStrictEqual(
         configuration,
-        makeConfiguration(arguments_[0], arguments_[3] === 'whatsapp:link')
+        makeConfiguration(arguments_[0], arguments_[3] === 'whatsapp:link', savedSettings)
       )
     ) {
       throw new ServiceError('unmanaged-service');
@@ -426,7 +466,7 @@ function createServiceManager(options: ServiceManagerOptions = {}): ServiceManag
     throw new ServiceError('mise-not-found');
   }
 
-  async function checkReadiness(mise: string, task: ServiceTask) {
+  async function checkReadiness(mise: string, task: ServiceTask, lane?: DailySettings) {
     let settings: string;
     try {
       settings = await io.readFile(path.join(context.projectRoot, 'mise.toml'), 'utf8');
@@ -462,7 +502,9 @@ function createServiceManager(options: ServiceManagerOptions = {}): ServiceManag
       );
       if (!/^1\.\d+\.\d+(?:[-+][\w.-]+)?\s*$/.test(bun.stdout))
         throw new ServiceError('bun-required');
-      const explicit = options.asidePath ?? environment.ASIDE_BIN;
+      // The configured validated universe needs no browser; only the Finviz lane does.
+      if ((lane ?? dailySettingsFrom(environment, options.asidePath)).source !== 'finviz') return;
+      const explicit = lane?.asideBin ?? options.asidePath ?? environment.ASIDE_BIN;
       const candidates = explicit
         ? [explicit]
         : [
@@ -489,7 +531,11 @@ function createServiceManager(options: ServiceManagerOptions = {}): ServiceManag
     }
   }
 
-  function makeConfiguration(mise: string, link: boolean): ServiceConfiguration {
+  function makeConfiguration(
+    mise: string,
+    link: boolean,
+    settings: DailySettings = dailySettingsFrom(environment, options.asidePath)
+  ): ServiceConfiguration {
     if (daily && link) throw new ServiceError('invalid-arguments');
     return {
       Label: label,
@@ -503,7 +549,15 @@ function createServiceManager(options: ServiceManagerOptions = {}): ServiceManag
       ],
       WorkingDirectory: context.projectRoot,
       EnvironmentVariables: daily
-        ? { PATH: SAFE_PATH }
+        ? {
+            PATH: SAFE_PATH,
+            ...(settings.source === 'finviz'
+              ? {
+                  DAILY_REPORT_SOURCE: 'finviz' as const,
+                  ...(settings.asideBin ? { ASIDE_BIN: settings.asideBin } : {}),
+                }
+              : {}),
+          }
         : { PATH: SAFE_PATH, WHATSAPP_MANAGED_SERVICE: '1' },
       RunAtLoad: true,
       KeepAlive: !daily,
@@ -592,7 +646,18 @@ function createServiceManager(options: ServiceManagerOptions = {}): ServiceManag
       loaded: Boolean(loaded),
       state: loaded ? (loaded.pid ? 'running' : 'waiting') : owned ? 'stopped' : 'not-installed',
       ...(daily
-        ? { timezone: 'Australia/Sydney', startWindow: '09:00–09:14', tickIntervalSeconds: 60 }
+        ? {
+            timezone: 'Australia/Sydney',
+            startWindow: '09:00–09:14',
+            lateWindow: '09:15 until 90 minutes before the next NYSE open',
+            tickIntervalSeconds: 60,
+            ...(owned
+              ? {
+                  universeSource: dailySettingsFrom(owned.configuration.EnvironmentVariables)
+                    .source,
+                }
+              : {}),
+          }
         : { pairing: owned?.configuration.ProgramArguments[3] === 'whatsapp:link' }),
       ...(loaded?.pid ? { pid: loaded.pid } : {}),
       ...(loaded?.lastExitCode !== undefined ? { lastExitCode: loaded.lastExitCode } : {}),
@@ -602,8 +667,9 @@ function createServiceManager(options: ServiceManagerOptions = {}): ServiceManag
   async function install({ link = false } = {}) {
     const { owned, loaded } = await inspect();
     const mise = await findMise();
-    const configuration = makeConfiguration(mise, link);
-    await checkReadiness(mise, configuration.ProgramArguments[3]);
+    const settings = dailySettingsFrom(environment, options.asidePath);
+    const configuration = makeConfiguration(mise, link, settings);
+    await checkReadiness(mise, configuration.ProgramArguments[3], settings);
     await prepareLocalFiles();
     const changed = !owned || renderPlist(owned.configuration) !== renderPlist(configuration);
     if (changed) {
@@ -620,7 +686,8 @@ function createServiceManager(options: ServiceManagerOptions = {}): ServiceManag
     if (!owned) throw new ServiceError('service-not-installed');
     await checkReadiness(
       owned.configuration.ProgramArguments[0],
-      owned.configuration.ProgramArguments[3]
+      owned.configuration.ProgramArguments[3],
+      dailySettingsFrom(owned.configuration.EnvironmentVariables)
     );
     await prepareLocalFiles();
     await activate(loaded, restartRunning);

@@ -136,10 +136,16 @@ raw = true
 run = "node --import tsx packages/automation/services/launchd.mts uninstall whatsapp"
 
 [tasks."daily-report"]
-description = "Run the Sydney 09:00 Finviz-first report; --dry-run and --status perform no scan or send"
+description = "Run the Sydney 09:00 validated-universe report; --dry-run and --status perform no scan or send"
 dir = "packages/core"
 raw = true
 run = 'bun src/commands/daily-report.ts "$@"'
+
+[tasks."market-scans:prune"]
+description = "Archive saved market scans older than --days=N (default 30), keeping BUY matches and paper ledgers; --dry-run lists only"
+dir = "packages/core"
+raw = true
+run = 'bun src/commands/prune-market-scans.ts "$@"'
 
 [tasks."daily-report:service:install"]
 description = "Install the macOS Sydney morning screening trigger"

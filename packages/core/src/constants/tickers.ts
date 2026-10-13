@@ -601,3 +601,15 @@ export const TICKER_SECTOR_ETF: Record<string, string> = {
   REXR: 'XLRE',
   COLD: 'XLRE',
 };
+
+/** Name recorded in saved market-screen jobs that evaluate the configured universe. */
+export const CONFIGURED_UNIVERSE_NAME = 'configured-sector-tickers';
+
+/**
+ * The validated daily universe: every configured ticker with a sector benchmark,
+ * in configuration order. This is the population the leader-pullback edge was
+ * measured on (docs/validation/leader-pullback-2026-10-06); nothing is excluded here.
+ */
+export const CONFIGURED_UNIVERSE_TICKERS: readonly string[] = Object.freeze(
+  Object.keys(TICKER_SECTOR_ETF)
+);

@@ -337,12 +337,24 @@ test('daily missing runner fails readiness before any launchctl mutation', async
   assert.deepEqual(lifecycleCalls(setup.calls), []);
 });
 
-test('daily readiness refuses a missing Aside executable without opening the browser', async (t) => {
-  const setup = await fixture(t, { service: 'daily-report' });
+test('daily readiness refuses a missing Aside executable only for the Finviz lane', async (t) => {
+  const setup = await fixture(t, {
+    service: 'daily-report',
+    environment: { DAILY_REPORT_SOURCE: 'finviz' },
+  });
   await fs.unlink(path.join(setup.homeDirectory, '.local/bin/aside'));
   await assert.rejects(setup.manager.install(), { code: 'aside-not-found' });
   assert.deepEqual(lifecycleCalls(setup.calls), []);
   assert.ok(!setup.calls.some(({ program }) => path.basename(program) === 'aside'));
+  // The configured validated universe is the default and needs no browser at all.
+  const configured = await fixture(t, { service: 'daily-report' });
+  await fs.unlink(path.join(configured.homeDirectory, '.local/bin/aside'));
+  const status = await configured.manager.install();
+  assert.equal(status.universeSource, 'configured');
+  assert.equal(status.lateWindow, '09:15 until 90 minutes before the next NYSE open');
+  assert.deepEqual((await configured.readPlist()).EnvironmentVariables, {
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+  });
 });
 
 test('plist XML preserves spaces, non-ASCII and metacharacters without shell interpretation', () => {
@@ -890,4 +902,38 @@ test('the workspace default uses the repository root for its mocked lifecycle in
   });
   assert.equal((await manager.status()).state, 'not-installed');
   assert.deepEqual(inspections, [expectedRoot]);
+});
+
+test('the Finviz lane freezes its source and validated Aside path into the plist and starts from any shell', async (t) => {
+  const setup = await fixture(t, {
+    service: 'daily-report',
+    environment: { DAILY_REPORT_SOURCE: 'finviz' },
+    asidePath: path.join(fileURLToPath(new URL('.', import.meta.url)), 'missing-aside'),
+  });
+  await assert.rejects(setup.manager.install(), { code: 'aside-not-found' });
+  const explicit = path.join(setup.homeDirectory, 'tools/aside');
+  await fs.mkdir(path.dirname(explicit), { recursive: true });
+  await fs.writeFile(explicit, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+  const lane = await fixture(t, {
+    service: 'daily-report',
+    environment: { DAILY_REPORT_SOURCE: 'finviz', ASIDE_BIN: explicit },
+  });
+  await fs.unlink(path.join(lane.homeDirectory, '.local/bin/aside'));
+  const status = await lane.manager.install();
+  assert.equal(status.universeSource, 'finviz');
+  assert.deepEqual((await lane.readPlist()).EnvironmentVariables, {
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    DAILY_REPORT_SOURCE: 'finviz',
+    ASIDE_BIN: explicit,
+  });
+  // A later start from a shell without the variables still owns the installed lane.
+  const restarted = await main(['start', 'daily-report'], { ...lane.options, environment: {} });
+  assert.equal(restarted.universeSource, 'finviz');
+  assert.equal(restarted.installed, true);
+  await assert.rejects(
+    fixture(t, { service: 'daily-report', environment: { DAILY_REPORT_SOURCE: 'yahoo' } }).then(
+      (bad) => bad.manager.install()
+    ),
+    { code: 'invalid-daily-report-source' }
+  );
 });
