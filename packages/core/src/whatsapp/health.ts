@@ -12,6 +12,48 @@ export interface ManagedSessionWatchdog {
   stop(): void;
 }
 
+export interface SessionStateDescription {
+  /** True only while notifications can be sent. */
+  sendable: boolean;
+  /** True when automatic reconnects cannot recover and the user must relink or restart. */
+  needsUserAction: boolean;
+  guidance: string;
+}
+
+/** Shared wording for /status and service status output; never includes credentials. */
+export function describeSessionState(state: WhatsAppSessionState): SessionStateDescription {
+  switch (state) {
+    case 'connected':
+      return { sendable: true, needsUserAction: false, guidance: '연결됨 · 알림 전송 가능' };
+    case 'linking':
+      return { sendable: false, needsUserAction: false, guidance: '연결 중 · 잠시 후 다시 확인' };
+    case 'disconnected':
+      return {
+        sendable: false,
+        needsUserAction: false,
+        guidance: '연결 끊김 · 자동 재연결 중, 지속되면 mise run whatsapp:service:restart',
+      };
+    case 'pairing-expired':
+      return {
+        sendable: false,
+        needsUserAction: true,
+        guidance: 'QR 만료 · mise run whatsapp:service:restart 후 다시 스캔',
+      };
+    case 'logged-out':
+      return {
+        sendable: false,
+        needsUserAction: true,
+        guidance: '로그아웃됨 · 새 WHATSAPP_AUTH_DIR로 mise run whatsapp:link 재연결 필요',
+      };
+    default:
+      return {
+        sendable: false,
+        needsUserAction: true,
+        guidance: '미연결 · mise run whatsapp:service:install -- --link 로 QR 연결',
+      };
+  }
+}
+
 /** Retire an unrecovered managed process; launchd owns the next startup. */
 export function createManagedSessionWatchdog(
   options: ManagedSessionWatchdogOptions

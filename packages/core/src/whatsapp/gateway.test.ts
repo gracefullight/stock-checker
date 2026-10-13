@@ -95,8 +95,10 @@ describe('local WhatsApp gateway', () => {
   it('reports expired phone pairing and directs an explicit manual service restart for a fresh QR', async () => {
     state = 'pairing-expired';
     qr = 'stale-private-pairing-fixture';
-    expect(JSON.parse((await call('/status')).body.toString())).toEqual({
+    expect(JSON.parse((await call('/status')).body.toString())).toMatchObject({
       state: 'pairing-expired',
+      sendable: false,
+      needsUserAction: true,
     });
     const html = (await call('/')).body.toString();
     expect(html).toContain('휴대폰 연결 대기 시간이 만료됐습니다');
@@ -167,9 +169,126 @@ describe('local WhatsApp gateway', () => {
     state = 'linking';
     const response = await call('/status');
     expect(response.status).toBe(200);
-    expect(JSON.parse(response.body.toString())).toEqual({ state: 'linking' });
+    expect(JSON.parse(response.body.toString())).toEqual({
+      state: 'linking',
+      stateSince: expect.any(String),
+      sendable: false,
+      needsUserAction: false,
+      guidance: expect.any(String),
+      sends: { localDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), count: 0, cap: 50 },
+      lastSend: null,
+      recipientsPinned: false,
+    });
     expect(response.body.toString()).not.toContain(qr);
+    expect(response.body.toString()).not.toContain(TOKEN);
     expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it('reports how long the current state has held and the last send outcome', async () => {
+    const clock = { now: new Date('2026-10-13T22:00:00.000Z') };
+    await gateway.stop();
+    gateway = createWhatsAppGateway({
+      session,
+      token: TOKEN,
+      getQr: () => qr,
+      port: 0,
+      now: () => clock.now,
+    });
+    port = (await gateway.start()).port;
+    state = 'disconnected';
+    gateway.observeState('disconnected');
+    clock.now = new Date('2026-10-13T22:05:00.000Z');
+    gateway.observeState('disconnected');
+    expect(JSON.parse((await call('/status')).body.toString())).toMatchObject({
+      state: 'disconnected',
+      stateSince: '2026-10-13T22:00:00.000Z',
+      guidance: expect.stringContaining('재연결'),
+    });
+    await call('/notifications', 'POST', AUTHORIZATION, JSON.stringify(PAYLOAD));
+    state = 'connected';
+    gateway.observeState('connected');
+    const status = JSON.parse((await call('/status')).body.toString());
+    expect(status).toMatchObject({
+      state: 'connected',
+      stateSince: '2026-10-13T22:05:00.000Z',
+      lastSend: {
+        at: '2026-10-13T22:05:00.000Z',
+        status: 'rejected',
+        reason: 'not-connected',
+        httpStatus: 503,
+      },
+    });
+    expect(JSON.stringify(status)).not.toContain(PAYLOAD.to);
+  });
+
+  it('sends only to pinned recipients and refuses any other number with 403', async () => {
+    await gateway.stop();
+    gateway = createWhatsAppGateway({
+      session,
+      token: TOKEN,
+      getQr: () => qr,
+      port: 0,
+      allowedRecipients: [PAYLOAD.to],
+    });
+    port = (await gateway.start()).port;
+    const other = await call(
+      '/notifications',
+      'POST',
+      AUTHORIZATION,
+      JSON.stringify({ ...PAYLOAD, to: '+15555550999' })
+    );
+    expect(other.status).toBe(403);
+    expect(JSON.parse(other.body.toString())).toEqual({ error: 'recipient-not-allowed' });
+    expect(sendText).not.toHaveBeenCalled();
+    const allowed = await call('/notifications', 'POST', AUTHORIZATION, JSON.stringify(PAYLOAD));
+    expect(allowed.status).toBe(200);
+    expect(sendText).toHaveBeenCalledTimes(1);
+    const status = JSON.parse((await call('/status')).body.toString());
+    expect(status).toMatchObject({ recipientsPinned: true, sends: { count: 1 } });
+    expect(JSON.stringify(status)).not.toContain('5550999');
+    expect(() =>
+      createWhatsAppGateway({
+        session,
+        token: TOKEN,
+        getQr: () => qr,
+        allowedRecipients: ['15555550123'],
+      })
+    ).toThrow('Invalid gateway recipient allow-list');
+  });
+
+  it('caps sends per local date with a distinct 429 reason and resets on the next date', async () => {
+    const clock = { now: new Date('2026-10-13T22:00:00.000Z') };
+    await gateway.stop();
+    gateway = createWhatsAppGateway({
+      session,
+      token: TOKEN,
+      getQr: () => qr,
+      port: 0,
+      dailySendCap: 2,
+      now: () => clock.now,
+    });
+    port = (await gateway.start()).port;
+    const send = () => call('/notifications', 'POST', AUTHORIZATION, JSON.stringify(PAYLOAD));
+    expect((await send()).status).toBe(200);
+    sendText.mockResolvedValueOnce({ status: 'failed', reason: 'send-error' });
+    expect((await send()).status).toBe(502);
+    const capped = await send();
+    expect(capped.status).toBe(429);
+    expect(JSON.parse(capped.body.toString())).toEqual({ error: 'daily-send-cap', cap: 2 });
+    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(JSON.parse((await call('/status')).body.toString())).toMatchObject({
+      sends: { count: 2, cap: 2 },
+      lastSend: { status: 'rejected', reason: 'daily-send-cap', httpStatus: 429 },
+    });
+    clock.now = new Date('2026-10-15T22:00:00.000Z');
+    expect((await send()).status).toBe(200);
+    expect(JSON.parse((await call('/status')).body.toString())).toMatchObject({
+      sends: { count: 1, cap: 2 },
+      lastSend: { status: 'accepted', httpStatus: 200 },
+    });
+    expect(() =>
+      createWhatsAppGateway({ session, token: TOKEN, getQr: () => qr, dailySendCap: 0 })
+    ).toThrow('Invalid gateway daily send cap');
   });
 
   it('serves a Korean refreshing QR page without embedding QR or credentials', async () => {

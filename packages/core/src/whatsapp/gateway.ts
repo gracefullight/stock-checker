@@ -1,11 +1,15 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import QRCode from 'qrcode';
+import { describeSessionState } from './health.ts';
 import type { WhatsAppSession, WhatsAppSessionState } from './session.ts';
 
 const MAX_BODY_BYTES = 16_384;
 const BODY_TIMEOUT_MS = 5000;
 const SEND_TIMEOUT_MS = 30_000;
+/** Generous ceiling against a looping client or leaked token; normal use sends a few per day. */
+export const DEFAULT_DAILY_SEND_CAP = 50;
+const RECIPIENT = /^\+[1-9]\d{7,14}$/;
 const SECURITY_HEADERS = {
   'Cache-Control': 'no-store, max-age=0',
   'Content-Security-Policy':
@@ -23,6 +27,18 @@ export interface WhatsAppGatewayOptions {
   port?: number;
   bodyTimeoutMs?: number;
   sendTimeoutMs?: number;
+  /** E.164 recipients the gateway may send to; any other `to` is refused with 403. */
+  allowedRecipients?: readonly string[];
+  /** Maximum sends attempted per host-local date; further requests get 429. */
+  dailySendCap?: number;
+  now?: () => Date;
+}
+
+export interface GatewayLastSend {
+  at: string;
+  status: 'accepted' | 'failed' | 'rejected';
+  reason: string;
+  httpStatus: number;
 }
 
 interface Notification {
@@ -194,10 +210,57 @@ function connectionPage(state: WhatsAppSessionState, qrAvailable: boolean): stri
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="5"><title>Stock Checker WhatsApp 연결</title><style>body{font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 24px;line-height:1.6}img{display:block;max-width:100%;height:auto}h1{font-size:24px}</style></head><body><h1>Stock Checker WhatsApp 연결</h1><p>${descriptions[state]}</p>${state === 'linking' ? qr : ''}<p>이 화면은 5초마다 연결 상태를 갱신합니다.</p></body></html>`;
 }
 
+function localDate(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
 export function createWhatsAppGateway(options: WhatsAppGatewayOptions) {
   if (!/^[\x21-\x7e]{32,512}$/.test(options.token)) throw new Error('Invalid gateway token');
   const expectedHash = createHash('sha256').update(options.token).digest();
+  const allowedRecipients = options.allowedRecipients
+    ? new Set(options.allowedRecipients.filter((recipient) => RECIPIENT.test(recipient)))
+    : null;
+  if (allowedRecipients && allowedRecipients.size === 0) {
+    throw new Error('Invalid gateway recipient allow-list');
+  }
+  const dailySendCap = options.dailySendCap ?? DEFAULT_DAILY_SEND_CAP;
+  if (!Number.isSafeInteger(dailySendCap) || dailySendCap < 1 || dailySendCap > 10_000) {
+    throw new Error('Invalid gateway daily send cap');
+  }
+  const now = options.now ?? (() => new Date());
   let boundPort = options.port ?? 5102;
+  let observedState: WhatsAppSessionState = safeState(options.session.state);
+  let stateSince = now().toISOString();
+  const sends = { localDate: localDate(now()), count: 0 };
+  let lastSend: GatewayLastSend | null = null;
+
+  const sendsToday = (): typeof sends => {
+    const today = localDate(now());
+    if (sends.localDate !== today) {
+      sends.localDate = today;
+      sends.count = 0;
+    }
+    return sends;
+  };
+  const recordSend = (status: GatewayLastSend['status'], reason: string, httpStatus: number) => {
+    lastSend = { at: now().toISOString(), status, reason, httpStatus };
+  };
+  const statusPayload = () => {
+    const state = safeState(options.session.state);
+    const ledger = sendsToday();
+    return {
+      state,
+      stateSince,
+      ...describeSessionState(state),
+      sends: { localDate: ledger.localDate, count: ledger.count, cap: dailySendCap },
+      lastSend,
+      recipientsPinned: allowedRecipients !== null,
+    };
+  };
 
   const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     if (!isAllowedGatewayRequest(request, boundPort)) {
@@ -213,7 +276,7 @@ export function createWhatsAppGateway(options: WhatsAppGatewayOptions) {
     if (request.method === 'GET') {
       const state = safeState(options.session.state);
       if (request.url === '/status') {
-        json(response, 200, { state });
+        json(response, 200, statusPayload());
       } else if (request.url === '/') {
         response.writeHead(200, {
           ...SECURITY_HEADERS,
@@ -259,12 +322,25 @@ export function createWhatsAppGateway(options: WhatsAppGatewayOptions) {
     }
 
     const payload = notification(await readJson(request, options.bodyTimeoutMs ?? BODY_TIMEOUT_MS));
+    if (allowedRecipients && !allowedRecipients.has(payload.to)) {
+      recordSend('rejected', 'recipient-not-allowed', 403);
+      json(response, 403, { error: 'recipient-not-allowed' });
+      return;
+    }
     if (safeState(options.session.state) !== 'connected') {
+      recordSend('rejected', 'not-connected', 503);
       json(response, 503, { error: 'not-connected' });
+      return;
+    }
+    const ledger = sendsToday();
+    if (ledger.count >= dailySendCap) {
+      recordSend('rejected', 'daily-send-cap', 429);
+      json(response, 429, { error: 'daily-send-cap', cap: dailySendCap });
       return;
     }
     const message = `*${payload.title}*\n기준: ${payload.asOf}\n\n${payload.summary}`;
     if (message.length > 4096) throw new InvalidRequest(400);
+    ledger.count += 1;
     let timeout: NodeJS.Timeout | undefined;
     try {
       const result = await Promise.race([
@@ -283,9 +359,11 @@ export function createWhatsAppGateway(options: WhatsAppGatewayOptions) {
           result.messageId.toLowerCase().includes(options.token.toLowerCase()) ||
           result.messageId.includes(payload.to.slice(1))
         ) {
+          recordSend('failed', 'invalid-message-id', 502);
           json(response, 502, { error: 'send-failed' });
           return;
         }
+        recordSend('accepted', 'accepted', 200);
         json(response, 200, { messageId: result.messageId });
       } else {
         const statusCode =
@@ -296,10 +374,15 @@ export function createWhatsAppGateway(options: WhatsAppGatewayOptions) {
               : result.reason === 'invalid-recipient' || result.reason === 'invalid-text'
                 ? 400
                 : 502;
+        recordSend('failed', result.reason, statusCode);
         json(response, statusCode, {
           error: statusCode === 503 ? 'not-connected' : 'send-failed',
         });
       }
+    } catch (error) {
+      const timedOut = error instanceof InvalidRequest && error.statusCode === 504;
+      recordSend('failed', timedOut ? 'send-timeout' : 'send-error', timedOut ? 504 : 502);
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -326,6 +409,14 @@ export function createWhatsAppGateway(options: WhatsAppGatewayOptions) {
 
   return {
     server,
+    /** Records session transitions so /status can report how long the state has held. */
+    observeState(state: WhatsAppSessionState): void {
+      const next = safeState(state);
+      if (next === observedState) return;
+      observedState = next;
+      stateSince = now().toISOString();
+    },
+    status: statusPayload,
     async start(): Promise<{ port: number; url: string }> {
       await new Promise<void>((resolve, reject) => {
         server.once('error', reject);
