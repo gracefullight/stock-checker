@@ -69,8 +69,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
         '고정 전략 검증 완료'
       );
     })
-    .catch(() => {
-      logger.error('고정 전략 검증 실패. 데이터 경로·입력 형식·작업자 상태를 확인하세요.');
+    .catch((error: unknown) => {
+      // An explicit --config that is missing or invalid names the violated rule
+      // instead of silently measuring the defaults.
+      const detail =
+        error instanceof Error ? { name: error.name, message: error.message } : { error };
+      logger.error(
+        detail,
+        '고정 전략 검증 실패. 데이터 경로·입력 형식·설정 파일·작업자 상태를 확인하세요.'
+      );
       process.exitCode = 1;
     });
 }
