@@ -195,6 +195,38 @@ shows partial coverage; saved jobs also appear in MARKET SCREEN. Check with
 `--dry-run` checks readiness without scanning or sending. Set
 `DAILY_REPORT_MAX_CANDIDATES`, `DAILY_REPORT_MAX_PAGES`, or `ASIDE_BIN` privately.
 
+### Position ledger and the '보유 계획' section
+
+Each morning report ends with a '보유 계획' section built from a file-backed ledger in
+ignored `data/positions/` (one JSON row per `ticker:signalSession`). Rows are created
+automatically from BUY recommendations the daily report actually delivered (saved
+market-scan jobs whose `notification.json` result is `accepted`), deduplicated by
+ticker and signal session so weekend re-sends never create a second position. The
+plan follows the validated rule only: entry at the next NYSE open after the signal
+session and exit at the fifth session close, with Sydney local times from the shared
+NYSE calendar (holidays and early closes included). The section lists entries due at
+the next open, '오늘 밤 청산' reminders on the morning before the exit session, open
+positions with their day count, '청산 확인 필요' rows after the exit close (with the
+saved paper P/L when the performance ledger has one, otherwise `n/a`), recent closes,
+a per-BUY weight, and the in-sample expectation once (n=155, 57.4% wins, +0.63% mean,
+-13.6% worst). A SELL decision on a held ticker is shown as a reference only; it is
+not part of the validated rule. Digest failures never block the report.
+
+BUYs outside the measured universe stay in the ledger but out of the plan unless
+`POSITIONS_INCLUDE_UNVALIDATED=1`. `POSITIONS_CAPITAL` (optional) and
+`POSITIONS_MAX_POSITIONS` (default 5) set the per-BUY weight hint.
+
+```bash
+mise run positions -- list                  # every ledger row with its stage
+mise run positions -- digest                # print today's '보유 계획' without sending
+mise run positions -- sync                  # ingest newly delivered BUYs
+mise run positions -- record-fill --ticker=AAPL --session=2026-10-12 --price=123.45 --size=10
+mise run positions -- close --ticker=AAPL --session=2026-10-12 --price=125.10
+```
+
+`--session` is the signal session (the BUY's 종가일). Fills and closes appear in the
+next morning's section; a close recorded without a fill shows no realised return.
+
 ## Optional configuration
 
 Yahoo data needs no API key. Optional environment or private client settings:

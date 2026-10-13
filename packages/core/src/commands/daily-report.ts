@@ -3,6 +3,7 @@ import { chmod, type FileHandle, lstat, mkdir, open, readdir, readFile } from 'n
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import pino from 'pino';
+import { appendPositionDigest } from '@/positions/digest';
 import {
   collectFinvizCandidates,
   defaultFinvizCollectionPlan,
@@ -303,7 +304,19 @@ export async function runDailyReport(
     dispatch = (async () => {
       let result: WhatsAppNotificationResult;
       try {
-        const built = typeof notification === 'function' ? await notification() : notification;
+        let built = typeof notification === 'function' ? await notification() : notification;
+        try {
+          // The '보유 계획' section reads the local ledger only; it never blocks the report.
+          built = await appendPositionDigest(built, {
+            now: now(),
+            environment,
+            marketRootDirectory: market,
+            positionsRootDirectory: path.join(path.dirname(market), 'positions'),
+            currentJobId: state.jobId,
+          });
+        } catch {
+          /* Position digest failures leave the screening message intact. */
+        }
         if (state.jobId) {
           try {
             updateCounts(await get());
