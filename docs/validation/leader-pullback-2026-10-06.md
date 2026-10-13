@@ -45,12 +45,69 @@ There were no realized observations in 2018. Net mean returns were negative in
 2019, 2022, and 2023. The recent 70% slice does not establish consistent
 performance across regimes.
 
-Maximum individual ticker-sleeve closing drawdown was **13.64%**. With $10,000
-reserved for each of the 538 tickers, no capital reallocation or leverage, and
-cash while flat, aggregate return was +0.1790% and aggregate maximum drawdown
-was 0.07869%. Most capital stayed idle: the aggregate drawdown is diluted by
-unused cash and does not represent the risk of an actively deployed strategy.
-Costs are charged at exit; these marks do not measure intraday drawdown.
+## Matched benchmarks
+
+Every strategy figure above is absolute. The same money earns something on the
+same sessions without any stock selection, so the report now measures the
+executed trades against SPY over the same entry-open to exit-close windows
+(remeasured 2026-10-14 on the same frozen inputs; the 157 / 155 / +0.63%
+baseline is unchanged, configuration SHA-256 `9d15fbda…`).
+
+| Measure | Strategy (155 trades) | SPY, same windows | Note |
+|---|---:|---:|---|
+| Mean net return per trade | **+0.63%** | +0.58% gross, +0.48% net | same 10 bps charged to SPY |
+| Win rate | 57.4% (Wilson 95%: 49.5–64.9%) | 63.2% | SPY wins more often on these dates |
+| Mean excess vs SPY | +0.05% vs gross, +0.15% vs net | — | bootstrap 95%: −0.48…+0.58 (gross), −0.38…+0.68 (net); seed 20261006, 2,000 resamples |
+| Trades beating SPY | 54.8% (85 / 155) | — | |
+| Mean net, bootstrap 95% | +0.04…+1.22 | — | trades resampled as independent |
+
+Interpretation: the per-trade result cannot be told apart from holding SPY on
+the same dates. The strategy is an **overlay**, not a stock-selection edge
+distinguishable from the index in-sample. Same-day entries share one market
+window, so the true intervals are wider than shown.
+
+| Diagnostic | Value |
+|---|---|
+| Cost sensitivity (mean net / WR) | 10 bps +0.63% / 57.4%; 20 bps +0.53% / 57.4%; 30 bps +0.43% / 55.5% |
+| Exposure | positions open on 482 of 1,787 SPY sessions (27.0%); 110 distinct entry sessions; at most 7 concurrent |
+| MAE (entry open to lowest low) | mean −3.08%, median −2.34%, worst decile −6.54% |
+| MFE (entry open to highest high) | mean +3.29%, median +2.79%, best decile +6.50% |
+| Entry price tiers (adjusted) | <$10: 1 trade; $10–50: 34 (+1.17%, 52.9%); $50–200: 77 (+0.25%, 54.5%); ≥$200: 43 (+0.75%, 65.1%) |
+| 20-session dollar volume tiers | <$50M: 6 (−0.66%); $50–200M: 51 (+0.75%); $200M–1B: 87 (+0.51%); ≥$1B: 11 (+1.71%) |
+
+All win-rate tiers overlap at 95%; no price or liquidity effect is established,
+and the sample holds essentially no low-priced names.
+
+### Single-account simulation
+
+The former 538-sleeve aggregate (+0.18% on $5.38M of mostly idle capital) was
+replaced by one $10,000 account split into K equal cash slots. A trade is taken
+only when a slot is free at its entry open, in entry-date then ticker order;
+idle slots hold cash; positions are marked at session closes; costs are charged
+at exit. Span: 2019-08-06 to 2026-09-15 (1,787 sessions).
+
+| Account | Trades taken / skipped | Total return | CAGR | Max drawdown (closes) |
+|---|---:|---:|---:|---:|
+| K = 1 | 90 / 65 | +27.0% | 3.4% | 44.5% |
+| K = 3 | 142 / 13 | +26.4% | 3.3% | 13.3% |
+| K = 5 | 152 / 3 | +18.4% | 2.4% | 8.1% |
+| SPY buy and hold, same span | — | +193.3% | 16.3% | 33.7% |
+
+Following the alerts with idle cash never approached SPY over this span. Idle
+capital belongs in the index; the alerts only make sense as an overlay on it.
+
+### Selection provenance
+
+The shipped quality gate was not chosen by this measurement. It came from a
+research grid of up to 544,320 filter configurations applied to recorded
+signals and ranked by training-period win rate (`backtest --research`, which
+now logs `trialsEvaluated`). Ranking that many candidates on raw win rate
+biases the chosen gate's in-sample numbers upward, and the selection cannot be
+separated from later execution fixes. The report records
+`selection.trialsEvaluated = 1` for this run because no search ran; in-sample
+numbers from the searched period cannot support an edge claim. The forward
+paper ledger (`market-screen-performance`) is the only out-of-sample evidence
+and is judged against SPY on the same sessions.
 
 The current surviving ticker universe and sector mappings carry selection and
 survivorship bias. This evaluates SC BUY rules on the configured universe;
@@ -94,5 +151,7 @@ Missing inputs: BK, CFLT, CMA, CTRA, CYBR, EXAS, FI, GPS, LC, MMC, PSTG, SNV, SQ
 Insufficient history: AVB, EA, EQR, IAS. No eligible evaluation failed.
 
 Offline regressions cover next-open costs, overlapping versus executed trades,
-boundary purging, closing drawdown, snapshot freezing, worker/sequential parity,
-and shared live/historical cluster consumption.
+boundary purging, matched SPY windows with the seeded bootstrap and Wilson
+interval, cost sensitivity, exposure, MAE/MFE, price and dollar-volume tiers,
+the K-slot account beside SPY buy-and-hold, snapshot freezing,
+worker/sequential parity, and shared live/historical cluster consumption.

@@ -12,6 +12,18 @@ next-open five-session holds. Full-period BUY observations won 89/156 (57.05%);
 non-overlapping trades won 89/155 (57.42%). From 2025, both won 28/40 (70%).
 That period was already examined and is not independent out-of-sample validation.
 
+Measured against SPY over the same entry-open to exit-close windows
+([matched benchmarks](validation/leader-pullback-2026-10-06.md#matched-benchmarks)),
+the +0.63% mean net per trade sits beside +0.58% for SPY (+0.48% after the same
+cost): excess +0.05% with a bootstrap 95% interval of −0.48% to +0.58%, and SPY's
+own 5-session win rate on those dates (63.2%) exceeds the strategy's 57.4%.
+**No stock-selection edge is distinguishable from SPY in-sample.** A single
+account following every alert with idle cash compounded at 1.4–4.0% a year
+against 16.3% for SPY buy-and-hold over the same span. The strategy is an
+overlay; idle capital belongs in SPY. The shipped gate came from a 544,320-config
+grid ranked by train win rate, so the in-sample numbers cannot support an edge
+claim; only the forward paper ledger, judged against SPY, can.
+
 Results under "Archived exploratory results" describe the previous implementation.
 They are **not validation of the corrected engine**. The finance
 audit identified future benchmark leakage in the optimizer, same-close fills
@@ -24,10 +36,11 @@ the fifth entry session for exit, charging the configured round-trip cost
 (default 10 bps). The equity curve holds at most one position and marks it at each
 daily close. This distinguishes signal observations, which may overlap, from
 executed trades. Maximum drawdown is measured on daily closing equity, not
-intraday marks. The optimizer enters and exits on the next open after a signal,
-and closes remaining positions at the final close. The separate trend-hold
-research evaluator executes stop gaps at the session open and assumes the stop
-hits first when an OHLC bar touches both stop and target.
+intraday marks. The former random-search optimizer, its separate execution
+model and the `learn` loop were removed on 2026-10-14; nothing rewrites the
+saved configuration. The separate trend-hold research evaluator (behind
+`backtest --research`) executes stop gaps at the session open and assumes the
+stop hits first when an OHLC bar touches both stop and target.
 
 Use consistent split/dividend-adjusted historical OHLC, exact stock/benchmark
 session endpoints, and no positive relative-strength evidence for missing data.
@@ -49,8 +62,8 @@ leader-pullback configuration. Its internal strategy name is `institutional`:
 relative strength and price/volume flow identify leaders; the quality gate selects
 their pullbacks. This remains a momentum strategy in investment terms.
 Compatible v3 snapshots live in `data/config/optimized_weights.json`; older partial
-oscillator-weight files are ignored. Optimization preserves the strategy and its
-gates rather than switching to a different scoring family.
+oscillator-weight files are ignored. No command rewrites that file; the
+configuration is frozen by hand, fingerprinted, and remeasured.
 
 For histories of at least 210 sessions, live and historical analysis use the same
 causal per-bar evaluator, including indicators, pattern windows, benchmarks, and
@@ -62,9 +75,9 @@ equivalence. Repeated reports from one completed session are not separate entrie
 The [Yahoo Finance client schema](https://github.com/gadicc/yahoo-finance2/blob/dev/src/modules/quoteSummary-iface.ts)
 supplies fiscal-quarter history dates and nested consensus estimates. Quarter
 labels are identified separately from actual release dates, and missing estimates
-and analyst revision counts remain unknown. Both the parameter optimizer and
-the fitted Brier score use their training sample; neither constitutes independent
-validation or a calibrated probability of a profitable trade.
+and analyst revision counts remain unknown. No score calibration is fitted;
+the CLI's Buy%/Confidence columns are normalized score weights, not a
+probability of a profitable trade.
 
 Learning outcomes use freshly loaded daily history for each ticker, rather than
 sparse prediction CSV rows with mixed historical price scales. The fifth
@@ -180,10 +193,12 @@ now codified:
    76→81% WR with a 200d filter vs Decoding Markets finding no stock-level
    benefit). `requireMarketUptrend` / `requireAboveSma200` stay available as
    gate params, OFF by default.
-3. Realistic ceiling: at N in the hundreds, the leader-pullback edge at a
-   5-day fixed exit is **~56–60% WR with R/R ~1.2–1.3** in this universe
-   class (60.4% with the deep-flush `ibs<0.2` gate). 70%+ WR claims at N<100
-   should be treated as unvalidated.
+3. Absolute win rates are not an edge. The 2026-10-06 remeasurement puts the
+   fixed 5-day exit at 57.4% WR / +0.63% per trade, but SPY over the same
+   windows earns +0.58% (+0.48% net) with a 63.2% win rate; the excess is
+   +0.05% with a bootstrap 95% interval of −0.48% to +0.58%. **No stock-selection
+   edge is distinguishable from SPY in-sample**; the strategy is an overlay and
+   idle capital belongs in SPY. 70%+ WR claims at N<100 remain unvalidated.
 4. Cap tiers are not interchangeable: the same gate that clears 60% on large
    caps has no hit-rate edge on mids and the raw pullback is a losing trade
    on smalls. A win-rate claim carries a universe AND a cap tier.
