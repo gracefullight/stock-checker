@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { ValidatedStrategyNote } from '@/components/common/validated-strategy-note';
 import { BacktestPlayground } from '@/features/backtest/components/backtest-playground';
 
 interface PageProps {
@@ -28,6 +29,12 @@ export default async function BacktestPage({ params }: PageProps) {
           Same engine as the CLI backtest (5y daily, quality pipeline), running locally in your
           browser.
         </p>
+        <p className="mt-2 font-mono text-xs text-muted-foreground" lang="ko">
+          단일 종목 백테스트는 보통 0~3건의 거래만 만들어 내므로 결론을 내릴 수 없습니다. 아래
+          유니버스 전체 검증값과 함께 읽고, 재측정은{' '}
+          <code className="text-foreground">mise run strategy:validate</code> 로 수행하세요.
+        </p>
+        <ValidatedStrategyNote className="mt-3" />
       </div>
 
       <BacktestPlayground ticker={symbol} />
