@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BacktestControls } from '@/features/backtest/components/backtest-controls';
 import { BacktestMetrics } from '@/features/backtest/components/backtest-metrics';
@@ -22,8 +21,6 @@ interface BacktestPlaygroundProps {
   ticker: string;
 }
 
-const OPTIMIZE_TRIALS = 150;
-
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <Card>
@@ -41,7 +38,7 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
   const [params, setParams] = useState<PlaygroundParams>(DEFAULT_PLAYGROUND_PARAMS);
   const [data, setData] = useState<BacktestDataResponse | null>(null);
   const [dataError, setDataError] = useState<string | null>(null);
-  const { state, run, optimize, cancel } = useBacktestWorker();
+  const { state, run, cancel } = useBacktestWorker();
 
   useEffect(() => {
     let cancelled = false;
@@ -95,7 +92,7 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
           Signals use completed daily bars. Entries use the next session's open, followed by a
           five-session hold. Returns include 10 bps per round trip. Daily closing marks determine
           drawdown. Parameters start from the active leader-pullback strategy. Edits are research
-          overrides; optimized parameters are selected on these same bars.
+          overrides measured on these same bars; nothing here is saved or validated.
         </p>
         <BacktestControls value={params} onChange={setParams} disabled={busy} />
         <div className="mt-4 flex items-center gap-2 flex-wrap">
@@ -107,15 +104,6 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
           >
             {state.status === 'running' ? 'RUNNING…' : 'RUN BACKTEST'}
           </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="font-mono text-xs"
-            disabled={busy}
-            onClick={() => optimize(payload, OPTIMIZE_TRIALS, data.pipelineConfig)}
-          >
-            {state.status === 'optimizing' ? 'OPTIMIZING…' : `OPTIMIZE (${OPTIMIZE_TRIALS})`}
-          </Button>
           {busy && (
             <Button size="sm" variant="ghost" className="font-mono text-xs" onClick={cancel}>
               CANCEL
@@ -126,42 +114,12 @@ export function BacktestPlayground({ ticker }: BacktestPlaygroundProps) {
             {data.sector ? data.sector.etf : 'N/A'}
           </span>
         </div>
-        {state.optimizeProgress && (
-          <div className="mt-3 space-y-1">
-            <Progress
-              value={(state.optimizeProgress.trial / state.optimizeProgress.nTrials) * 100}
-              aria-label="Optimization progress"
-            />
-            <div className="font-mono text-[10px] text-muted-foreground">
-              TRIAL {state.optimizeProgress.trial}/{state.optimizeProgress.nTrials}
-              {Number.isFinite(state.optimizeProgress.bestValue) &&
-                ` · BEST ${state.optimizeProgress.bestValue.toFixed(4)}`}
-            </div>
-          </div>
-        )}
         {state.error && (
           <div className="mt-3 font-mono text-xs text-destructive" role="alert">
             ERROR: {state.error}
           </div>
         )}
       </SectionCard>
-
-      {state.bestParams && (
-        <SectionCard title="OPTIMIZER BEST PARAMS (leader-pullback search)">
-          <pre className="font-mono text-[10px] text-muted-foreground overflow-x-auto max-h-48">
-            {JSON.stringify(
-              {
-                thresholds: state.bestParams.thresholds,
-                confluence: state.bestParams.confluence,
-                clusterFilter: state.bestParams.clusterFilter,
-                trendGate: state.bestParams.trendGate,
-              },
-              null,
-              2
-            )}
-          </pre>
-        </SectionCard>
-      )}
 
       {state.result && (
         <>

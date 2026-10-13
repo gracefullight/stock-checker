@@ -1,7 +1,7 @@
 /**
  * Normalized signal-score mapping. Legacy probability field names are retained
  * for API compatibility; these weights are not probabilities of trade success.
- * Sigmoid parameters may be fitted, but defaults are heuristic and normalization
+ * Sigmoid parameters are heuristic defaults; nothing fits them, and normalization
  * does not establish calibration against out-of-sample financial outcomes.
  */
 
@@ -69,48 +69,6 @@ export function calculateProbabilities(
     holdProbability: parseFloat(holdProbability.toFixed(1)),
     confidence,
   };
-}
-
-/**
- * Estimate calibration parameters from historical data
- * @param historicalScores - Array of historical scores
- * @param actualOutcomes - Array of actual outcomes (1 for correct, 0 for incorrect)
- * @returns Calibration parameters for sigmoid function
- */
-export function fitCalibration(
-  historicalScores: number[],
-  actualOutcomes: number[]
-): { slope: number; intercept: number } {
-  if (historicalScores.length === 0) {
-    return { slope: 0.01, intercept: -1.0 };
-  }
-
-  // Search a fixed grid for the lowest in-sample Brier score. A separate held-out
-  // evaluation is required before these parameters support calibration claims.
-  let bestSlope = 0.01;
-  let bestIntercept = -1.0;
-  let bestBrier = Infinity;
-
-  for (const slope of [0.005, 0.01, 0.015, 0.02]) {
-    for (const intercept of [-2.0, -1.5, -1.0, -0.5, 0.0]) {
-      let brier = 0;
-      for (let i = 0; i < historicalScores.length; i++) {
-        const prob = sigmoid(historicalScores[i], slope, intercept);
-        const outcome = actualOutcomes[i];
-        // Brier score: (prob - outcome)^2
-        brier += (prob - outcome) ** 2;
-      }
-      brier /= historicalScores.length;
-
-      if (brier < bestBrier) {
-        bestBrier = brier;
-        bestSlope = slope;
-        bestIntercept = intercept;
-      }
-    }
-  }
-
-  return { slope: bestSlope, intercept: bestIntercept };
 }
 
 /**

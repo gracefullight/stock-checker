@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  calculateProbabilities,
-  fitCalibration,
-  getDecisionFromProbabilities,
-} from '@/services/probability';
+import { calculateProbabilities, getDecisionFromProbabilities } from '@/services/probability';
 
 describe('calculateProbabilities', () => {
   it('should sum probabilities to ~100%', () => {
@@ -52,23 +48,6 @@ describe('calculateProbabilities', () => {
     const defaultResult = calculateProbabilities(100, 50);
     const customResult = calculateProbabilities(100, 50, { slope: 0.05, intercept: -2.0 });
     expect(customResult.buyProbability).not.toBe(defaultResult.buyProbability);
-  });
-});
-
-describe('fitCalibration', () => {
-  it('should return defaults for empty arrays', () => {
-    const result = fitCalibration([], []);
-    expect(result).toEqual({ slope: 0.01, intercept: -1.0 });
-  });
-
-  it('should return valid slope and intercept for non-empty data', () => {
-    const scores = [50, 100, 150, 200];
-    const outcomes = [0, 0, 1, 1];
-    const result = fitCalibration(scores, outcomes);
-    expect(result).toHaveProperty('slope');
-    expect(result).toHaveProperty('intercept');
-    expect(typeof result.slope).toBe('number');
-    expect(typeof result.intercept).toBe('number');
   });
 });
 

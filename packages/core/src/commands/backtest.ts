@@ -1,6 +1,7 @@
 /**
- * Backtest the active production configuration, then compare explicitly labeled
- * historical research variants. BUY wins use next-open five-session net returns.
+ * Backtest the active production configuration. BUY wins use next-open
+ * five-session net returns. The retired V2–V10 research variants and grid
+ * searches only run behind `--research`; they never touch the saved config.
  */
 import pino from 'pino';
 import {
@@ -257,7 +258,9 @@ export function measureTrendHoldWinRate(
   };
 }
 
-export async function backtest(opts: { costBps?: number; quick?: boolean } = {}) {
+export async function backtest(
+  opts: { costBps?: number; quick?: boolean; research?: boolean } = {}
+) {
   // Resolve once before fetching history so every baseline ticker uses the
   // exact same full snapshot as CLI, API, MCP and market screening.
   const productionConfig = await resolveBacktestBaselineConfig();
@@ -421,6 +424,12 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     },
     'Production baseline: shared leader-pullback runtime configuration'
   );
+  if (!opts.research) {
+    console.log(
+      '\nProduction baseline only. Pass --research for the retired V2–V10 variants and grid searches; the frozen remeasurement lives in docs/validation.'
+    );
+    return;
+  }
 
   // Phase 0: explicit historical research variants, separate from production.
   // V2 = mean-reversion, no new patterns, no institutional
@@ -2114,6 +2123,11 @@ export async function backtest(opts: { costBps?: number; quick?: boolean } = {})
     }
 
   console.log(`Enumerated ${evaluated} filter configs deterministically.\n`);
+  // Every ranked grid is a selection trial; the count must travel with any number quoted from it.
+  logger.info(
+    { trialsEvaluated: evaluated, feasible: feasible.length, rankedBy: 'train WR' },
+    'Filter grid selection trials (post-hoc, recorded signals)'
+  );
 
   // Later-period outcomes are reporting only; they cannot select or rank candidates.
   const laterPeriodPasses = (c: Cand): boolean =>
