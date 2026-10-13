@@ -1,3 +1,4 @@
+import { TICKER_SECTOR_ETF } from '@/constants/tickers';
 import type { InstitutionalConfig } from '@/types';
 
 export const CSV_DIR = 'public';
@@ -43,20 +44,68 @@ export const PATTERN_WEIGHTS = {
 export const BUY_THRESHOLD = 200;
 export const SELL_THRESHOLD = 200;
 
+/**
+ * Sector name → SPDR sector ETF. Keys cover both GICS names and the
+ * Yahoo/Morningstar `summaryProfile.sector` vocabulary (Financial Services,
+ * Consumer Cyclical, Consumer Defensive, Basic Materials, ...). Resolve through
+ * `sectorEtfFor` / `sectorEtfForSector`, which normalize spelling.
+ */
 export const SECTOR_ETF_MAP: Record<string, string> = {
   Technology: 'XLK',
+  'Information Technology': 'XLK',
   Healthcare: 'XLV',
+  'Health Care': 'XLV',
   Financials: 'XLF',
+  'Financial Services': 'XLF',
+  Financial: 'XLF',
   'Consumer Discretionary': 'XLY',
+  'Consumer Cyclical': 'XLY',
   'Consumer Staples': 'XLP',
+  'Consumer Defensive': 'XLP',
   Industrials: 'XLI',
   Energy: 'XLE',
   Materials: 'XLB',
+  'Basic Materials': 'XLB',
   Utilities: 'XLU',
   'Real Estate': 'XLRE',
   'Communication Services': 'XLC',
+  'Communication Service': 'XLC',
 };
 export const MARKET_BENCHMARK = 'SPY';
+
+const SECTOR_ETF_BY_NORMALIZED_NAME = new Map(
+  Object.entries(SECTOR_ETF_MAP).map(([name, etf]) => [normalizeSectorName(name), etf])
+);
+
+function normalizeSectorName(sector: string): string {
+  return sector
+    .toLowerCase()
+    .replace(/[^a-z]+/g, ' ')
+    .trim();
+}
+
+/** Resolve a provider sector label to its SPDR ETF; null when the name is unknown. */
+export function sectorEtfForSector(sector: string | null | undefined): string | null {
+  if (typeof sector !== 'string') return null;
+  const normalized = normalizeSectorName(sector);
+  return normalized ? (SECTOR_ETF_BY_NORMALIZED_NAME.get(normalized) ?? null) : null;
+}
+
+/**
+ * Sector benchmark for a ticker. The validated TICKER_SECTOR_ETF universe map wins
+ * (it is the mapping the 2026-10-06 measurement used); the provider's sector name
+ * is only a fallback for tickers outside that universe. Null = no sector benchmark.
+ */
+export function sectorEtfFor(ticker: string, yahooSector?: string | null): string | null {
+  return TICKER_SECTOR_ETF[ticker.trim().toUpperCase()] ?? sectorEtfForSector(yahooSector);
+}
+
+/**
+ * Nominal (unadjusted) close floor for a BUY to be eligible. Every one of the 157
+ * validated BUY setups closed at or above $11.71 nominal, so $5 excludes only
+ * names the measurement never contained (penny stocks are an unvalidated domain).
+ */
+export const MIN_ELIGIBLE_NOMINAL_PRICE = 5;
 
 /** BUY signals within this many trading days of earnings get a warning badge. */
 export const EARNINGS_PROXIMITY_DAYS = 3;
@@ -73,6 +122,10 @@ export const DEFAULT_INSTITUTIONAL_CONFIG: InstitutionalConfig = {
   },
   threshold: 0.55,
   rsLookback: { short: 63, long: 126 },
+  // Hard eligibility floor on 20-session average dollar volume (pipeline
+  // 'eligibility' gate). Every validated BUY setup had ADV >= $30M, so this
+  // excludes nothing the measurement contained. The value is part of the frozen
+  // configuration fingerprint; raise it only through a new validation run.
   minAvgDailyDollarVol: 5_000_000,
 };
 
@@ -189,7 +242,9 @@ export const DEFAULT_QUALITY_GATE = {
   ibsMax: 0.2,
   atrPctMax: 3.5,
   volRMin: 0.8,
-  volRMax: 99, // effectively unbounded — see note above
+  // 99 = no upper bound on relative volume. The validated rule does not cap
+  // climactic volume; the clause exists only so a cap can be measured later.
+  volRMax: 99,
   scoreMax: 400,
   rsMin: 0.7,
   requireBelowSma50: true,

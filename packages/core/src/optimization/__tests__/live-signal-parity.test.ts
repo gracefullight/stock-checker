@@ -7,6 +7,7 @@ import {
   runSignalsWithContext,
   type TickerContext,
 } from '@/optimization/engine';
+import type { PipelineConfig } from '@/types';
 
 // No chart-pattern observation in these fixtures; the native score and gates remain real.
 vi.mock('@/services/patterns', () => ({
@@ -105,5 +106,93 @@ describe('historical and latest signal setup-state parity', () => {
     );
     expect(current?.pipelineResult.finalDecision).toBe(unknown?.pipelineResult.finalDecision);
     expect(runSignalsWithContext(context, 'LEADER', config)).toEqual(historicalBefore);
+  });
+});
+
+describe('cluster consumption and gap-unit options', () => {
+  // Session 205 fires and is quality-blocked; sessions 206-209 fall inside the
+  // five-day window; the fixture dates are consecutive UTC days, so calendar and
+  // session gaps coincide unless the dates are spread out.
+  it('reproduces the validated rule when the optional fields are absent', () => {
+    const context = leaderContext(true);
+    const config: PipelineConfig = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    const latest = evaluateLatestSignalWithContext(context, 'LEADER', config);
+    expect(latest?.pipelineResult.finalDecision).toBe('HOLD');
+    expect(latest?.pipelineResult.blockedBy).toBe('cluster');
+    expect(latest?.pipelineResult.cluster).toEqual({
+      lastSetupDate: '2026-07-25',
+      nextEligibleDate: '2026-07-30',
+      gapUnit: 'calendar',
+      minGap: 5,
+    });
+  });
+
+  it("'buys-only' lets a quality-blocked bar leave the window open", () => {
+    const context = leaderContext(true);
+    const config: PipelineConfig = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    config.clusterFilter.consume = 'buys-only';
+    // Session 205 no longer consumes the window, so session 206 is the first BUY;
+    // that BUY then blocks sessions 207-209 as before.
+    expect(runSignalsWithContext(context, 'LEADER', config).map((s) => s.date)).toEqual([
+      context.data[206].date,
+    ]);
+    const latest = evaluateLatestSignalWithContext(context, 'LEADER', config);
+    expect(latest?.pipelineResult).toMatchObject({
+      finalDecision: 'HOLD',
+      blockedBy: 'cluster',
+      cluster: { lastSetupDate: '2026-07-26', nextEligibleDate: '2026-07-31' },
+    });
+  });
+
+  it("'pullback-setups' consumes only quality-blocked bars that were already pullbacks", () => {
+    const context = leaderContext(true);
+    const config: PipelineConfig = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    config.clusterFilter.consume = 'pullback-setups';
+    // The fixture's blocked bar closes below SMA50 with RS passing, so it still consumes.
+    expect(
+      evaluateLatestSignalWithContext(context, 'LEADER', config)?.pipelineResult
+    ).toMatchObject({
+      finalDecision: 'HOLD',
+      blockedBy: 'cluster',
+    });
+    // Lift the blocked bar above SMA50: it is no longer a pullback and leaves the window open.
+    context.sma50Arr[205 - 49] = context.data[205].close - 1;
+    const first = evaluateLatestSignalWithContext(
+      { ...context, data: context.data.slice(0, 206) },
+      'LEADER',
+      config
+    );
+    expect(first?.pipelineResult.qualityBlocked).toBe(true);
+    expect(first?.pipelineResult.checks?.find((check) => check.id === 'below-sma50')?.passed).toBe(
+      false
+    );
+    expect(runSignalsWithContext(context, 'LEADER', config).map((s) => s.date)).toEqual([
+      context.data[206].date,
+    ]);
+  });
+
+  it("'sessions' gap unit counts bars instead of calendar days", () => {
+    const context = leaderContext(true);
+    // Spread the last bar seven calendar days after the consumed setup, four sessions later.
+    const shifted = new Date(Date.UTC(2026, 0, 205 + 1 + 7));
+    context.data = context.data.map((bar, index) =>
+      index === context.data.length - 1 ? { ...bar, date: shifted } : bar
+    );
+    // The benchmarks share the fixture's sessions (spy and sector are the same array).
+    context.spy[context.spy.length - 1].date = shifted;
+    const calendar = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    expect(
+      evaluateLatestSignalWithContext(context, 'LEADER', calendar)?.pipelineResult.finalDecision
+    ).toBe('BUY');
+    const sessionsConfig: PipelineConfig = structuredClone(DEFAULT_QUALITY_PIPELINE_CONFIG);
+    sessionsConfig.clusterFilter.gapUnit = 'sessions';
+    const latest = evaluateLatestSignalWithContext(context, 'LEADER', sessionsConfig);
+    expect(latest?.pipelineResult.finalDecision).toBe('HOLD');
+    expect(latest?.pipelineResult.cluster).toMatchObject({ gapUnit: 'sessions', minGap: 5 });
+    expect(latest?.pipelineResult.checks?.find((check) => check.gate === 'cluster')).toMatchObject({
+      value: 4,
+      limit: 5,
+      passed: false,
+    });
   });
 });

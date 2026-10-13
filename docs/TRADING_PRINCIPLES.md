@@ -54,10 +54,25 @@ gates rather than switching to a different scoring family.
 
 For histories of at least 210 sessions, live and historical analysis use the same
 causal per-bar evaluator, including indicators, pattern windows, benchmarks, and
-BUY/quality-blocked cluster state. The cluster gap uses calendar days. Current
-earnings evidence is supplied only to the latest live bar; historical earnings
-remain unavailable. Short-history fallback reports cannot establish backtest
-equivalence. Repeated reports from one completed session are not separate entries.
+BUY/quality-blocked cluster state. The validated cluster rule consumes every BUY
+and every quality-blocked score-fire (`clusterFilter.consume: 'all-setups'`) and
+measures the gap in calendar days (`gapUnit: 'calendar'`). Both are optional
+config fields that are absent from the default object, so the measured
+fingerprint `9d15fbda…` is unchanged; `'buys-only'`, `'pullback-setups'` and
+`'sessions'` exist only so `strategy:validate` can measure them. The default
+stays until a pre-registered comparison (same frozen dataset, 2019–2023 and 2024+
+splits reported separately) passes. Live decisions score earnings at the
+validated neutral value; the live earnings result is exposed only as context.
+Histories shorter than 210 sessions cannot replay cluster state, never emit BUY,
+and report `insufficient-history`. Repeated reports from one completed session
+are not separate entries.
+
+Decision inputs are strict: a missing, short, or stale SPY or sector series is
+reported as `benchmark-unavailable` (with the provider cause), an unmapped sector
+as `sector-benchmark-unavailable`, and a ticker whose latest bar is older than
+SPY's as `stale-session`; none of these is a HOLD. BUY eligibility also requires
+the configured dollar-volume floor and a $5 nominal close, both below every
+validated setup ($30M / $11.71).
 
 The [Yahoo Finance client schema](https://github.com/gadicc/yahoo-finance2/blob/dev/src/modules/quoteSummary-iface.ts)
 supplies fiscal-quarter history dates and nested consensus estimates. Quarter

@@ -82,6 +82,22 @@ export interface TickerResult {
   daysToEarnings?: number | null;
   marketCap?: number | null;
   dayChangePct?: number | null;
+  /** Composite BUY/SELL scores behind `score`, for downstream rendering. */
+  buyScore?: number;
+  sellScore?: number;
+  /** Gate that produced a HOLD on the BUY path; null for BUY/SELL decisions. */
+  blockedBy?: SignalGateId | null;
+  /** Every gate check evaluated for this decision, with observed value and limit. */
+  checks?: SignalCheck[];
+  /** Cluster-window state when the cluster filter blocked the entry. */
+  cluster?: ClusterState | null;
+  /**
+   * Live earnings evidence shown as context only. The decision is scored at the
+   * validated neutral earnings value, so this never changes BUY/HOLD.
+   */
+  earningsEvidence?: { beat: boolean | null; estimateUp: boolean | null };
+  /** Sector ETF used for relative strength (validated map first, then Yahoo sector alias). */
+  sectorEtf?: string | null;
 }
 
 export interface PredictionRecord {
@@ -200,8 +216,46 @@ export interface InstitutionalScore {
   };
 }
 
+/** Identifier of the gate that decided a HOLD on the BUY path (in evaluation order). */
+export type SignalGateId =
+  | 'score'
+  | 'eligibility'
+  | 'trend'
+  | 'regime'
+  | 'cluster'
+  | 'quality'
+  | 'institutional'
+  | 'confluence'
+  | 'reversal'
+  | 'confidence'
+  | 'sell-regime'
+  | 'insufficient-history';
+
+/** One evaluated gate clause: the observed value against its configured limit. */
+export interface SignalCheck {
+  gate: SignalGateId;
+  id: string;
+  passed: boolean;
+  value: number | string | boolean | null;
+  limit: number | string | boolean | null;
+  comparator: '<' | '<=' | '>' | '>=' | '==' | 'in';
+}
+
+/** Cluster-window state when an earlier setup still blocks a new entry. */
+export interface ClusterState {
+  /** ISO date (YYYY-MM-DD) of the most recent consumed setup. */
+  lastSetupDate: string;
+  /** ISO date of the first session that clears the window; null when unknown for session gaps. */
+  nextEligibleDate: string | null;
+  gapUnit: 'calendar' | 'sessions';
+  minGap: number;
+}
+
+/** 'leader-pullback' is an alias of the shipped 'institutional' strategy name. */
+export type StrategyName = 'mean-reversion' | 'momentum' | 'institutional' | 'leader-pullback';
+
 export interface PipelineConfig {
-  strategy: 'mean-reversion' | 'momentum' | 'institutional';
+  strategy: StrategyName;
   indicatorWeights: {
     rsi: number;
     stochastic: number;
@@ -233,6 +287,17 @@ export interface PipelineConfig {
   clusterFilter: {
     enabled: boolean;
     minGapDays: number;
+    /**
+     * Which evaluated bars consume the cluster window. Absent = 'all-setups'
+     * (the validated rule: every BUY and every quality-blocked score-fire).
+     * 'buys-only' consumes only executed BUYs; 'pullback-setups' consumes BUYs
+     * plus quality-blocked bars that were already pullbacks (close below SMA50
+     * with both relative-strength clauses passing). Variants are research
+     * options until a pre-registered comparison passes.
+     */
+    consume?: 'all-setups' | 'buys-only' | 'pullback-setups';
+    /** Gap unit for minGapDays. Absent = 'calendar' (the validated rule). */
+    gapUnit?: 'calendar' | 'sessions';
   };
   /**
    * Entry-quality (pullback) gate — essay-aligned. When enabled, a qualifying BUY
@@ -313,4 +378,10 @@ export interface PipelineResult {
    * weak for days is a breakdown, not an entry).
    */
   qualityBlocked?: boolean;
+  /** Gate that produced this HOLD (undefined for BUY/SELL). */
+  blockedBy?: SignalGateId;
+  /** Every clause evaluated on this bar, in gate order; disabled gates add no entries. */
+  checks?: SignalCheck[];
+  /** Present when the cluster filter blocked the entry. */
+  cluster?: ClusterState;
 }
