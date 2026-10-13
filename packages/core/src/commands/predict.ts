@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { orderBy } from 'es-toolkit/array';
 import pino from 'pino';
+import { LOCAL_STORE_ROOT } from '@/portfolio/local-store';
 import {
   addAsset,
   generatePerformanceReport,
@@ -32,6 +33,14 @@ const logger = pino({
   timestamp: pino.stdTimeFunctions.isoTime,
   transport: { target: 'pino-pretty' },
 });
+
+/** Decision order for `--sort-by=decision`: actionable signals first. */
+const DECISION_RANK: Record<string, number> = { BUY: 0, SELL: 1, HOLD: 2 };
+
+type ExtraDataFlags = Pick<
+  CliOptions,
+  'fundamentals' | 'news' | 'options' | 'dividends' | 'earnings'
+>;
 
 async function processTicker(
   ticker: string,
@@ -85,11 +94,75 @@ async function savePredictions(results: TickerResult[]): Promise<void> {
   logger.info(`Saved ${predictions.length} predictions to ${filename}`);
 }
 
+/** Portfolio reports are saved next to the shared stores so every entry point finds them. */
+export function portfolioReportPath(date = new Date()): string {
+  return join(
+    LOCAL_STORE_ROOT,
+    'reports',
+    `portfolio-report-${date.toISOString().slice(0, 10)}.md`
+  );
+}
+
+function savePortfolioReport(report: string): string {
+  const file = portfolioReportPath();
+  fs.mkdirSync(join(file, '..'), { recursive: true });
+  fs.writeFileSync(file, report, 'utf-8');
+  return file;
+}
+
+export function sortResults(
+  results: TickerResult[],
+  sort: CliOptions['sort'],
+  sortBy: CliOptions['sortBy'] = 'ticker'
+): TickerResult[] {
+  if (sortBy === 'decision') {
+    return orderBy(
+      results,
+      [(r) => DECISION_RANK[r.opinion] ?? Number.MAX_SAFE_INTEGER, (r) => r.score, 'ticker'],
+      ['asc', 'desc', 'asc']
+    );
+  }
+  return orderBy(results, ['ticker'], [sort]);
+}
+
+function requestedExtras(flags: ExtraDataFlags): Array<keyof ExtraDataFlags> {
+  return (['fundamentals', 'news', 'options', 'dividends', 'earnings'] as const).filter(
+    (flag) => flags[flag]
+  );
+}
+
+/** Prints the requested extra data for every ticker, sequentially to avoid provider bursts. */
+async function printExtraData(tickers: string[], flags: ExtraDataFlags): Promise<void> {
+  for (const ticker of tickers) {
+    if (flags.fundamentals) {
+      const fundamentalsData = await getFundamentals(ticker);
+      logger.info({ ticker, fundamentals: fundamentalsData }, 'Fundamentals retrieved');
+    }
+    if (flags.options) {
+      const optionsData = await getOptionsChain(ticker);
+      logger.info({ ticker }, formatOptionsData(optionsData));
+    }
+    if (flags.dividends) {
+      const dividendData = await getDividendInfo(ticker);
+      logger.info({ ticker }, formatDividendInfo(dividendData));
+    }
+    if (flags.earnings) {
+      const earningsData = await getEarningsData(ticker);
+      logger.info({ ticker }, formatEarningsData(earningsData));
+    }
+    if (flags.news) {
+      const newsItems = await getStockNews(ticker, 5);
+      logger.info({ ticker, newsItems }, 'Recent news retrieved');
+    }
+  }
+}
+
 export async function predict(options: CliOptions): Promise<void> {
   const {
     tickers,
     slackWebhook,
     sort,
+    sortBy,
     portfolioAction,
     portfolioTicker,
     fundamentals,
@@ -115,57 +188,60 @@ export async function predict(options: CliOptions): Promise<void> {
     return;
   }
 
-  const fearGreed = await getFearGreedIndex();
+  const extraFlags: ExtraDataFlags = {
+    fundamentals,
+    news,
+    options: optionsFlag,
+    dividends,
+    earnings,
+  };
+  const extras = requestedExtras(extraFlags);
 
   if (portfolioAction === 'report') {
-    const tickersToReport = portfolioTicker ? [portfolioTicker] : tickers;
+    const tickersToReport = portfolioTicker
+      ? [portfolioTicker]
+      : tickers.length > 0
+        ? tickers
+        : (await getPortfolio()).assets;
+    if (tickersToReport.length === 0) {
+      logger.warn(
+        'Portfolio is empty; add assets with --portfolio-action=add --portfolio-ticker=<symbol> or pass --ticker'
+      );
+      return;
+    }
+    const fearGreed = await getFearGreedIndex();
     const pipelineConfig = await loadPipelineConfig();
     const results = (
       await Promise.all(tickersToReport.map((t) => processTicker(t, fearGreed, pipelineConfig)))
     ).filter((r): r is TickerResult => r !== null);
-    await generatePerformanceReport(tickersToReport, results);
+    const report = await generatePerformanceReport(tickersToReport, results);
+    console.log(report);
+    const file = savePortfolioReport(report);
+    logger.info({ file, tickers: tickersToReport.length }, 'Portfolio report saved');
     return;
   }
 
-  if (fundamentals && portfolioTicker) {
-    const fundamentalsData = await getFundamentals(portfolioTicker);
-    logger.info(
-      { ticker: portfolioTicker, fundamentals: fundamentalsData },
-      'Fundamentals retrieved'
-    );
+  // Extra data without a prediction batch: legacy --portfolio-ticker usage.
+  if (tickers.length === 0) {
+    if (extras.length > 0) {
+      if (!portfolioTicker) {
+        logger.error(
+          `Pass --ticker=<symbols> to use --${extras.join(', --')}; the flags apply to every listed symbol`
+        );
+        return;
+      }
+      await printExtraData([portfolioTicker], extraFlags);
+    }
     return;
   }
 
-  if (optionsFlag && portfolioTicker) {
-    const optionsData = await getOptionsChain(portfolioTicker);
-    logger.info(formatOptionsData(optionsData));
-    return;
-  }
-
-  if (dividends && portfolioTicker) {
-    const dividendData = await getDividendInfo(portfolioTicker);
-    logger.info(formatDividendInfo(dividendData));
-    return;
-  }
-
-  if (earnings && portfolioTicker) {
-    const earningsData = await getEarningsData(portfolioTicker);
-    logger.info(formatEarningsData(earningsData));
-    return;
-  }
-
-  if (news && portfolioTicker) {
-    const newsItems = await getStockNews(portfolioTicker, 5);
-    logger.info({ ticker: portfolioTicker, newsItems }, 'Recent news retrieved');
-    return;
-  }
-
+  const fearGreed = await getFearGreedIndex();
   const contexts = new Map<string, TickerAnalysisContext>();
   const pipelineConfig = await loadPipelineConfig();
   const results = (
     await Promise.all(tickers.map((t) => processTicker(t, fearGreed, pipelineConfig, contexts)))
   ).filter((r): r is TickerResult => r !== null);
-  const ordered = orderBy(results, ['ticker'], [sort]);
+  const ordered = sortResults(results, sort, sortBy);
 
   if (format === 'json') {
     await exportToJson(ordered);
@@ -201,5 +277,9 @@ export async function predict(options: CliOptions): Promise<void> {
     }
   } catch {
     logger.warn('WhatsApp signal notification failed; prediction results are saved');
+  }
+
+  if (extras.length > 0) {
+    await printExtraData(tickers, extraFlags);
   }
 }

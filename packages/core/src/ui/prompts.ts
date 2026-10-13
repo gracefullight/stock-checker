@@ -21,12 +21,16 @@ export async function promptTickers(): Promise<string[]> {
     .filter(Boolean);
 }
 
-export async function promptSortOrder(): Promise<'asc' | 'desc'> {
+export async function promptSortOrder(): Promise<{
+  sort: 'asc' | 'desc';
+  sortBy: 'ticker' | 'decision';
+}> {
   const result = await p.select({
-    message: 'Sort order',
+    message: 'Sort results',
     options: [
-      { value: 'asc', label: 'Ascending (A → Z)' },
-      { value: 'desc', label: 'Descending (Z → A)' },
+      { value: 'decision', label: 'By decision (BUY, SELL, HOLD, then score)' },
+      { value: 'asc', label: 'By ticker, ascending (A → Z)' },
+      { value: 'desc', label: 'By ticker, descending (Z → A)' },
     ],
   });
 
@@ -35,7 +39,8 @@ export async function promptSortOrder(): Promise<'asc' | 'desc'> {
     process.exit(0);
   }
 
-  return result as 'asc' | 'desc';
+  if (result === 'decision') return { sort: 'asc', sortBy: 'decision' };
+  return { sort: result as 'asc' | 'desc', sortBy: 'ticker' };
 }
 
 export async function promptOutputFormat(): Promise<'csv' | 'json'> {
