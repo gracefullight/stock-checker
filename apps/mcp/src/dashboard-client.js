@@ -233,6 +233,15 @@
   /** @param {string} selector */
   const buttons = (selector) =>
     /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll(selector));
+  /**
+   * `hidden` is an HTMLElement property; the SVG chart only honours the attribute.
+   * @param {Element} element
+   * @param {boolean} flag
+   */
+  const setHidden = (element, flag) => {
+    if ('hidden' in element) element.hidden = flag;
+    if (typeof element.toggleAttribute === 'function') element.toggleAttribute('hidden', flag);
+  };
   const drawChart = () => {
     const chart = $('price-chart');
     chart.replaceChildren();
@@ -245,7 +254,7 @@
       button.setAttribute('aria-pressed', String(button.dataset.chartType === chartType));
     }
     if (!candles.length) {
-      chart.hidden = true;
+      setHidden(chart, true);
       $('chart-readout').hidden = true;
       $('chart-summary').hidden = true;
       return;
@@ -261,7 +270,7 @@
     start.setUTCDate(Math.min(latest.getUTCDate(), lastDay));
     const startDate = start.toISOString().slice(0, 10);
     visibleCandles = candles.filter((candle) => candle.date >= startDate);
-    chart.hidden = false;
+    setHidden(chart, false);
     $('chart-readout').hidden = false;
     $('chart-summary').hidden = false;
     const lows = visibleCandles.map((candle) => candle.low);
