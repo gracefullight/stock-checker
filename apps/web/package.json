@@ -1,6 +1,6 @@
 {
   "name": "@stock-checker/web",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "private": true,
   "scripts": {
     "dev": "next dev --turbo --port 5100",

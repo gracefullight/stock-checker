@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.2](https://github.com/gracefullight/stock-checker/compare/v0.8.1...v0.8.2) (2026-10-14)
+
+
+### Refactoring
+
+* **mcp:** write the dashboard client in typescript and transpile with bun ([140b059](https://github.com/gracefullight/stock-checker/commit/140b059ebcf55cf816647c7097202f6749ba6da1))
+
+
+### Maintenance
+
+* sync serena project config ([8e00000](https://github.com/gracefullight/stock-checker/commit/8e00000de3a7b4f63ab60ce79fb0aa86b0318fb6))
+
 ## [0.8.1](https://github.com/gracefullight/stock-checker/compare/v0.8.0...v0.8.1) (2026-10-14)
 
 
