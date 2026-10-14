@@ -37,7 +37,6 @@ function input(candidates = [candidate()]): StockReportAlertInput {
   return {
     title: 'Stock Checker 상세 알림',
     asOf: 'Scan completed 2026-10-05T03:30:00.000Z',
-    coverageSummary: 'BUY 필터; 분석 19/20; 일치 5; 실패 1; 반환 4/5.',
     lookbackDays: 730,
     sizing: { maxPositions: 5 },
     candidates,
@@ -605,17 +604,10 @@ describe('stock report WhatsApp formatting', () => {
     expect(original).toEqual(saved);
   });
 
-  it('keeps the stock details independent of coverage and excludes standalone footer sections', () => {
-    const original = {
-      ...input(),
-      coverageSummary: '분석 19/20 · 일치 5\n반환 4/5 · 일부 생략\nFinviz 부분 수집\u0000',
-    };
+  it('excludes standalone footer sections from the stock details', () => {
+    const original = input();
     const { summary } = formatStockReportWhatsAppNotification(original, [detail()]);
     expect(summary.split('\n')[3]).toBe('*AAPL · BUY*');
-    expect(summary).toBe(
-      formatStockReportWhatsAppNotification({ ...original, coverageSummary: '' }, [detail()])
-        .summary
-    );
     expect(summary).not.toContain('*결과 범위*');
     expect(summary).not.toContain('*해석 주의*');
     expect(summary).not.toContain('Finviz 부분 수집');
@@ -772,7 +764,6 @@ describe('stock report WhatsApp formatting', () => {
     });
     const original = {
       ...input(candidates),
-      coverageSummary: `${'전체 분석 범위 기록 '.repeat(100)}\n${'추가 수집 범위 기록 '.repeat(100)}`,
       screening: {
         decision: 'BUY' as const,
         analyzed: 3,

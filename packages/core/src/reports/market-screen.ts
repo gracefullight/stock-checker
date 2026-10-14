@@ -17,7 +17,6 @@ import {
 import {
   buildMarketScreenUniverse,
   classifyCollection,
-  describeUniverseCollection,
   type MarketScreenCollectionStatus,
   type MarketScreenProvenance,
   type MarketScreenUniverse,
@@ -550,10 +549,6 @@ async function notifyCompletion(
             )
           : [],
     };
-    const coverageSummary = [
-      `필터 ${runtime.job.criteria.decision} · 분석 ${progress.analyzed}/${progress.total} · 일치 ${progress.matched} · 제외 ${progress.excluded} · 분석 불가 ${progress.unavailable} · 알림 ${candidates.length}/${progress.matched}개`,
-      describeUniverseCollection(universe),
-    ].join('\n');
     const attempt: NotificationAttempt = {
       schemaVersion: 1,
       jobStatus: runtime.job.status,
@@ -569,7 +564,6 @@ async function notifyCompletion(
       const input = {
         title: formatMarketScreenTitle(runtime.job),
         asOf: `검색 완료 ${formatScreenTimestamp(runtime.job.finishedAt ?? runtime.job.updatedAt)}`,
-        coverageSummary,
         screening,
         lookbackDays: runtime.job.criteria.lookbackDays,
         pipelineConfig: runtime.job.criteria.pipelineConfig,

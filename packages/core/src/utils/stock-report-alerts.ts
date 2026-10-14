@@ -51,8 +51,6 @@ export interface PositionSizing {
 export interface StockReportAlertInput {
   title: string;
   asOf: string;
-  /** @deprecated Ignored: coverage lives in the title and the screening context. */
-  coverageSummary?: string;
   lookbackDays: number;
   /** Complete configuration frozen when the saved screening decisions were generated. */
   pipelineConfig?: PipelineConfig;

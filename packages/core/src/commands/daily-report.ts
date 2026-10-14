@@ -626,7 +626,6 @@ export async function runDailyReport(
         asOf: `${schedule.localDate} Sydney · 검색 중단 ${formatScreenTimestamp(now().toISOString())}`,
         lookbackDays: saved.job.criteria.lookbackDays,
         pipelineConfig: saved.job.criteria.pipelineConfig,
-        coverageSummary: '',
         candidates,
         usSession: state.usSession,
         universeSource: saved.job.universe.source,
