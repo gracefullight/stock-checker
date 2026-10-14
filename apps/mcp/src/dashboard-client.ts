@@ -1,108 +1,95 @@
-// MCP Apps dashboard client. Served inline by dashboard-ui.ts, so it must stay
-// plain browser JavaScript: no imports, no build step, and no network access.
-// JSDoc types let tsc (checkJs) and Biome cover it like the rest of the app.
+// MCP Apps dashboard client. Served inline by dashboard-ui.ts, which transpiles
+// this module with Bun at load time, so it must stay a self-contained browser
+// script: type-only imports, no runtime imports, no build step, no network access.
 
-/** @typedef {import('./dashboard-data.ts').StockDashboardCandle} Candle */
-/** @typedef {import('./dashboard-data.ts').StockDashboardChart} Chart */
-/** @typedef {import('@stock-checker/core/src/reports/stock-analyst.ts').StockAnalystReport} StockReport */
-/** @typedef {import('@stock-checker/core/src/services/valuation.ts').ValuationReport} Valuation */
-/** @typedef {{ report?: StockReport | null; chart?: Chart | null; dashboardUrl?: unknown }} Payload */
+import type { StockDashboardCandle, StockDashboardChart } from '@mcp/dashboard-data';
+import type { StockAnalystReport } from '@stock-checker/core/src/reports/stock-analyst.ts';
+import type { ValuationReport } from '@stock-checker/core/src/services/valuation.ts';
+
+type Candle = StockDashboardCandle;
+type Chart = StockDashboardChart;
+type StockReport = StockAnalystReport;
+type Valuation = ValuationReport;
+type Payload = { report?: StockReport | null; chart?: Chart | null; dashboardUrl?: unknown };
+/** Untrusted host frames: every field is checked before use. */
+type HostMessage = {
+  jsonrpc?: unknown;
+  id?: unknown;
+  method?: unknown;
+  error?: unknown;
+  result?: {
+    protocolVersion?: unknown;
+    hostCapabilities?: unknown;
+    hostInfo?: { name?: unknown } | null;
+    hostContext?: unknown;
+  } | null;
+  params?: {
+    isError?: unknown;
+    arguments?: { ticker?: unknown } | null;
+    structuredContent?: { report?: unknown } | null;
+    content?: unknown;
+  } | null;
+};
 
 (() => {
-  /**
-   * @param {string} id
-   * @returns {HTMLElement}
-   */
-  const $ = (id) => {
+  const $ = (id: string): HTMLElement => {
     const node = document.getElementById(id);
     if (!node) throw new Error(`Missing dashboard node: ${id}`);
     return node;
   };
-  /**
-   * @param {string} id
-   * @param {unknown} value
-   */
-  const text = (id, value) => {
+  const text = (id: string, value: unknown) => {
     $(id).textContent = value == null ? '자료 없음' : String(value);
   };
-  /**
-   * @param {unknown} value
-   * @returns {value is number}
-   */
-  const numeric = (value) => typeof value === 'number' && Number.isFinite(value);
-  /**
-   * @param {unknown} value
-   * @param {number} [digits]
-   */
-  const number = (value, digits = 2) =>
+  const numeric = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value);
+  const number = (value: unknown, digits = 2) =>
     numeric(value)
       ? value.toLocaleString('ko-KR', {
           minimumFractionDigits: digits,
           maximumFractionDigits: digits,
         })
       : '자료 없음';
-  /** @param {unknown} value */
-  const count = (value) => (numeric(value) && value >= 0 ? number(value, 0) : '자료 없음');
-  /** @param {unknown} value */
-  const multiple = (value) => (numeric(value) && value > 0 ? `${number(value)}배` : '자료 없음');
-  /** @param {unknown} value */
-  const percentage = (value) => (numeric(value) ? `${number(value)}%` : '자료 없음');
-  /**
-   * @param {string} tag
-   * @param {unknown} [value]
-   * @param {string} [className]
-   */
-  const element = (tag, value, className) => {
+  const count = (value: unknown) => (numeric(value) && value >= 0 ? number(value, 0) : '자료 없음');
+  const multiple = (value: unknown) =>
+    numeric(value) && value > 0 ? `${number(value)}배` : '자료 없음';
+  const percentage = (value: unknown) => (numeric(value) ? `${number(value)}%` : '자료 없음');
+  const element = (tag: string, value?: unknown, className?: string) => {
     const node = document.createElement(tag);
     if (value != null) node.textContent = String(value);
     if (className) node.className = className;
     return node;
   };
   let initialized = false;
-  /** @type {string | null} */
-  let parentOrigin = null;
-  /** @type {Record<string, unknown>} */
-  let hostCapabilities = {};
+  let parentOrigin: string | null = null;
+  let hostCapabilities: Record<string, unknown> = {};
   let nextRequest = 2;
-  /** @type {ResizeObserver | undefined} */
-  let resizeObserver;
+  let resizeObserver: ResizeObserver | undefined;
   let lastSize = '';
-  /** @type {string | null} */
-  let currency = null;
-  /** @type {Candle[]} */
-  let candles = [];
-  /** @type {Candle[]} */
-  let visibleCandles = [];
+  let currency: string | null = null;
+  let candles: Candle[] = [];
+  let visibleCandles: Candle[] = [];
   let rangeMonths = 3;
-  /** @type {'candles' | 'line'} */
-  let chartType = 'candles';
+  let chartType: 'candles' | 'line' = 'candles';
   let cursorIndex = -1;
-  /** @type {Element | null} */
-  let cursor = null;
+  let cursor: Element | null = null;
   const plot = { left: 66, right: 884, top: 20, bottom: 266, volumeTop: 284, volumeBottom: 332 };
-  /** @param {unknown} value */
-  const price = (value) => number(value) + (numeric(value) && currency ? ` ${currency}` : '');
+  const price = (value: unknown) =>
+    number(value) + (numeric(value) && currency ? ` ${currency}` : '');
   try {
     const referrer = new URL(document.referrer);
     if (referrer.origin !== 'null') parentOrigin = referrer.origin;
   } catch {
     /* Opaque or referrer-free sandboxes pin the parent at the initialize response. */
   }
-  /** @param {Record<string, unknown>} message */
-  const send = (message) =>
+  const send = (message: Record<string, unknown>) =>
     window.parent.postMessage(
       { jsonrpc: '2.0', ...message },
       parentOrigin && parentOrigin !== 'null' ? parentOrigin : '*'
     );
-  /**
-   * @param {string} method
-   * @param {Record<string, unknown>} [params]
-   */
-  const notify = (method, params) => {
+  const notify = (method: string, params?: Record<string, unknown>) => {
     if (initialized) send({ method, ...(params ? { params } : {}) });
   };
-  /** @param {unknown} value */
-  const safeUrl = (value) => {
+  const safeUrl = (value: unknown) => {
     if (typeof value !== 'string') return null;
     try {
       const url = new URL(value);
@@ -111,11 +98,7 @@
       return null;
     }
   };
-  /**
-   * @param {unknown} value
-   * @param {string} [label]
-   */
-  const link = (value, label) => {
+  const link = (value: unknown, label?: string) => {
     const url = safeUrl(value);
     if (!url) return element('span', label || '출처 없음');
     const anchor = document.createElement('a');
@@ -140,56 +123,36 @@
     lastSize = key;
     notify('ui/notifications/size-changed', { width, height });
   };
-  /** @param {unknown} context */
-  const theme = (context) => {
+  const theme = (context: unknown) => {
     const value =
       context && typeof context === 'object' && 'theme' in context ? context.theme : undefined;
     if (value === 'dark' || value === 'light') {
       document.documentElement.dataset.theme = value;
     }
   };
-  /**
-   * @param {string} id
-   * @param {unknown} entries
-   * @param {string} fallback
-   */
-  const list = (id, entries, fallback) => {
-    /** @type {string[]} */
-    const values = Array.isArray(entries) ? entries.filter((item) => typeof item === 'string') : [];
+  const list = (id: string, entries: unknown, fallback: string) => {
+    const values: string[] = Array.isArray(entries)
+      ? entries.filter((item: unknown): item is string => typeof item === 'string')
+      : [];
     $(id).replaceChildren(
       ...(values.length ? values : [fallback]).map((value) => element('li', value))
     );
   };
-  /**
-   * @param {string} tag
-   * @param {Record<string, string | number>} attributes
-   * @param {unknown} [value]
-   */
-  const svgNode = (tag, attributes, value) => {
+  const svgNode = (tag: string, attributes: Record<string, string | number>, value?: unknown) => {
     const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
     for (const [key, attribute] of Object.entries(attributes))
       node.setAttribute(key, String(attribute));
     if (value != null) node.textContent = String(value);
     return node;
   };
-  /**
-   * @param {unknown} value
-   * @returns {value is string}
-   */
-  const validDate = (value) =>
+  const validDate = (value: unknown): value is string =>
     typeof value === 'string' &&
     /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     Number.isFinite(Date.parse(`${value}T00:00:00Z`)) &&
     new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
-  /**
-   * @param {unknown} candle
-   * @returns {candle is Candle}
-   */
-  const validCandle = (candle) => {
+  const validCandle = (candle: unknown): candle is Candle => {
     if (!candle || typeof candle !== 'object') return false;
-    const { date, open, high, low, close, volume } = /** @type {Record<string, unknown>} */ (
-      candle
-    );
+    const { date, open, high, low, close, volume } = candle as Record<string, unknown>;
     if (!validDate(date)) return false;
     if (!numeric(open) || !numeric(high) || !numeric(low) || !numeric(close)) return false;
     return (
@@ -203,8 +166,7 @@
       volume >= 0
     );
   };
-  /** @param {number} index */
-  const showCandle = (index) => {
+  const showCandle = (index: number) => {
     if (!visibleCandles.length) return;
     cursorIndex = Math.min(Math.max(index, 0), visibleCandles.length - 1);
     const candle = visibleCandles[cursorIndex];
@@ -230,15 +192,9 @@
       cursor.setAttribute('visibility', 'visible');
     }
   };
-  /** @param {string} selector */
-  const buttons = (selector) =>
-    /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll(selector));
-  /**
-   * `hidden` is an HTMLElement property; the SVG chart only honours the attribute.
-   * @param {Element} element
-   * @param {boolean} flag
-   */
-  const setHidden = (element, flag) => {
+  const buttons = (selector: string) => document.querySelectorAll<HTMLElement>(selector);
+  /** `hidden` is an HTMLElement property; the SVG chart only honours the attribute. */
+  const setHidden = (element: Element, flag: boolean) => {
     if ('hidden' in element) element.hidden = flag;
     if (typeof element.toggleAttribute === 'function') element.toggleAttribute('hidden', flag);
   };
@@ -277,13 +233,15 @@
     const highs = visibleCandles.map((candle) => candle.high);
     const minimum = Math.min(...lows);
     const maximum = Math.max(...highs);
+    const first = visibleCandles[0];
+    const last = visibleCandles[visibleCandles.length - 1];
     // DOM text keeps the dates and observed price range readable when mobile scales the SVG.
     text(
       'chart-summary',
       '기간 ' +
-        visibleCandles[0].date +
+        first.date +
         ' ~ ' +
-        visibleCandles[visibleCandles.length - 1].date +
+        last.date +
         ' · 저가 ' +
         price(minimum) +
         ' · 고가 ' +
@@ -295,13 +253,11 @@
     const padding = Math.max((maximum - minimum) * 0.08, maximum * 0.002, 0.01);
     const lower = Math.max(0, minimum - padding);
     const upper = maximum + padding;
-    /** @param {number} value */
-    const y = (value) =>
+    const y = (value: number) =>
       plot.bottom - ((value - lower) / (upper - lower)) * (plot.bottom - plot.top);
     const width = (plot.right - plot.left) / visibleCandles.length;
     const maxVolume = Math.max(...visibleCandles.map((candle) => candle.volume), 1);
-    /** @type {Element[]} */
-    const pieces = [];
+    const pieces: Element[] = [];
     for (let step = 0; step <= 4; step++) {
       const value = lower + ((upper - lower) * step) / 4;
       const level = y(value);
@@ -316,8 +272,7 @@
         )
       );
     }
-    /** @type {string[]} */
-    const path = [];
+    const path: string[] = [];
     visibleCandles.forEach((candle, index) => {
       const x = plot.left + (index + 0.5) * width;
       const className = candle.close >= candle.open ? 'up' : 'down';
@@ -349,7 +304,7 @@
     });
     if (chartType === 'line')
       pieces.push(svgNode('path', { d: path.join(' '), class: 'price-line' }));
-    pieces.push(svgNode('text', { x: plot.left, y: 354, class: 'axis' }, visibleCandles[0].date));
+    pieces.push(svgNode('text', { x: plot.left, y: 354, class: 'axis' }, first.date));
     pieces.push(
       svgNode(
         'text',
@@ -371,17 +326,16 @@
       'aria-label',
       (chartType === 'candles' ? '일봉 캔들' : '일별 종가') +
         ' 및 거래량, ' +
-        visibleCandles[0].date +
+        first.date +
         '부터 ' +
-        visibleCandles[visibleCandles.length - 1].date +
+        last.date +
         ', ' +
         visibleCandles.length +
         '거래일. 좌우 방향키로 가격을 확인하세요.'
     );
     showCandle(visibleCandles.length - 1);
   };
-  /** @param {Valuation | null | undefined} valuation */
-  const renderValuation = (valuation) => {
+  const renderValuation = (valuation: Valuation | null | undefined) => {
     const company = valuation?.company;
     const industry = valuation?.industryComparison;
     const relative = valuation?.relative;
@@ -441,8 +395,7 @@
         : '표본 없음'
     );
   };
-  /** @param {Payload} payload */
-  const render = (payload) => {
+  const render = (payload: Payload) => {
     const report = payload?.report;
     if (!report || typeof report.ticker !== 'string') {
       pending();
@@ -453,8 +406,7 @@
     const current = report.current;
     const reference = report.execution?.reference;
     const consensus = report.analystTargets?.consensus;
-    /** @param {unknown} value */
-    const targetPrice = (value) =>
+    const targetPrice = (value: unknown) =>
       number(value) + (numeric(value) ? ` ${consensus?.currency || '통화 미제공'}` : '');
     currency = report.valuation?.company?.currency || consensus?.currency || null;
     text('ticker', report.ticker);
@@ -578,8 +530,7 @@
       Array.isArray(chart.candles)
         ? chart.candles.filter(validCandle).slice(-300)
         : [];
-    /** @type {Map<string, Candle>} */
-    const unique = new Map();
+    const unique = new Map<string, Candle>();
     for (const candle of inputCandles) unique.set(candle.date, candle);
     candles = [...unique.values()].sort((a, b) => a.date.localeCompare(b.date));
     text('chart-source', chart?.source || '차트 출처 자료 없음');
@@ -589,12 +540,8 @@
     $('dashboard').hidden = false;
     sizeChanged();
   };
-  /**
-   * @param {any} params
-   * @returns {Payload | null}
-   */
-  const resultPayload = (params) => {
-    if (params?.structuredContent?.report) return params.structuredContent;
+  const resultPayload = (params: HostMessage['params']): Payload | null => {
+    if (params?.structuredContent?.report) return params.structuredContent as Payload;
     for (const item of Array.isArray(params?.content) ? params.content : []) {
       if (item.type !== 'text' || typeof item.text !== 'string') continue;
       try {
@@ -615,28 +562,27 @@
     text('report-time', '');
     $('dashboard-link').replaceChildren();
   };
-  /** @param {MessageEvent} event */
-  const receive = (event) => {
+  const receive = (event: MessageEvent) => {
     if (event.source !== window.parent || (parentOrigin !== null && event.origin !== parentOrigin))
       return;
-    /** @type {any} */
-    const message = event.data;
+    const message = event.data as HostMessage;
     if (message?.jsonrpc !== '2.0' || typeof message !== 'object') return;
     if (!initialized) {
       if (message.id !== 1 || message.method) return;
+      const result = message.result;
       if (
         message.error ||
-        message.result?.protocolVersion !== '2026-01-26' ||
-        typeof message.result?.hostCapabilities !== 'object' ||
-        !message.result.hostCapabilities ||
-        typeof message.result?.hostInfo?.name !== 'string'
+        result?.protocolVersion !== '2026-01-26' ||
+        typeof result.hostCapabilities !== 'object' ||
+        !result.hostCapabilities ||
+        typeof result.hostInfo?.name !== 'string'
       ) {
         text('status', 'MCP Apps 연결을 초기화하지 못했습니다.');
         return;
       }
       parentOrigin = event.origin;
-      hostCapabilities = message.result.hostCapabilities;
-      theme(message.result.hostContext);
+      hostCapabilities = result.hostCapabilities as Record<string, unknown>;
+      theme(result.hostContext);
       initialized = true;
       send({ method: 'ui/notifications/initialized' });
       if (typeof ResizeObserver !== 'undefined') {

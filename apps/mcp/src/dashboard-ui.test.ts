@@ -154,6 +154,9 @@ describe('MCP Apps dashboard resource', () => {
     expect(dashboardHtml).toContain('role="img" tabindex="0"');
     expect(dashboardHtml).toContain('aria-describedby="chart-summary chart-help chart-readout"');
     expect(dashboardUiScript).not.toMatch(/innerHTML|insertAdjacentHTML|\bfetch\(|\beval\(/);
+    // Bun must erase the type-only imports so the inline script stays module-free.
+    expect(dashboardUiScript).not.toMatch(/^\s*(import|export)\b|\brequire\(/m);
+    expect(dashboardUiScript).toContain('ui/initialize');
     expect(dashboardHtml).not.toMatch(/<script[^>]+src=|<link[^>]+href=|<iframe/);
   });
 

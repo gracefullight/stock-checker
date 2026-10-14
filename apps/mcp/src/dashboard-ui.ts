@@ -11,12 +11,14 @@ export const DASHBOARD_RESOURCE_META = {
   },
 };
 
-// The client is plain JavaScript kept in its own module so Biome and tsc (checkJs)
-// cover it; it is read at runtime and inlined, so the resource still needs no build
-// step or network assets.
-export const dashboardUiScript = readFileSync(
-  fileURLToPath(new URL('./dashboard-client.js', import.meta.url)),
-  'utf8'
+// The client is a TypeScript module so tsc and Biome cover it like the rest of the
+// app. Bun transpiles it at load time (type-only imports are erased) and the result
+// is inlined, so the resource still needs no build step or network assets.
+export const dashboardUiScript = new Bun.Transpiler({
+  loader: 'ts',
+  target: 'browser',
+}).transformSync(
+  readFileSync(fileURLToPath(new URL('./dashboard-client.ts', import.meta.url)), 'utf8')
 );
 
 export const dashboardHtml = `<!doctype html>
