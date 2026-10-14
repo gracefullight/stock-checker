@@ -133,40 +133,4 @@ export async function promptPortfolioAction(): Promise<{
   return { action: action as string };
 }
 
-export async function promptOptimize(): Promise<{
-  symbol: string;
-  trials: number;
-}> {
-  const symbol = await p.text({
-    message: 'Symbol to optimize',
-    placeholder: 'TSLA',
-    defaultValue: 'TSLA',
-  });
-
-  if (p.isCancel(symbol)) {
-    p.cancel('Operation cancelled.');
-    process.exit(0);
-  }
-
-  const trials = await p.text({
-    message: 'Number of trials',
-    placeholder: '200',
-    defaultValue: '200',
-    validate: (value) => {
-      const n = parseInt(value ?? '', 10);
-      if (Number.isNaN(n) || n < 1) return 'Must be a positive number';
-    },
-  });
-
-  if (p.isCancel(trials)) {
-    p.cancel('Operation cancelled.');
-    process.exit(0);
-  }
-
-  return {
-    symbol: (symbol as string).trim().toUpperCase(),
-    trials: parseInt(trials as string, 10),
-  };
-}
-
 export { p, pc };
