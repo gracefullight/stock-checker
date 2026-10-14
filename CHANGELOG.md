@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.1](https://github.com/gracefullight/stock-checker/compare/v0.8.0...v0.8.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **mcp:** hide the svg price chart through the hidden attribute ([985b186](https://github.com/gracefullight/stock-checker/commit/985b186dbf37ca2d13daa2ac20e2d87d362222e9))
+
+
+### Refactoring
+
+* **core:** drop the ignored coverageSummary alert field ([0f742d7](https://github.com/gracefullight/stock-checker/commit/0f742d7cf69f94de23405690f821dd70485435d3))
+
+
+### Maintenance
+
+* **core:** remove unused optimize prompt ([c18939f](https://github.com/gracefullight/stock-checker/commit/c18939f69b19acd006e857d5f8c5c586e1dfb226))
+
 ## [0.8.0](https://github.com/gracefullight/stock-checker/compare/v0.7.13...v0.8.0) (2026-10-13)
 
 
