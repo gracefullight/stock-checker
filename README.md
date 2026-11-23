@@ -306,6 +306,25 @@ saved job first for `/market-screen?job=<id>` deep links.
 
 See [the API environment example](apps/api/.env.example) for the configuration.
 
+### Optional news context per ticker
+
+This is separate from the CSV pipeline and the signal engine, and it runs only
+when you set a Firecrawl API key
+([get a key](https://www.firecrawl.dev/app?utm_source=stock-checker&utm_medium=integration)).
+To add a cited news or filings line next to a ticker's signal from Codex or
+Claude Code, install the Firecrawl CLI and its skills:
+
+```bash
+npx -y firecrawl-cli@latest init -y --api-key "$FIRECRAWL_API_KEY"
+```
+
+`init` includes the `firecrawl-market-research` and `firecrawl-alexandria`
+skills. To add only those two, run
+`npx skills add firecrawl/skills --skill firecrawl-market-research --skill firecrawl-alexandria -y`.
+Then ask, for example, "Summarize this week's news and the latest SEC filings
+for OII, with sources." SEC EDGAR filings come through
+[Firecrawl Alexandria](https://alexandria.firecrawl.dev/categories/finance?utm_source=stock-checker&utm_medium=integration).
+
 ## Development and releases
 
 ```bash
