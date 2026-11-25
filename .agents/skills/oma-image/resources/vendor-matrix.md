@@ -1,14 +1,6 @@
 # Vendor Matrix
 
-## Reference Image Support (`--reference` / `-r`)
-
-| Vendor | Reference input | Transport | Notes |
-|--------|-----------------|-----------|-------|
-| `codex` | PASS | `codex exec -i <path>` (repeatable) | Local file path; 5MB-per-file cap enforced by Codex CLI |
-| `antigravity` | PASS | Per-run temp dir staged via `agy --add-dir`; paths referenced inline in prompt | Up to 10 refs (skill cap); copied so agy sandboxes don't need access to the originals' parent dir |
-| `pollinations` | N/A | (none) | Requires URL hosting; rejected with exit 4 when explicitly selected, silently dropped from the run set under `--vendor auto`. Planned for PR #2. |
-
-All paths are validated in `reference-guard.ts` (magic-byte MIME check + size + count + duplicate rejection) before dispatch. The magic-byte-detected MIME is threaded through `GenerateInput.referenceImages` and used verbatim at the vendor API boundary; file extension is never trusted for MIME type.
+Reference-image support per vendor (`--reference` / `-r`) is in `invocation.md`.
 
 ## Codex
 
@@ -35,19 +27,13 @@ The Antigravity CLI (`agy`) is an agentic CLI that runs against the user's Gemin
 | Auth | Sign-in via Gemini Code Assist account during `agy install` |
 | Health check | `agy --version` exits 0 — **install check only**. Sign-in state is not verified; a signed-out agy passes health and fails at generate time. |
 | Model selection | Opaque — chosen by agy's internal agent loop. Not exposed via flags, not recorded as a vendor-side promise. |
-| Transport | `agy -p --dangerously-skip-permissions --add-dir <outDir> --print-timeout <s> "<instruction>"` (spawn `cwd` is forced to `<outDir>` to prevent agy from inheriting a stale workspace context) |
+| Transport | `agy acp` (Agent Client Protocol) through `oma agent:acp agy --dangerously-skip-permissions --add-dir <outDir> -p "<instruction>"`; the ACP session opens in `<outDir>` (spawn `cwd`) so agy does not inherit a stale workspace context. `--timeout` is enforced by oma: the driver cancels the session and stops agy. |
 | Output bytes | Saved directly by agy to absolute paths embedded in the prompt; detected via PNG/JPEG/WebP/GIF magic bytes and renamed accordingly |
-| Sizes | Any `WxH` allowed by `size-guard.ts` (each edge ∈ [16, 3840], multiples of 16, aspect 1:3..3:1) or `auto`. The dimension is passed as an advisory hint in the prompt — agy/Gemini may pick its own internal aspect. |
-
-### Why `agy` instead of the Gemini CLI / direct API
-
-- `gemini -p` runs the full agent loop and does not emit raw `inlineData` bytes on stdout (as of Gemini CLI 0.38) — it tries to invoke image-generation tools itself, often recursing back into `oma-image`.
-- The direct `generativelanguage.googleapis.com` API requires `GEMINI_API_KEY` plus billing on AI Studio. Image models are not in the free tier.
-- `agy -p` already wraps Gemini Code Assist credentials in the user's Antigravity session and provides native image generation. It writes raw bytes to disk for us, so we don't have to capture them from stdout.
+| Sizes | Any `WxH` allowed by `size-guard.ts` (each edge ∈ [16, 3840], multiples of 16, aspect 1:3..3:1) or `auto`. The dimension is passed as an advisory hint in the prompt — agy may pick its own internal aspect. |
 
 ### Output format gotcha
 
-Gemini image surfaces currently return JPEG bytes regardless of the requested filename extension. The provider writes to a `.img` placeholder, sniffs the actual format from the first 12 bytes, then renames to `.png` / `.jpg` / `.webp` / `.gif`. The result's `mime` field reflects the sniffed format, not the user's requested extension.
+agy commonly returns JPEG bytes regardless of the requested filename extension. The provider writes to a `.img` placeholder, sniffs the actual format from the first 12 bytes, then renames to `.png` / `.jpg` / `.webp` / `.gif`. The result's `mime` field reflects the sniffed format, not the user's requested extension.
 
 ## Pollinations
 
@@ -68,7 +54,7 @@ A credit-gated model without pollen balance fails as `invalid-input` (exit 4) wi
 Manifest field `strategy_attempts` is always an array of objects:
 
 ```
-{ "strategy": "codex-exec-oauth" | "agy-print" | "pollinations-http",
+{ "strategy": "codex-exec-oauth" | "agy-acp" | "pollinations-http",
   "status": "ok" | "skipped" | "failed",
   "reason"?: string,
   "duration_ms"?: number }

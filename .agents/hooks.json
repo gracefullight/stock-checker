@@ -35,10 +35,52 @@
       }
     ]
   },
+  "oma-scm-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"/Users/gracefullight/.gemini/antigravity-cli/hooks/scm-guard.ts\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "oma-code-intelligence-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"/Users/gracefullight/.gemini/antigravity-cli/hooks/code-intelligence-guard.ts\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "oma-test-filter": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"/Users/gracefullight/.gemini/antigravity-cli/hooks/test-filter.ts\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
   "oma-refactor-guard": {
     "PostToolUse": [
       {
-        "matcher": "write_to_file|replace_file_content|notebook_edit",
+        "matcher": "write_file|edit_file|write_to_file|replace_file_content|notebook_edit",
         "hooks": [
           {
             "type": "command",
@@ -53,6 +95,20 @@
         "type": "command",
         "command": "bun \"/Users/gracefullight/.gemini/antigravity-cli/hooks/refactor-guard.ts\"",
         "timeout": 5
+      }
+    ]
+  },
+  "oma-skill-route": {
+    "PostToolUse": [
+      {
+        "matcher": "read_file|run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"/Users/gracefullight/.gemini/antigravity-cli/hooks/skill-route.ts\"",
+            "timeout": 3
+          }
+        ]
       }
     ]
   },

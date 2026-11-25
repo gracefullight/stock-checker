@@ -29,11 +29,14 @@ Default base path: `.agents/state/memories`
   orchestrator-session-{sessionId}.md                 # Session metadata
   task-board-{sessionId}.md                            # Master task list
   progress-{agentId}-{taskId}-{runId}-{sessionId}.md   # Per-run progress log
+
+.agents/results/
   result-{agentId}-{taskId}-{runId}-{sessionId}.md     # Per-run final report
 ```
 
-> **Path rule**: Resolve paths from the project-root memory base, then isolate
-> every artifact by session, task, and run. In monorepos, never choose a
+> **Path rule**: Resolve coordination notes from the project-root memory base and
+> final reports from the project-root `.agents/results/`, then isolate every
+> artifact by session, task, and run. In monorepos, never choose a
 > subproject memory root. The injected claim path and agent-run receipt keep
 > their structured contract and are not replaced by this report layout.
 
@@ -50,14 +53,14 @@ Created by the orchestrator at session start. Updated throughout execution.
 ## Agents
 | Agent ID | CLI | PID | Status | Task |
 |----------|-----|-----|--------|------|
-| backend  | gemini | 12345 | running | task-1 |
-| frontend | gemini | 12346 | completed | task-2 |
+| backend  | codex  | 12345 | running | task-1 |
+| frontend | codex  | 12346 | completed | task-2 |
 | mobile   | claude | 12347 | running | task-3 |
 
 ## Configuration
 - MAX_PARALLEL: 3
-- MAX_RETRIES: 2
-- POLL_INTERVAL: 30s
+- MAX_RECOVERY_ATTEMPTS: 3
+- POLL_INTERVAL: bounded backoff
 
 ## Summary (filled on completion)
 - Total Tasks: X
@@ -83,7 +86,7 @@ confidently matched skill is sufficient.
 
 ### task-1
 - **Agent**: backend
-- **CLI**: gemini
+- **CLI**: codex
 - **Title**: JWT authentication API
 - **Status**: pending | in_progress | completed | failed | blocked
 - **Priority**: 1
@@ -94,12 +97,12 @@ confidently matched skill is sufficient.
 - **Acceptance Criteria**:
   - POST /api/auth/register with email + password
   - POST /api/auth/login returns access + refresh tokens
-  - Password hashing with bcrypt
+  - Password hashing with Argon2id
   - Rate limiting on auth endpoints
 
 ### task-2
 - **Agent**: frontend
-- **CLI**: gemini
+- **CLI**: codex
 - **Title**: Login and registration UI
 - **Status**: pending
 - **Priority**: 1
@@ -115,7 +118,7 @@ confidently matched skill is sufficient.
 
 ### task-3
 - **Agent**: qa
-- **CLI**: gemini
+- **CLI**: codex
 - **Title**: Security and performance review
 - **Status**: blocked
 - **Priority**: 2
@@ -163,7 +166,7 @@ Each agent creates this file at start and appends entries every 3-5 turns. Only 
 
 ## result-{agentId}-{taskId}-{runId}-{sessionId}.md
 
-Each agent creates this file upon completion (success or failure). Only the owning agent writes to this file.
+Each agent creates `.agents/results/result-{agentId}-{taskId}-{runId}-{sessionId}.md` upon completion (success or failure). Only the owning agent writes to this file. Preserve the injected filename and include the report path in the structured claim. Existing reports under the configured memory base, `.agents/state/memories/`, or `.serena/memories/` remain read fallback until migration; new reports always use `.agents/results/`.
 
 ```markdown
 # Result: backend

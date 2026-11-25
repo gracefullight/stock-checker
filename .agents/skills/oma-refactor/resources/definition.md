@@ -1,7 +1,5 @@
 # Refactoring - Invariant Definition
 
-> Part I of the refactoring doctrine. This file is timeless; org-specific parameters live in `governance.md`. Empirical evidence is noted inline where a claim depends on it.
-
 ## Core definition
 
 Refactoring is the act of improving a system's internal structure toward its codebase's conventional form - without changing externally observable behavior (the contract its consumers depend on) - through small, revertible, named transformations whose behavior preservation is mechanically verifiable, in order to lower the future cost of change, whose dominant term is human comprehension cost.
@@ -23,7 +21,7 @@ If any property is missing, the activity is not refactoring.
 - Not preserved: internal call order, private structure, stack-trace shape.
 - Gray zone (performance, log format, serialization): judged by **Hyrum's Law** - if someone actually depends on it, it is part of the contract.
 - Performance (tuning) is allowed only as a side effect, never as the goal. If performance is contractual (SLA, real-time), preserve it too.
-- Preservation is necessary but not sufficient: behavior can be preserved while readability worsens - that is a failed refactoring. (Empirical: LLM refactorings preserved behavior ~84% yet worsened readability in ~71% of cases while static metrics improved.)
+- Preservation is necessary but not sufficient: behavior can be preserved while readability worsens - that is a failed refactoring. (Empirical: LLM refactorings have preserved behavior and improved static metrics while worsening readability.)
 
 ### 2. Verifiability - the precondition
 Guarantee mechanisms: (a) test suite - tests are FROZEN during refactoring; a failing test means behavior changed; (b) deterministic tool transformations - engines have bugs too (refactoring-engine bug studies exist), so re-run tests anyway; (c) type system / compiler; (d) differential testing and semantic equivalence checking (e.g., execution-driven differential testers, equivalence checkers).
@@ -32,10 +30,10 @@ Guarantee mechanisms: (a) test suite - tests are FROZEN during refactoring; a fa
 - When no net exists: write **characterization tests** (pin CURRENT behavior, bugs included - Hyrum). Practical form: golden-master / approval / snapshot tests.
 
 ### 3. Incrementality - an open catalog
-Composition of named transformations (Extract Function, Move Method, Rename, ...). Small enough to verify instantly, revert instantly, and review confidently. The standard catalog names only a fraction of real-world behavior-preserving changes (detector studies explain ~20% of real changesets with the standard catalog alone) - the test is the five properties, not catalog membership. Compound refactorings are where automated agents fail most; decompose to atomic steps.
+Composition of named transformations (Extract Function, Move Method, Rename, ...). Small enough to verify instantly, revert instantly, and review confidently. The standard catalog names only a fraction of real-world behavior-preserving changes (detector studies explain only a minority of real changesets with the standard catalog alone) - the test is the five properties, not catalog membership. Compound refactorings are where automated agents fail most; decompose to atomic steps.
 
 ### 4. Economics - readability is the dominant term
-`change cost = comprehension cost + ripple cost + verification cost`. Most developer time goes to comprehension, so readability (analysability) is the primary objective; coupling-driven ripple radius (modifiability) is the second, independent lever. Kent Beck: "Make the change easy (warning: this may be hard), then make the easy change."
+`change cost = comprehension cost + ripple cost + verification cost`. Most developer time goes to comprehension, so readability (analysability) is the primary objective; coupling-driven ripple radius (modifiability) is the second, independent lever.
 - Cognitive grounding: refactoring removes extraneous cognitive load; working-memory limits (chunking) justify small units; naming is the largest readability lever no metric measures.
 - Debt vocabulary: Cunningham's debt metaphor is a communication device for non-engineers (interest = ongoing cost, principal = structural flaw). Fowler's quadrants (deliberate x prudent) split the prescription: prudent-deliberate debt is a repayment-planning problem; reckless-inadvertent debt is an education problem.
 
@@ -58,13 +56,29 @@ Bug fixing (intentional behavior change) / performance optimization (different g
 - SATD (self-admitted technical debt): TODO/HACK/FIXME in comments/issues - a third signal independent of structure and history. Do not let the *tone* of the admission drive priority (negativity measurably skews developer prioritization even though most consider it wrong).
 
 ## Destination - one principle, three axes
-**Reusability = context independence.** Every pattern is a named technique for severing one kind of context dependency (Strategy: host vs algorithm; Facade: consumer vs subsystem internals; Adapter: new context vs existing interface; DI: unit vs dependency construction). Roots: Parnas information hiding, GoF's two meta-principles, OCP, SDP/SAP. Composition is the mother of patterns; FP (pure functions) is the limit case - the smallest reusable unit. Catalogs are fractal: GoF / PoEAA / EIP / DDD / cloud (Strangler Fig) / POSA.
+**Reusability = context independence.** Every pattern is a named technique for severing one kind of context dependency (Strategy: host vs algorithm; Facade: consumer vs subsystem internals; Adapter: new context vs existing interface; DI: unit vs dependency construction). Pure functions reduce implicit context dependencies.
 
 **Pattern choice = f(language expressiveness, code layer, codebase convention):**
 - Language axis: patterns compensate for what the language cannot express (Norvig: most GoF patterns evaporate into idioms). The destination is the language's idiom, not a GoF diagram.
 - Layer axis: functional core vs imperative shell call for different forms and different test economics.
 - Convention axis: in brownfield, the coding guide and framework conventions beat "theoretically better" patterns - consistency is a component of analysability. Changing a convention is an architecture decision (ADR + lint ratchet for new code + module-wise migration), never a boy-scout edit.
 - Timing: Rule of Three - abstract after reuse evidence accumulates; speculative generality is a smell.
+- State: derive values instead of synchronizing copies; narrow state scope (return over mutation, local over field, module over global); route each repeated decision through one source.
+
+### Subtraction first
+Before restructuring, remove what nothing uses and collapse layers that add no decision: dead code, unused internal exports, retired flags, debug output; inline single-caller wrappers, single-implementation adapters/interfaces, and pass-through methods (Middle Man, Lazy Class). Then restructure what remains. "Unused" is proven by a reference search across the repository; anything exported from a published package or read by external consumers is contract (Hyrum) and follows the expand-contract route.
+
+## Provenance - why before remove
+Code whose reason is unknown is not deleted or reshaped. Recover the reason from history first:
+
+```bash
+git log -L <start>,<end>:<path>
+git log -S '<identifier>' --oneline
+git blame -w -C -L <start>,<end> <path>
+gh api repos/{owner}/{repo}/commits/<sha>/pulls
+```
+
+Read the linked PR description and review comments. Report recorded rationale (commit message, PR, review thread) separately from inference. If the reason stays unknown, keep the code, pin its behavior with a characterization test, and report the open question.
 
 ## Naming - operationalizing the unmeasured lever
 
@@ -91,10 +105,17 @@ Rename discipline:
 - Renames are engine-executed (LSP/IDE rename or a configured provider’s semantic rename tool), never find-replace; tests re-run regardless.
 - Goodhart applies here too: role vocabulary diagnoses; the terminal check is still "does the next reader understand this cheaper".
 
+Comments in the touched scope:
+- A comment that explains what the code does marks a naming or structure failure: rename, extract, or introduce a type until the comment is redundant, then delete it.
+- Delete section banners, commented-out code, and comments justifying a workaround. SATD markers are signals (see Triggers), not text to reword.
+- Keep only: license headers; short reasons for non-obvious behavior forced by external dependencies, platforms, or protocols; doc comments defining a public API contract; issue links for constraints code cannot express; formatter or justified lint directives; the entry-file split map (SKILL.md canonical workflow path step 8).
+- When unsure, delete.
+
 ## Execution contexts
 - **Greenfield**: refactoring is the third beat of TDD (Red -> Green -> Refactor) - minute-scale hygiene, net already exists.
 - **Brownfield**: order inverts - find a seam (minimal mechanical change to enable testing) -> characterization tests -> restructure. Large scale: Strangler Fig, Branch by Abstraction, Sprout Method - the system stays working at every point. The classification is per code fragment (coverage map), not per project.
 - **Stateful (data/API)**: git revert does not restore data. Mechanism: **Expand-Contract (parallel change)** - expand (old+new coexist) -> dual-write + backfill -> switch reads -> contract (remove old); feature flags are the standard switch. External consumers: semver + deprecation cycles as a staged contract-transfer protocol; the pattern vocabulary for that staging (Version Identifier, Two in Production, Aggressive Obsolescence, Limited Lifetime Guarantee - MAP evolution patterns, Zimmermann et al.) lives with `oma-architecture` (`resources/api-evolution.md`) - a published-contract change is an architecture decision, route there for the ADR.
+- **Internal (every consumer is in this repository)**: no parallel change. Migrate every caller and delete the old API in the same change; a compatibility shim left behind is an unfinished refactoring.
 - **Team concurrency**: big renames collide with every open branch - another reason for "small and frequent". Announce large refactorings + short merge windows; register bulk mechanical commits in `.git-blame-ignore-revs`; LSC (monorepo-wide atomic change + owner-split review) is incrementality at org scale.
 - **Regulated environments**: even behavior-preserving changes trigger re-verification/re-certification - economics invert; batch-per-release refactoring is the one legitimate exception to "continuous flow".
 

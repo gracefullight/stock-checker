@@ -1,7 +1,7 @@
 # QA Review Checklist
 
-Apply checks to the changed scope and the project's declared requirements,
-supported platforms, and existing architecture. Mark irrelevant checks N/A.
+Check the items that apply to the changed scope and the project's declared
+requirements, supported platforms, and existing architecture; skip the rest.
 Measure against adopted targets; example sizes, durations, load levels, or
 implementation patterns are not universal acceptance gates. Record required
 checks that could not run as verification gaps, not passes or defect findings.
@@ -49,7 +49,7 @@ checks that could not run as verification gaps, not passes or defect findings.
 - [ ] Proper error handling (no stack traces exposed)
 
 ### Dependencies
-- [ ] No high/critical vulnerabilities (npm audit / safety check)
+- [ ] No high/critical vulnerabilities reported by the stack's dependency audit (e.g. `npm audit`, `pip-audit`)
 - [ ] Affected dependencies are supported and satisfy project policy; unrelated upgrades are not required by this review
 - [ ] No unused dependencies
 - [ ] License compliance checked
@@ -57,6 +57,8 @@ checks that could not run as verification gaps, not passes or defect findings.
 ---
 
 ## Performance Checklist
+
+- [ ] Every reported number comes from before/after runs under the same recorded conditions, and the delta is attributable to the change under review; otherwise report it as unverified
 
 ### Backend Performance
 - [ ] Affected API latency meets the declared SLO at representative load
@@ -90,38 +92,14 @@ checks that could not run as verification gaps, not passes or defect findings.
 
 ## Accessibility Checklist (WCAG 2.2 AA)
 
-### Perceivable
-- [ ] All images have alt text
-- [ ] Decorative images have empty alt (`alt=""`)
-- [ ] Color contrast 4.5:1 (normal text), 3:1 (large text)
-- [ ] Text resizable up to 200% without loss of content
-- [ ] Content understandable without color alone
-- [ ] Audio/video has captions (if applicable)
+Check the changed UI against the WCAG 2.2 AA success criteria the project targets. The defects that recur in reviews:
 
-### Operable
-- [ ] All functionality available via keyboard
-- [ ] No keyboard trap
-- [ ] Focus order is logical
-- [ ] Focus indicators visible
-- [ ] Skip to main content link
-- [ ] No content flashes more than 3 times per second
-- [ ] Enough time to read/interact with content
-- [ ] Pause/stop for moving content
-
-### Understandable
-- [ ] Page language set (`<html lang="en">`)
-- [ ] Clear labels on form inputs
-- [ ] Error messages clear and helpful
-- [ ] Required fields indicated
-- [ ] Consistent navigation across pages
-- [ ] Predictable behavior (no unexpected popups)
-
-### Robust
-- [ ] Valid HTML (semantic tags)
-- [ ] ARIA labels where needed
-- [ ] ARIA roles appropriate
-- [ ] Works with screen readers (test with NVDA/JAWS)
-- [ ] Works in different browsers (Chrome, Firefox, Safari, Edge)
+- [ ] Text alternatives: informative images have alt text; decorative images use `alt=""`
+- [ ] Contrast: 4.5:1 for normal text, 3:1 for large text; meaning is not carried by color alone
+- [ ] Keyboard: all functionality reachable, no keyboard trap, logical focus order, visible focus indicator
+- [ ] Forms: labels, required-field indication, and error messages are programmatically associated
+- [ ] Structure: page language set, semantic HTML first, ARIA roles/labels only where needed and valid
+- [ ] Motion and timing: moving content can be paused; no content flashes more than 3 times per second
 
 ---
 
@@ -134,6 +112,7 @@ checks that could not run as verification gaps, not passes or defect findings.
 - [ ] Edge cases covered
 - [ ] Error handling tested
 - [ ] Mocks used appropriately
+- [ ] Tests assert observable behavior; list tests that only pad coverage, pin implementation details, or are mostly mocks as cleanup candidates (report, do not delete)
 - [ ] Test duration and feedback time meet the project's check/CI budget
 - [ ] No flaky tests
 
@@ -174,6 +153,7 @@ checks that could not run as verification gaps, not passes or defect findings.
 - [ ] Dependency injection used
 - [ ] Data-access boundaries match the existing backend architecture
 - [ ] Component composition (frontend)
+- [ ] No prop drilling (frontend): trace changed props to their owner; a chain crossing 3 or more component boundaries through forward-only intermediates is a finding (`../../../rules/frontend.md` §Core Rules 7)
 
 ### Code Metrics
 - [ ] Complexity, size, and nesting meet project rules and allow the affected behavior to be understood and verified
@@ -185,99 +165,12 @@ checks that could not run as verification gaps, not passes or defect findings.
 - [ ] User-friendly error messages
 - [ ] No silent failures
 - [ ] Graceful degradation
+- [ ] Fixes target the root cause: no guard, retry, fallback default, or value clamp added at the symptom site without an identified cause (such patterns get copied)
 
-### Documentation
-- [ ] README with setup instructions
-- [ ] API documentation (OpenAPI/Swagger)
-- [ ] Complex logic documented
-- [ ] Environment variables documented
-- [ ] Known incomplete behavior is tracked and does not contradict the required release criteria
-
----
-
-## ISO Quality Alignment
-
-### ISO/IEC 25010
-- [ ] Functional suitability considered
-- [ ] Performance efficiency considered
-- [ ] Compatibility considered where integration matters
-- [ ] Usability / accessibility considered
-- [ ] Reliability considered
-- [ ] Security considered
-- [ ] Maintainability considered
-- [ ] Portability considered when relevant
-
-### ISO/IEC 29119
-- [ ] Test strategy or test plan exists for significant changes
-- [ ] Test basis, test conditions, and expected results are clear
-- [ ] Risk-based prioritization is visible in test scope
-- [ ] Test evidence and traceability are sufficient for review or audit
-
----
-
-## Browser Compatibility Checklist
-
-### Desktop
-- [ ] Chrome (latest 2 versions)
-- [ ] Firefox (latest 2 versions)
-- [ ] Safari (latest 2 versions)
-- [ ] Edge (latest 2 versions)
-
-### Mobile
-- [ ] iOS Safari (latest 2 versions)
-- [ ] Android Chrome (latest 2 versions)
-- [ ] Responsive breakpoints (320px, 768px, 1024px, 1440px)
-
----
-
-## DevOps Checklist
-
-### Environment
-- [ ] Environment variables used (not hardcoded)
-- [ ] .env.example provided
-- [ ] Secrets NOT in source code
-- [ ] Different configs for dev/staging/prod
-
-### Logging
-- [ ] Appropriate log levels (DEBUG, INFO, WARNING, ERROR)
-- [ ] No sensitive data in logs
-- [ ] Structured logging (JSON format)
-- [ ] Log rotation configured
-
-### Monitoring
-- [ ] Health check endpoint (`/health`)
-- [ ] Error tracking (Sentry, Rollbar, etc.)
-- [ ] Performance monitoring (APM)
-- [ ] Uptime monitoring
-
-### Deployment
-- [ ] CI/CD pipeline configured
-- [ ] Automated tests in CI
-- [ ] Database migrations automated
-- [ ] Rollback plan documented
-- [ ] Zero-downtime deployment (if required)
-
----
-
-## Final Sign-Off
-
-### Critical (Must Pass)
-- [ ] No CRITICAL security vulnerabilities
-- [ ] No HIGH security vulnerabilities
-- [ ] Required checks for the changed behavior pass; missing checks and unrelated baseline failures are recorded separately
-- [ ] Performance meets requirements
-- [ ] No data loss scenarios
-
-### Important (Should Pass)
-- [ ] Applicable coverage target or documented alternative verification met
-- [ ] Accessibility WCAG 2.2 AA
-- [ ] Code quality metrics met
-- [ ] Documentation complete
-
-### Nice-to-Have (Can Address Later)
-- [ ] Code refactoring opportunities documented
-- [ ] Performance optimization ideas documented
-- [ ] Future enhancement ideas documented
+### Diff Hygiene
+- [ ] No debug output, commented-out code, or leftover feature flags in the diff
+- [ ] New comments do not restate what the code does
+- [ ] No unused exports or dead branches introduced
 
 ---
 
@@ -313,7 +206,8 @@ checks that could not run as verification gaps, not passes or defect findings.
 
 - Choose available automated checks that match the stack, changed scope, and target; do not require unrelated tools or unrequested builds
 - Use configured code intelligence or the documented native fallback for code analysis patterns
-- Browser verification follows `mcp.devtools_browsers`: Aside (`aside`, default), Chrome DevTools MCP (`chrome`), and Firefox DevTools MCP (`firefox`). Multiple selections are supported; change them with `oma update mcp`. Discover the selected server’s tools before use. Chrome-specific calls below are examples only; use supported equivalents for Aside and Firefox. An empty selection disables browser MCP verification; report unverified UI checks.
+- Browser verification tooling and server selection follow `execution-protocol.md` Step 2.5. The Chrome-specific calls below are examples only; use the selected server's equivalents and report unverified UI checks.
+- Standards mapping (ISO/IEC 25010, ISO/IEC 29119) follows `iso-quality.md` when requested.
 - Document all findings with file:line references
 - Provide remediation code examples
 - Estimate fix time for each issue

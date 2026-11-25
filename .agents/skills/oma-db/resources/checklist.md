@@ -1,6 +1,6 @@
 # DB Agent - Self-Verification Checklist
 
-Run through every item before submitting your work.
+Check the sections relevant to the task before submitting your work. A scoped query, index, or migration task skips the sections marked full schema design unless it changes their assumptions.
 
 ## Modeling
 - [ ] DB type selection justified from workload, not preference
@@ -11,7 +11,7 @@ Run through every item before submitting your work.
 - [ ] Keys, cardinality, and ownership clearly defined
 - [ ] No obvious anti-patterns remain: CSV-in-column, repeated columns, EAV, polymorphic FK, missing FK
 
-## Schema Documentation
+## Schema Documentation (full schema design only)
 - [ ] External schema documented
 - [ ] Conceptual schema documented
 - [ ] Internal schema documented
@@ -24,6 +24,14 @@ Run through every item before submitting your work.
 - [ ] Isolation level selected for critical flows
 - [ ] Locking / optimistic concurrency strategy documented
 - [ ] Transparency assumptions called out when using distributed systems
+
+## Application Ownership (Affected Scope)
+- [ ] Affected triggers, stored procedures/functions, views, DB jobs, and ORM hooks reviewed for business policy, implicit workflows, and external side effects
+- [ ] New and existing findings receive a strong application ownership recommendation with a concrete alternative and transition priority; retained implementations have technical evidence beyond existing convention
+- [ ] Proposed design preserves DB integrity, concurrency, RLS/privileges, audit coverage, justified dependent cascades, and efficient set-based processing
+- [ ] Where relevant, policy versions/decision context, action-time expiry checks, and all API/batch/admin/import/direct SQL writers are addressed
+- [ ] Integration events are committed atomically with business data when needed; CDC intent/coverage, idempotency, ordering, bounded retry, replay, and compensation are explicit
+- [ ] Planned transitions verify policy behavior and writer coverage, use one owner per side effect, and define rollback without lost or duplicate effects
 
 ## Performance & Operations
 - [ ] Indexes match hot queries and join/filter patterns
@@ -46,7 +54,7 @@ Run through every item before submitting your work.
 - [ ] Similarity score thresholds calibrated per domain or reranking added for precision-critical paths
 - [ ] Retrieval observability defined: golden queries, recall drift, semantic drift, token waste
 
-## Capacity
+## Capacity (full schema design only)
 - [ ] Capacity sheet updated by object
 - [ ] Tablespace/storage estimate updated
 - [ ] Disk estimate includes online, batch, backup, and growth assumptions

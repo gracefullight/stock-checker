@@ -22,28 +22,33 @@ When applicable, map findings and gaps to:
 - **ISO/IEC 25010** quality characteristics
 - **ISO/IEC 29119** test planning, design, traceability, and exit criteria
 
-Use `resources/checklist.md` (renamed qa-checklist) as the comprehensive review guide.
+Use `resources/checklist.md` as the review guide; check the items that apply to the scope.
 
 ## Step 2.5: Runtime Verification
 
 Static code review misses entire categories of bugs: display-only features,
 stubbed functionality, broken user flows, and edge cases that only surface
-at runtime. This step requires interacting with the running application.
+at runtime. This step interacts with a running application.
 
 ### When to Execute
-- Web app with UI: ALWAYS for Medium/Complex tasks
-- API-only: ALWAYS (curl/httpie verification)
-- Simple tasks (single file, no UI): SKIP
+Run only applicable, authorized runtime checks on an available target. A static
+document/configuration review does not require starting or building an app.
+
+- Web app with UI, Medium/Complex change: browser verification of the changed flows
+- API-only change: HTTP verification (curl/httpie) of the changed endpoints
+- CLI or library change, including simple ones: run the changed command path or exported function (see CLI and Libraries)
+- No executable surface (docs, static config): skip
+- No available target, or starting one is outside the request: record the runtime checks as verification gaps
 
 ### Execution by App Type
 
 #### Web Applications
 
-Browser verification uses the installed MCPs selected in `mcp.devtools_browsers`: Aside (`aside`, default), Chrome DevTools MCP (`chrome`), and Firefox DevTools MCP (`firefox`). Multiple selections are supported; use `oma update mcp` to change them. Discover the selected server’s actual tools before use; tool names and capabilities differ between servers. An empty selection disables browser MCP verification; report any unverified UI checks.
+Browser verification uses the browsers selected in `mcp.devtools_browsers`: Aside (`aside`, default), Chrome DevTools MCP (`chrome`), Firefox DevTools MCP (`firefox`), and ego lite (`ego`). Multiple selections are supported; use `oma update mcp` to change them. For an MCP selection, discover the selected server’s actual tools before use; tool names and capabilities differ between servers. ego lite has no MCP server: run `ego-browser skill` and follow the guide it prints for the installed version; if `ego-browser` is missing, report it instead of installing ego lite. An empty selection disables browser verification; report any unverified UI checks.
 
-Run the following checks with a selected, available server. Prefer a separate test context when supported. The tool calls below are Chrome DevTools MCP examples only; for Aside and Firefox DevTools MCP, discover and use their supported equivalents. Record missing capabilities instead of silently changing servers.
+Run the following checks with a selected, available server. Prefer a separate test context when supported. The tool calls below are Chrome DevTools MCP examples only; for Aside and Firefox DevTools MCP, discover and use their supported equivalents, and for ego lite use the equivalents from `ego-browser skill`. Record missing capabilities instead of silently changing servers.
 
-1. Start the application (`bun run dev`, `uv run manage.py runserver`, etc.)
+1. Use the running target, or start the dev server when that is within the request (`bun run dev`, `uv run manage.py runserver`, etc.). Do not build.
 2. Open the app in an **isolated browser context** to avoid contaminating the user's session:
    ```
    new_page(url: "http://localhost:PORT", isolatedContext: "qa-test")
@@ -84,13 +89,13 @@ Run the following checks with a selected, available server. Prefer a separate te
    ```
    close_page(pageId)  → close isolated test pages after verification
    ```
-9. **Fallback** (no selected browser MCP available):
+9. **Fallback** (no selected browser available):
    - Use curl/httpie to hit rendered endpoints
    - Verify HTTP status codes and response bodies; record that HTTP checks do not verify browser interactions
    - Check redirects, auth flows, and error pages
 
 #### API Endpoints
-1. Start the server
+1. Use the running server, or start it when that is within the request
 2. Execute acceptance criteria as actual HTTP requests:
    ```bash
    # Example: verify auth flow end-to-end
@@ -108,6 +113,12 @@ Run the following checks with a selected, available server. Prefer a separate te
 #### Mobile Applications
 1. If emulator/simulator available: launch and interact
 2. If not: verify via API layer + widget test execution
+
+#### CLI and Libraries
+1. Run the changed command from source as a user would, or call the changed function in a one-off process (`node -e`, `bun -e`, `python -c`). Keep scratch scripts and outputs outside the repository.
+2. Cover the normal path and the edge cases the change touches: empty or missing input, invalid flags, missing config or env, non-TTY output, and a second run (idempotency) for commands with side effects.
+3. Check exit codes, stdout/stderr separation, and machine-readable output (`--json`) against the documented contract.
+4. For side-effecting commands, run in a temporary directory or with `--dry-run` when available, and inspect the resulting files.
 
 ### Recording Results
 

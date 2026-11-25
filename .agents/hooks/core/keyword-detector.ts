@@ -25,6 +25,8 @@ import { agyConversationId, readAgyPrompt } from "./agy-input.ts";
 import { UNKNOWN_SESSION_ID, VENDORS } from "./constants.ts";
 import { makePromptOutput } from "./hook-output.ts";
 import { isRelayedAgentMessage, normalizePromptInput } from "./prompt-input.ts";
+import { withStateLock } from "./state-lock.ts";
+import { atomicWriteJson } from "./state-marker.ts";
 // triggers.json is imported statically: the bundler inlines it into the oma
 // binary (bundled `oma hook run` path needs no file on disk), while a standalone
 // bun run resolves the sibling file next to this module (pi / direct run).
@@ -62,7 +64,10 @@ export function normalizeForMatching(text: string): string {
  *
  * Third-party harnesses (omc, omx, omo) are intentionally NOT included: they
  * are separate projects, not host CLIs a user would invoke from an Oma
- * session. opencode is also not a supported vendor in this codebase.
+ * session. opencode IS a supported vendor, but as an extension-class vendor
+ * (EXTENSION_VENDORS in cli/constants/vendors.ts): its hooks load as
+ * in-process extensions outside VENDORS/HOOK_VENDORS, so it is intentionally
+ * absent from this brand list.
  */
 const CLI_INVOCATION_BRANDS = ["oma", ...VENDORS] as const;
 const CLI_INVOCATION_SIGNALS = [
@@ -109,13 +114,15 @@ export const CLI_INVOCATION_AT_START = new RegExp(
 /**
  * Per-workflow skip predicates. A workflow listed here will be skipped when
  * its predicate returns true for the (already-normalized) cleaned text.
- * The map is intentionally empty at boot — populate it to add workflow-specific
- * overrides without restructuring the matching loop.
+ * Visual design requires a visual target; generic design verbs also describe
+ * skill authoring, APIs, schemas, and other nonvisual work.
  */
 export const KEYWORD_SKIP_PREDICATES: Record<
   string,
   (text: string) => boolean
-> = {};
+> = {
+  design: (text) => !hasVisualDesignContext(text),
+};
 
 /**
  * Default predicate: skip ALL workflow triggers when the prompt starts with a
@@ -207,7 +214,8 @@ export function loadKwState(projectDir: string): KeywordDetectorState {
 }
 
 /**
- * Save reinforcement state to disk.
+ * Save reinforcement state to disk under the cross-process state lock (M12),
+ * with an atomic tmp+rename write so readers never observe a torn file.
  */
 export function saveKwState(
   projectDir: string,
@@ -215,9 +223,37 @@ export function saveKwState(
 ): void {
   try {
     const filePath = getKwStateFilePath(projectDir);
-    writeFileSync(filePath, JSON.stringify(state, null, 2));
+    withStateLock(`${filePath}.lock`, () => {
+      atomicWriteJson(filePath, state);
+    });
   } catch {
     // Non-fatal — reinforcement suppression is best-effort
+  }
+}
+
+/**
+ * Locked read-modify-write of the reinforcement state (M12). Two concurrent
+ * sessions doing load→record→save would otherwise lose one session's trigger
+ * record. The fresh read happens INSIDE the lock so concurrent records merge.
+ * Best-effort: on lock-budget exhaustion, degrade to the on-disk state rather
+ * than throwing into the vendor prompt pipeline.
+ */
+export function updateKwState(
+  projectDir: string,
+  mutate: (state: KeywordDetectorState) => KeywordDetectorState,
+): KeywordDetectorState {
+  const filePath = getKwStateFilePath(projectDir);
+  try {
+    return withStateLock(`${filePath}.lock`, () => {
+      const next = mutate(loadKwState(projectDir));
+      atomicWriteJson(filePath, next);
+      return next;
+    });
+  } catch {
+    process.stderr.write(
+      "[oma] keyword-detector state lock busy; skipping reinforcement record\n",
+    );
+    return loadKwState(projectDir);
   }
 }
 
@@ -390,6 +426,67 @@ export function buildPatternEntries(
 
 export function buildPatterns(keywords: Record<string, string[]>): RegExp[] {
   return buildPatternEntries(keywords).map((e) => e.regex);
+}
+
+// These words name the act of designing, but do not identify a visual target.
+// Keep the remaining visual vocabulary in triggers.json as the shared source.
+const GENERIC_DESIGN_KEYWORDS = new Set([
+  "design",
+  "디자인",
+  "디자인해줘",
+  "디자인 만들어줘",
+  "デザイン",
+  "デザインして",
+  "デザインを作って",
+  "设计",
+  "设计一下",
+  "做个设计",
+  "diseño",
+  "diseña",
+  "crea un diseño",
+  "haz el diseño",
+  "fais le design",
+  "crée un design",
+  "gestalte",
+  "erstelle ein design",
+  "mach das design",
+  "faça o design",
+  "crie um design",
+  "monte o design",
+  "дизайн",
+  "сделай дизайн",
+  "создай дизайн",
+  "оформи",
+  "ontwerp",
+  "ontwerp dit",
+  "maak een ontwerp",
+  "projekt",
+  "zaprojektuj",
+  "stwórz projekt",
+  "zrób design",
+]);
+
+const VISUAL_DESIGN_PATTERNS = [
+  /\bdesign\s+(?:(?:a|an|the|this|our|new)\s+)?(?:ui|ux)\b(?=\s*(?:$|[.!?,;]|\b(?:for|of|to|and)\b))/,
+  ...buildPatternEntries(TRIGGERS.workflows.design?.keywords ?? {})
+    .filter(
+      ({ keyword }) => !GENERIC_DESIGN_KEYWORDS.has(keyword.toLowerCase()),
+    )
+    .map(({ regex }) => regex),
+  ...buildPatterns({
+    en: ["screen", "page", "website", "interface"],
+    ko: ["화면", "페이지", "웹사이트", "UI를", "UX를"],
+    ja: ["画面", "ページ"],
+    zh: ["页面", "界面"],
+  }),
+];
+
+function hasVisualDesignContext(text: string): boolean {
+  if (/(?:^|\s)\/design(?![\w-])/.test(text)) return true;
+  return VISUAL_DESIGN_PATTERNS.some((pattern) => {
+    const match = pattern.exec(text);
+    return match !== null && !isTechnicalReference(text, match.index, match[0]);
+  });
 }
 
 /**
@@ -667,6 +764,21 @@ export function startsWithSlashCommand(prompt: string): boolean {
   return /^\/[a-zA-Z][\w-]*/.test(prompt.trim());
 }
 
+/**
+ * The persistent workflow a prompt invokes as a slash command (`/ultrawork …`,
+ * or namespaced as `/oma:ultrawork …`), or null. A typed slash command is the
+ * most explicit invocation there is, so it must persist like a named one.
+ */
+export function persistentSlashWorkflow(
+  prompt: string,
+  config: TriggerConfig,
+): string | null {
+  const m = /^\/(?:[\w-]+:)?([a-zA-Z][\w-]*)(?=\s|$)/.exec(prompt.trim());
+  const name = m?.[1]?.toLowerCase();
+  if (!name) return null;
+  return config.workflows[name]?.persistent ? name : null;
+}
+
 // ── Extension Detection ──────────────────────────────────────
 
 const EXCLUDE_EXTS = new Set([
@@ -768,28 +880,72 @@ function activateMode(
   );
 }
 
+/**
+ * A session's index pointer is LIVE while its event log exists, has no
+ * session.ended, and its newest event is fresher than this TTL. The 2-hour
+ * window mirrors persistent-mode.ts STALE_HOURS: a crashed session that never
+ * emitted session.ended must not hold active.main forever.
+ */
+const LIVE_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+
+function isLiveL1Session(
+  readEvents: (
+    projectDir: string,
+    sid: string,
+  ) => Array<{ kind: string; ts: string }>,
+  projectDir: string,
+  sid: string,
+): boolean {
+  const events = readEvents(projectDir, sid);
+  if (events.length === 0) return false; // orphan pointer — claimable
+  if (events.some((event) => event.kind === "session.ended")) return false;
+  const newest = events[events.length - 1];
+  const newestMs = newest ? new Date(newest.ts).getTime() : Number.NaN;
+  if (Number.isNaN(newestMs)) return false;
+  return Date.now() - newestMs < LIVE_SESSION_TTL_MS;
+}
+
 async function activateL1WorkflowSession(
   projectDir: string,
   workflow: string,
   vendor: string,
   vendorSid: string,
+  trigger?: Record<string, unknown>,
   category = "main",
 ): Promise<string | null> {
   try {
     const [
-      { setActiveSession },
-      { createSessionId, emitEvent, vendorHomePayload },
+      { claimActiveSession },
+      { createSessionId, emitEvent, readEvents, vendorHomePayload },
     ] = await Promise.all([
       import("./state-marker.ts"),
       import("./state-emit.ts"),
     ]);
+    // Session IDs use the canonical YYYY-MM-DD_<16> format from
+    // session-storage; consumers (L1 probe tests, state repair) rely on it.
     const sid = createSessionId();
-    setActiveSession(projectDir, category, sid);
+    // M12c: never stomp a LIVE different session's pointer. The claim runs
+    // inside the index lock; when the slot is held by a live session we still
+    // create our own session + events under the new sid (persistent-mode gate
+    // events use the omaSid stored in the per-vendor-session state file), but
+    // active[category] keeps pointing at the live session until it ends or
+    // goes stale. getActiveSid consumers (state-boundary rehydration) thus
+    // stay pinned to the session that actually owns the workflow.
+    claimActiveSession(projectDir, category, sid, (existingSid) =>
+      isLiveL1Session(readEvents, projectDir, existingSid),
+    );
     await emitEvent(projectDir, sid, {
       kind: "session.created",
       vendor,
       vendorSid,
-      payload: { workflow, category, ...vendorHomePayload(vendor) },
+      // `trigger` records WHY the workflow was routed (matched keyword or
+      // explicit slash) — never the prompt text.
+      payload: {
+        workflow,
+        category,
+        ...(trigger ? { trigger } : {}),
+        ...vendorHomePayload(vendor),
+      },
     });
     return sid;
   } catch (e) {
@@ -1047,10 +1203,27 @@ export async function run(
   if (input.kind !== "prompt") return null;
 
   const { prompt } = input;
-  const { vendor, cwd: projectDir, sid: sessionId = "unknown" } = ctx;
+  const { cwd: projectDir, sid: sessionId = "unknown" } = ctx;
+  // Recorded on the L1 session only; the output dialect stays ctx.vendor.
+  const vendor = ctx.host ?? ctx.vendor;
 
   if (!prompt.trim()) return null;
-  if (startsWithSlashCommand(prompt)) return null;
+  if (startsWithSlashCommand(prompt)) {
+    // The command itself loads the workflow; the hook only makes a
+    // persistent one enforceable by writing its state file.
+    const slashWorkflow = persistentSlashWorkflow(prompt, TRIGGERS);
+    if (slashWorkflow) {
+      const omaSid = await activateL1WorkflowSession(
+        projectDir,
+        slashWorkflow,
+        vendor,
+        sessionId,
+        { source: "user-explicit", command: `/${slashWorkflow}` },
+      );
+      activateMode(projectDir, slashWorkflow, sessionId, omaSid);
+    }
+    return null;
+  }
   // Relayed inter-agent messages carry another agent's text, not a user
   // request — their content must not drive workflow keyword detection.
   if (isRelayedAgentMessage(prompt)) return null;
@@ -1184,6 +1357,10 @@ export async function run(
     workflow,
     vendor,
     sessionId,
+    {
+      source: explicit ? "user-explicit" : "keyword",
+      matchedKeyword: winner.matchText,
+    },
   );
   // Only an explicit invocation enables persistent mode (the Stop hook blocks
   // while the state file exists). Natural-language matches such as "keep
@@ -1191,8 +1368,9 @@ export async function run(
   if (winner.persistent && explicit) {
     activateMode(projectDir, workflow, sessionId, omaSid);
   }
-  const updatedState = recordKwTrigger(kwState, workflow);
-  saveKwState(projectDir, updatedState);
+  // Locked read-modify-write: re-reads fresh state inside the lock so two
+  // concurrent sessions' trigger records merge instead of clobbering (M12).
+  updateKwState(projectDir, (current) => recordKwTrigger(current, workflow));
 
   const contextLines = buildWorkflowContext(workflow, {
     persistent: winner.persistent,
@@ -1240,7 +1418,7 @@ async function main() {
   if (vendor === "antigravity" && !prompt) {
     const invocationNum = input.invocationNum;
     if (typeof invocationNum === "number" && invocationNum > 1) process.exit(0);
-    prompt = readAgyPrompt(input.transcriptPath);
+    prompt = readAgyPrompt(input.transcriptPath, input.lastUserInput);
   }
 
   // Build canonical inputs and delegate to run() — single logic source.

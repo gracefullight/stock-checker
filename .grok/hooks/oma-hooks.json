@@ -18,11 +18,11 @@
           {
             "name": "oma-hook-PreToolUse",
             "type": "command",
-            "command": "\"$GROK_WORKSPACE_ROOT/.grok/hooks/oma-hook.sh\" --vendor 'grok' --event 'PreToolUse' --matcher 'Bash'",
-            "timeout": 15
+            "command": "\"$GROK_WORKSPACE_ROOT/.grok/hooks/oma-hook.sh\" --vendor 'grok' --event 'PreToolUse' --matcher 'Bash|hashline_edit|apply_patch|create_file|write_file|edit_file|str_replace'",
+            "timeout": 26
           }
         ],
-        "matcher": "Bash"
+        "matcher": "Bash|hashline_edit|apply_patch|create_file|write_file|edit_file|str_replace"
       }
     ],
     "PostToolUse": [
@@ -31,11 +31,11 @@
           {
             "name": "oma-hook-PostToolUse",
             "type": "command",
-            "command": "\"$GROK_WORKSPACE_ROOT/.grok/hooks/oma-hook.sh\" --vendor 'grok' --event 'PostToolUse' --matcher 'hashline_edit|apply_patch|create_file|write_file|edit_file|str_replace'",
-            "timeout": 10
+            "command": "\"$GROK_WORKSPACE_ROOT/.grok/hooks/oma-hook.sh\" --vendor 'grok' --event 'PostToolUse' --matcher 'search_replace|write|hashline_edit|apply_patch|create_file|write_file|edit_file|str_replace|read_file|hashline_read|run_terminal_command|run_terminal_cmd'",
+            "timeout": 24
           }
         ],
-        "matcher": "hashline_edit|apply_patch|create_file|write_file|edit_file|str_replace"
+        "matcher": "search_replace|write|hashline_edit|apply_patch|create_file|write_file|edit_file|str_replace|read_file|hashline_read|run_terminal_command|run_terminal_cmd"
       }
     ],
     "Stop": [

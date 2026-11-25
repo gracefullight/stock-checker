@@ -39,7 +39,7 @@ font-family: Pretendard, 'Pretendard Variable', 'Apple SD Gothic Neo', 'Noto San
 - **Diagram Visuals:** Every diagram/visual MUST be wrapped in a `<div class="diagram-wrapper">` with `overflow-x: auto; max-width: 100%;` and use SVG `viewBox` / CSS variables (`var(...)`) to prevent mobile clipping and guarantee seamless Dark/Light theme switching.
 - **Contrast:** WCAG AA contrast in BOTH light and dark themes.
 - **Dark Mode:** Must support `prefers-color-scheme: dark` as well as explicit manual theme toggling via data attributes.
-- **Motion:** Animations are optional and must be subtle. `prefers-reduced-motion` MUST be respected.
+- **Motion:** Animations are optional and must be subtle.
 - **Focus States:** Visible focus states are required on all interactive elements.
 
 ## 5. Quiz JS Specification
@@ -71,7 +71,7 @@ Loop: fix and re-validate at most **3 iterations**, then STOP and surface the fa
   grep -i -E '<script[ >]' {file}
   ```
 - **Filename matches format** (the pattern is anchored, so check the basename, not the full path):
-  Ensure filename follows `{YYYY-MM-DD}-{slug}.html` with the date in `Asia/Seoul` timezone.
+  Ensure filename follows `{YYYY-MM-DD}-{slug}.html` with the date in the oma-config `timezone` (system timezone when unset).
   ```bash
   basename "{file}" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}-.+\.html$'
   ```
@@ -99,4 +99,4 @@ Mirroring a MINIMAL pattern set for secret-like literal values (API keys, tokens
 - Redacted continuation requires explicit user confirmation.
 
 ## 8. Sharing Caution
-**Caution (informational, for the operator):** the artifact embeds code excerpts — treat it like source code when sharing externally. Embedding this caution inside the generated document itself is deferred to v2 (design 022 Tier 3); the generated footer's contract is `document-structure.md` §9 and does not include a sharing-caution line in v1.
+**Caution (informational, for the operator):** the artifact embeds code excerpts — treat it like source code when sharing externally. The generated document does not carry this caution: the footer's contract is `document-structure.md` §9 and has no sharing-caution line.

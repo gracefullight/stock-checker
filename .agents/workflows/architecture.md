@@ -4,7 +4,7 @@ description: Software architecture workflow that diagnoses architecture problems
 disable-model-invocation: true
 ---
 
-- **Response language follows `language` setting in `.agents/oma-config.yaml` if configured.**
+- **Response language: the user's prompt language first, then `language` in `.agents/oma-config.yaml`, then English.**
 - Follow `.agents/skills/_shared/core/execution-policy.md` for authorization, clarification, verification, and completion. Execute required steps on the selected path in dependency order; apply documented branch and skip conditions.
 - **Do NOT write implementation code or task plans in this workflow.** Hand off to `/plan` after the architecture decision is made.
 - Follow `.agents/skills/_shared/core/code-intelligence.md`: discover the configured provider’s tools; use native search only for paths outside this project or ignored paths when unavailable or timed out. Do not install a provider or track a repository automatically.
@@ -18,7 +18,7 @@ disable-model-invocation: true
 
 ## L1 Decision Events
 
-Emit required L1 decisions by calling `oma state emit` directly, as documented in `.agents/skills/_shared/runtime/event-spec.md`.
+Emit required L1 decisions by calling `oma state emit` directly, as documented in the `Emitting Decisions` section of `.agents/skills/_shared/runtime/event-spec.md`.
 
 ---
 
@@ -43,7 +43,7 @@ If the problem is vague, start in Diagnostic Mode.
 
 ## Step 2: Analyze the Existing System
 
-Read prior decisions in `.agents/results/architecture/` first — new decisions supersede old ones explicitly (update the old ADR's `Status`), never contradict them silently.
+Read prior decisions in `docs/decisions/` first. Read `.agents/results/architecture/`, `docs/design-docs/`, and `docs/plans/designs/` as legacy context until migration. New decisions supersede old ones explicitly (update the old ADR's `Status`), never contradict them silently.
 
 Use MCP code analysis tools to understand the current architecture:
 - Configured structure tools or scoped directory/file inspection for project structure and boundaries
@@ -123,25 +123,28 @@ If the decision remains user-owned, present the options with clear tradeoffs rat
 
 ## Step 7: Save the Artifact and Hand Off
 
-Save the architecture artifact to `.agents/results/architecture/`.
+Save ADRs and retained recommendations for a selected approach to `docs/decisions/` and update `docs/decisions/index.md`. Keep run-specific reviews, diagnoses, CBAM analyses, and unselected comparison drafts in `.agents/results/architecture/`. When promoting a report into `docs/decisions/`, record the destination in the source report.
 
 Suggested filenames (kebab-case topic, no sequence numbers):
-- `adr-<topic>.md`
-- `architecture-recommendation-<topic>.md`
-- `architecture-review-<topic>.md`
-- `cbam-<topic>.md`
-- `diagnosis-<topic>.md`
+- `docs/decisions/adr-<topic>.md`
+- `docs/decisions/architecture-recommendation-<topic>.md` for a retained selected approach
+- `.agents/results/architecture/architecture-review-<topic>.md`
+- `.agents/results/architecture/cbam-<topic>.md`
+- `.agents/results/architecture/diagnosis-<topic>.md`
+
+When dispatched, also write `.agents/results/result-{agentId}-{taskId}-{runId}-{sessionId}.md` and the injected structured claim. Preserve the injected IDs and link the architecture artifact from the report. Existing reports under coordination memory paths remain read fallback; new reports always use `.agents/results/`.
 
 ADR lifecycle: set `Status` (`Proposed` / `Accepted` / `Superseded by <adr-file>`) from the actual decision authority. A completed recommendation stays `Proposed` while a user-owned choice is unresolved; producing the artifact or emitting an event does not supply approval. When replacing an accepted ADR, update the prior artifact only when that supersession is authorized.
 
-### Step 7a: Render the structural diagram (archify when available)
+### Step 7a: Render the structural diagram (archify when available, stack-diagram for stack posters)
 
 Only when the decision changes structure (boundaries, dependencies, data flow) and the artifact therefore carries a Mermaid diagram:
 
-1. Run `oma diagram resolve --json` and read `.agents/skills/_shared/conditional/diagram-engine.md`.
-2. `engine: mermaid` → the Mermaid block in the Markdown artifact is the delivered diagram; done.
-3. `engine: archify` → author `<artifact-stem>.archify.json` from the Mermaid topology, then `oma diagram archify validate …` / `oma diagram archify deliver … <artifact-stem>.archify.html` per the protocol. Allow at most 3 repair attempts or 10 minutes total, and stop earlier when the same diagnostic repeats. On success, link the HTML under the artifact's Diagram section; on a bound or convergence failure, keep the Mermaid block, preserve the JSON, and report the last diagnostics.
-4. `ok: false` (archify pinned but unresolvable — e.g. first run offline) → stop and tell the user to run `oma diagram update` once online; do not deliver a Mermaid-only artifact silently.
+1. Read `.agents/skills/_shared/conditional/diagram-engine.md` and pick the route from its table. Stack route (vendor-product topology; logos or a poster requested) → resolve the upstream `stack-diagram` skill per that file, deliver `<artifact-stem>.stack.html`, link it under the artifact's Diagram section, and skip the rest of this step. When it cannot resolve, say so and continue below.
+2. Run `oma diagram resolve --json`.
+3. `engine: mermaid` → the Mermaid block in the Markdown artifact is the delivered diagram; done.
+4. `engine: archify` → author `<artifact-stem>.archify.json` from the Mermaid topology, then `oma diagram archify validate …` / `oma diagram archify deliver … <artifact-stem>.archify.html` per the protocol. Allow at most 3 repair attempts or 10 minutes total, and stop earlier when the same diagnostic repeats. On success, link the HTML under the artifact's Diagram section; on a bound or convergence failure, keep the Mermaid block, preserve the JSON, and report the last diagnostics.
+5. `ok: false` (archify pinned but unresolvable — e.g. first run offline) → stop and tell the user to run `oma diagram update` once online; do not deliver a Mermaid-only artifact silently.
 
 Record the recommendation, its authority status, and supporting comparison. Keep recommendation completion separate from permission to implement:
 
