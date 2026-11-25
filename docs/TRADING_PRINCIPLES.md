@@ -24,6 +24,14 @@ overlay; idle capital belongs in SPY. The shipped gate came from a 544,320-confi
 grid ranked by train win rate, so the in-sample numbers cannot support an edge
 claim; only the forward paper ledger, judged against SPY, can.
 
+A [forward check on 2026-11-25](validation/leader-pullback-2026-10-06.md#forward-check-2026-11-25)
+replayed the unchanged configuration through the 2026-11-24 session: 157 trades,
+57.3% wins, +0.61% mean net, excess over SPY +0.14% (bootstrap 95% −0.36% to
++0.66%). Two entries follow the freeze (BDX +3.80%, DE −3.11%). The conclusion
+is unchanged, and the market kill-switch again showed no gain. The forward paper
+ledger still holds no closed observation: no daily scan completed between the
+2026-10-28 and 2026-11-24 sessions.
+
 Results under "Archived exploratory results" describe the previous implementation.
 They are **not validation of the corrected engine**. The finance
 audit identified future benchmark leakage in the optimizer, same-close fills
@@ -159,7 +167,7 @@ plus RSI/MACD only as seasoning. RSI is *not* important.
 | Relative strength (market & sector) | `institutional.components.rsSpy/rsSector` vs SPY + sector ETF |
 | VWAP / breakout volume / liquidity / earnings | institutional flow score components (blended, not hard-gated) |
 | Leader pullback entry (주도주 눌림목) | `qualityGate` (Gate 1.7): `rsMin 0.7` + `requireBelowSma50` + `ibs<0.2` + `atr%<3.5` + `volR>0.8` + `scoreMax 400` |
-| Market kill-switch (essay #2 at the index level) | `qualityGate.requireMarketUptrend` (optional, OFF by default — helped on 122 tickers, hurt at 408; supplied by the shared causal market context) |
+| Market kill-switch (essay #2 at the index level) | `qualityGate.requireMarketUptrend` (optional, OFF by default — helped on 122 tickers, hurt at 408, no gain at 535; supplied by the shared causal market context) |
 | Anti-parabolic (don't chase) | `qualityGate.scoreMax` — extreme composite scores have the worst forward R/R |
 | One setup, one decision | Shared live/historical evaluator consumes BUY/quality-blocked setups before later bars; live replay requires at least 210 sessions |
 | Oscillators as seasoning only | institutional strategy caps oscillator contribution; flow components dominate |

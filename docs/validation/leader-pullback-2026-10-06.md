@@ -117,6 +117,62 @@ unavailable. Live earnings evidence applies only to the latest bar. Parity
 requires the same available history and benchmarks; shorter live histories use
 an unvalidated fallback. Fixed holds do not test ATR stop/target execution.
 
+## Forward check (2026-11-25)
+
+The unchanged configuration (SHA-256 `9d15fbda…`) was replayed on a fresh Yahoo
+pull covering 2018-10-04 through the 2026-11-24 session. No parameter changed
+and no search ran. 535 of 555 tickers were evaluated: the 13 earlier missing
+inputs plus WBD, and AVB, EA, EQR, IAS, NWE and RAMP with insufficient history.
+154 of the 155 earlier executed trades reproduce; RAMP 2026-08-18 drops out with
+its history.
+
+| Entry | Trade | Net return | SPY, same window (net) |
+|---|---|---:|---:|
+| 2026-09-29 | PRU, exit 2026-10-05 (signal before the freeze, exit after it) | −1.92% | +0.94% |
+| 2026-10-07 | BDX, exit 2026-10-13 | +3.80% | +0.19% |
+| 2026-11-17 | DE, exit 2026-11-23 | −3.11% | −2.28% |
+
+Two entries follow the 2026-10-06 freeze: one win, mean +0.34% against −1.05%
+for SPY. With PRU the three average −0.41% against −0.38%. Three trades decide
+nothing. No BUY fired on the 2026-11-24 session.
+
+The full period now holds 157 trades with 90 wins (57.3%) and a +0.61% mean net
+return. SPY over the same windows earns +0.47% net with a 63.7% win rate; the
+excess is +0.14% (bootstrap 95%: −0.36…+0.66). The single account compounds at
+2.3–3.2% a year against 15.2% for SPY buy-and-hold. The conclusion above is
+unchanged: the result cannot be told apart from holding SPY.
+
+SPY closed 2026-11-24 7.7% below its high and under its 50- and 200-session
+averages, and its Gaussian channel has been red since 2026-11-16, the DE signal
+session. One alternative was therefore fixed in advance and measured through
+the same pipeline on the same inputs: `qualityGate.requireMarketUptrend: true`
+(SHA-256 `8812599b…`). Periods split by entry date.
+
+| Configuration | Trades | Win rate | Mean net | 2019–2023 | 2024 onward | Excess vs SPY net (95%) |
+|---|---:|---:|---:|---|---|---:|
+| Default | 157 | 57.3% | +0.61% | 98 / 52.0% / +0.25% | 59 / 66.1% / +1.22% | +0.14% (−0.36…+0.66) |
+| With market uptrend | 118 | 55.1% | +0.60% | 70 / 48.6% / +0.29% | 48 / 64.6% / +1.06% | +0.38% (−0.19…+0.99) |
+
+The kill-switch removes 39 trades without raising the win rate in either period
+or the mean overall, and its excess interval still spans zero. It stays OFF.
+
+The forward paper ledger holds no closed observation. The BDX signal session
+(2026-10-06) was scanned on the Finviz candidate lane (200 candidates); the
+configured-universe lane began with the 2026-10-13 session. No daily scan
+completed after the 2026-10-27 session: the local workspace dependencies were
+missing, so ten morning runs (Sydney 2026-11-16 to 2026-11-25) claimed their
+date and exited before analysing a ticker, which covers the DE signal.
+Dependencies were restored on 2026-11-25. The replayed entries postdate the
+configuration freeze, but they are a historical replay on revised vendor data,
+not ledger observations.
+
+Inputs and the full report are preserved locally as
+`data/strategy-validation/leader-pullback-20261125-inputs` and
+`leader-pullback-20261125.json` (frozen at `2026-11-25T12:15:12.267Z`; input
+fingerprint `d713195a…`; working-tree source SHA-256 `01b5f3f0…`; coverage
+status `partial`). The command under Reproduction measures them with that
+directory as `--dataset`.
+
 ## Reproduction
 
 The [complete measured v3 configuration](leader-pullback-2026-10-06.config.json)
