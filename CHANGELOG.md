@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.3](https://github.com/gracefullight/stock-checker/compare/v0.8.2...v0.8.3) (2026-11-25)
+
+
+### Maintenance
+
+* update oma to 21.2.0 ([51863a6](https://github.com/gracefullight/stock-checker/commit/51863a667c8077f190f55395504da9e7158667e2))
+
 ## [0.8.2](https://github.com/gracefullight/stock-checker/compare/v0.8.1...v0.8.2) (2026-10-14)
 
 
