@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.0](https://github.com/gracefullight/stock-checker/compare/v0.9.1...v0.10.0) (2026-11-26)
+
+
+### Features
+
+* **core:** measure the alert account with idle slots in spy ([3a4e302](https://github.com/gracefullight/stock-checker/commit/3a4e3020374a4f5e2cf1b3778ba8330fe0246ac9))
+
+
+### Bug Fixes
+
+* **core:** leave the day unclaimed while the network is down ([89939db](https://github.com/gracefullight/stock-checker/commit/89939db7043ae216e9914339a9e4f56991b43e83))
+
+
+### Documentation
+
+* **validation:** add the weekly leader-pullback rank to the entry research ([cd44f60](https://github.com/gracefullight/stock-checker/commit/cd44f60bc5668ba2ed78a989381be8e2bb3db1d4))
+* **validation:** record the 2026-11-26 entry research ([9696dc8](https://github.com/gracefullight/stock-checker/commit/9696dc89c42891b2999cac5eccfb3ab2d323a5c3))
+
 ## [0.9.1](https://github.com/gracefullight/stock-checker/compare/v0.9.0...v0.9.1) (2026-11-26)
 
 
