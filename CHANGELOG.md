@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/gracefullight/stock-checker/compare/v0.9.0...v0.9.1) (2026-11-26)
+
+
+### Build System
+
+* bump bun, uv, and python runtime pins ([5c1c049](https://github.com/gracefullight/stock-checker/commit/5c1c049595a9c627523711f89ac889f44aa2ff14))
+
 ## [0.9.0](https://github.com/gracefullight/stock-checker/compare/v0.8.3...v0.9.0) (2026-11-26)
 
 
