@@ -14,6 +14,7 @@ import {
 import {
   MARKET_SCREEN_PERFORMANCE_POLICY,
   type MarketScreenPerformanceCandle,
+  refreshDueMarketScreenPerformance,
   registerMarketScreenRecommendation,
   summarizeMarketScreenPerformanceLedger,
 } from '@/reports/market-screen-performance';
@@ -590,6 +591,76 @@ describe('durable recommendation paper performance', () => {
       ['fixed-20', 0, 1],
       ['prior-high-10', 1, 0],
     ]);
+  });
+
+  it('sweeps only jobs with a newly observable outcome and waits for each worker to finish', async () => {
+    await seed(0);
+    // Before the entry session closes there is nothing to observe.
+    time = '2026-09-28T12:00:00.000Z';
+    expect(await refreshDueMarketScreenPerformance({}, deps())).toEqual({
+      jobs: 1,
+      due: 0,
+      refreshed: 0,
+      processed: 0,
+      stopped: null,
+    });
+    expect(provider).not.toHaveBeenCalled();
+
+    time = DONE;
+    expect(await refreshDueMarketScreenPerformance({}, deps())).toEqual({
+      jobs: 1,
+      due: 1,
+      refreshed: 1,
+      processed: 1,
+      stopped: null,
+    });
+    // The sweep returns only after the worker released the shared lease.
+    expect(await readMarketScreenLease(root)).toBeNull();
+    expect(provider.mock.calls.map((call) => call[0])).toEqual(['SPY', 'T0']);
+    expect((await getMarketScreenPerformance(id, {}, deps())).summary).toMatchObject({
+      completed: 1,
+      wins: 1,
+    });
+
+    // No session closed since: repeating the sweep requests no prices.
+    provider.mockClear();
+    expect(await refreshDueMarketScreenPerformance({}, deps())).toMatchObject({
+      due: 0,
+      refreshed: 0,
+    });
+    expect(provider).not.toHaveBeenCalled();
+
+    // The sixth session closed, so the shadow exits are due, but another job owns the lease.
+    time = '2026-10-05T20:00:00.000Z';
+    const lease = await acquireMarketScreenLease(root, id);
+    expect(await refreshDueMarketScreenPerformance({}, deps())).toMatchObject({
+      due: 1,
+      refreshed: 0,
+      stopped: 'lease-busy',
+    });
+    expect(provider).not.toHaveBeenCalled();
+    await lease.release();
+    expect(
+      await refreshDueMarketScreenPerformance({ deadline: Date.parse(time) }, deps())
+    ).toMatchObject({ due: 1, refreshed: 0, stopped: 'deadline' });
+    expect(await refreshDueMarketScreenPerformance({}, deps())).toMatchObject({
+      due: 1,
+      refreshed: 1,
+      processed: 1,
+    });
+  });
+
+  it('leaves signals older than sixty days to an explicit refresh', async () => {
+    await seed(0);
+    time = '2026-11-25T12:00:00.000Z';
+    expect(await refreshDueMarketScreenPerformance({}, deps())).toMatchObject({
+      jobs: 1,
+      due: 0,
+      refreshed: 0,
+    });
+    expect(provider).not.toHaveBeenCalled();
+    await refreshMarketScreenPerformance(id, {}, deps());
+    expect((await settled()).summary.completed).toBe(1);
   });
 
   it('summarizes the cross-job ledger read-only, deduplicating ticker + session + configuration', async () => {

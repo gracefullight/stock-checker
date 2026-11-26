@@ -221,9 +221,11 @@ a rule and `fixed-5`. After that a rule becomes a candidate only if the
 bootstrap 95% interval of its mean paired excess difference from `fixed-5`
 lies above zero, and it replaces the shipped exit only after a comparison
 through the real pipeline on both period splits. Changing a rule means a new
-policy id. Outcomes are observed when a job's paper performance is refreshed
-(`refresh_market_screen_performance` or the web action); no scheduled task
-refreshes them.
+policy id. Outcomes are observed when a job's paper performance is refreshed.
+The daily report does this after its message is delivered: every saved job
+with an outcome that a newly closed session can change is refreshed once, for
+signals up to 60 days old and within a five-minute budget. A manual refresh
+(`refresh_market_screen_performance` or the web action) remains available.
 
 ## Reproduction
 

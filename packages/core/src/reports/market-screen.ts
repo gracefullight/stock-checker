@@ -51,6 +51,8 @@ export {
   type MarketScreenPerformanceSnapshot,
   type MarketScreenPerformanceStatus,
   type MarketScreenPerformanceSummary,
+  type MarketScreenPerformanceSweep,
+  refreshDueMarketScreenPerformance,
   refreshMarketScreenPerformance,
 } from '@/reports/market-screen-performance';
 export type {

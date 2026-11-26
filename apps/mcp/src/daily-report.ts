@@ -28,6 +28,13 @@ export interface DailyReportState {
   analyzedCount: number;
   matchedCount: number;
   notificationStatus: string | null;
+  /** Paper outcomes settled after the report; absent in older state files. */
+  paperRefresh?: {
+    due: number;
+    refreshed: number;
+    processed: number;
+    stopped: string | null;
+  } | null;
 }
 
 /** Returns the latest run (no date) or the run saved for a local date; null when none exists. */

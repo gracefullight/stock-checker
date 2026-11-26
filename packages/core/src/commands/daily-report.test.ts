@@ -120,6 +120,13 @@ async function fixture(
     getJob: vi.fn(async () => snapshot()),
     pauseJob: vi.fn(async () => snapshot('paused')),
     hasJobNotificationAttempt: vi.fn(async () => false),
+    refreshPaper: vi.fn(async () => ({
+      jobs: 0,
+      due: 0,
+      refreshed: 0,
+      processed: 0,
+      stopped: null,
+    })),
     pollIntervalMs: 1,
     leaseRetryMs: 1,
   };
@@ -803,6 +810,59 @@ describe('daily screening dispatch', () => {
     expect(
       (await stat(path.join(dependencies.rootDirectory, '.last-tick.json'))).mode & 0o777
     ).toBe(0o600);
+  });
+
+  it('settles earlier paper outcomes only after the report was delivered and saved', async () => {
+    const dependencies = await fixture();
+    const sweep = { jobs: 3, due: 1, refreshed: 1, processed: 2, stopped: null };
+    dependencies.refreshPaper = vi.fn(async () => {
+      expect(dependencies.send).toHaveBeenCalledTimes(1);
+      const saved = JSON.parse(
+        await readFile(path.join(dependencies.rootDirectory, '2026-10-07.state.json'), 'utf8')
+      );
+      expect(saved).toMatchObject({ status: 'partial', notificationStatus: 'accepted' });
+      return sweep;
+    });
+    const state = await runDailyReport({}, dependencies);
+    expect(state).toMatchObject({ status: 'partial', paperRefresh: sweep });
+    expect(dependencies.refreshPaper).toHaveBeenCalledWith(
+      { deadline: morning.getTime() + 5 * 60_000 },
+      expect.objectContaining({ rootDirectory: dependencies.marketRootDirectory })
+    );
+    expect((await readDailyReportStatus(dependencies)).lastRun).toMatchObject({
+      paperRefresh: sweep,
+    });
+  });
+
+  it('retries a lease-busy sweep briefly and keeps the report status when the sweep fails', async () => {
+    const busy = { jobs: 1, due: 1, refreshed: 0, processed: 0, stopped: 'lease-busy' as const };
+    const dependencies = await fixture();
+    dependencies.sleep = vi.fn(async () => {});
+    dependencies.refreshPaper = vi.fn(async () => busy);
+    expect(await runDailyReport({}, dependencies)).toMatchObject({
+      status: 'partial',
+      paperRefresh: busy,
+    });
+    expect(dependencies.refreshPaper).toHaveBeenCalledTimes(4);
+
+    const failing = await fixture();
+    failing.refreshPaper = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    expect(await runDailyReport({}, failing)).toMatchObject({
+      status: 'partial',
+      notificationStatus: 'accepted',
+      paperRefresh: null,
+    });
+  });
+
+  it('does not settle paper outcomes when the scan stopped before a terminal result', async () => {
+    const dependencies = await fixture();
+    dependencies.leaseWaitMs = 0;
+    dependencies.runJob = vi.fn(async () => snapshot('paused'));
+    dependencies.getJob = vi.fn(async () => snapshot('paused'));
+    expect(await runDailyReport({}, dependencies)).toMatchObject({ status: 'paused' });
+    expect(dependencies.refreshPaper).not.toHaveBeenCalled();
   });
 
   it('uses the existing dashboard/MCP market store by default, preserving its shared global lease', async () => {

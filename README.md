@@ -250,6 +250,11 @@ appear in MARKET SCREEN. Check with `mise run daily-report:service:status` or
 scanning or sending. Set `DAILY_REPORT_MAX_CANDIDATES`, `DAILY_REPORT_MAX_PAGES`,
 or `ASIDE_BIN` privately for the Finviz lane. `mise run market-scans:prune --
 --days=30` archives older scans while keeping BUY matches and paper ledgers.
+After a completed or partial scan is delivered, the same run settles earlier
+BUY recommendations in the forward paper ledger: saved jobs whose outcome a
+newly closed session can change are refreshed one at a time (signals up to 60
+days old, five-minute budget), and the result is saved as `paperRefresh` in the
+run state. A failure there never changes the report status.
 
 ### Position ledger and the '보유 계획' section
 

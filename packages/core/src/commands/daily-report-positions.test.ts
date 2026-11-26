@@ -102,6 +102,13 @@ async function fixture(): Promise<
     getJob: vi.fn(async () => snapshot()),
     pauseJob: vi.fn(async () => snapshot('paused')),
     hasJobNotificationAttempt: vi.fn(async () => false),
+    refreshPaper: vi.fn(async () => ({
+      jobs: 0,
+      due: 0,
+      refreshed: 0,
+      processed: 0,
+      stopped: null,
+    })),
     pollIntervalMs: 1,
   };
 }

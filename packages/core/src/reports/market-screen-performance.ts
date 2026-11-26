@@ -669,6 +669,22 @@ export async function refreshMarketScreenPerformance(
   options: { limit?: number } = {},
   dependencies: MarketScreenPerformanceDependencies = {}
 ): Promise<MarketScreenPerformanceSnapshot> {
+  return (await launchRefresh(id, options, dependencies)).result;
+}
+
+interface LaunchedRefresh {
+  result: MarketScreenPerformanceSnapshot;
+  /** False when another market-data job held the worker lease and nothing started. */
+  acquired: boolean;
+  /** Settles with the processed count once the worker released its lease; never rejects. */
+  finished: Promise<number>;
+}
+
+async function launchRefresh(
+  id: string,
+  options: { limit?: number },
+  dependencies: MarketScreenPerformanceDependencies
+): Promise<LaunchedRefresh> {
   const jobId = validatedId(id);
   const limit = integer(options.limit, 20, 1, 50, 'limit');
   const minIntervalMs = integer(dependencies.minIntervalMs, 1000, 0, 60_000, 'minIntervalMs');
@@ -681,7 +697,7 @@ export async function refreshMarketScreenPerformance(
     if (result.refresh.status !== 'running')
       result.refresh.reason =
         'Another market-data job owns the worker budget; refresh again after it finishes.';
-    return result;
+    return { result, acquired: false, finished: Promise.resolve(0) };
   }
   let selected: Recommendation[];
   let state: RefreshState;
@@ -818,8 +834,114 @@ export async function refreshMarketScreenPerformance(
       }
     }
   };
-  void execute().catch(() => {});
-  return snapshot(root, jobId, 0, 20);
+  const finished = execute().then(
+    () => state.processed,
+    () => state.processed
+  );
+  return { result: await snapshot(root, jobId, 0, 20), acquired: true, finished };
+}
+
+/** Signals older than this are left to an explicit refresh; no later session can settle them. */
+const SWEEP_MAX_AGE_MS = 60 * 86_400_000;
+const SWEEP_RETRY_MS = 6 * 3_600_000;
+
+/** Whether a session closed since the last attempt can change this recommendation's saved outcome. */
+function sweepDue(item: Recommendation, instant: number): boolean {
+  if (!studied(item)) return false;
+  const dataAsOf = item.row.dataAsOf as string;
+  const sessions = item.registration.sessions;
+  if (instant < closeAt(sessions[0])) return false;
+  if (instant - Date.parse(`${dataAsOf}T00:00:00Z`) > SWEEP_MAX_AGE_MS) return false;
+  if (item.row.status === 'completed')
+    return marketScreenExitStudyDue(item.study, dataAsOf, instant);
+  const attempted = item.row.updatedAt ? Date.parse(item.row.updatedAt) : Number.NaN;
+  if (!Number.isFinite(attempted)) return true;
+  if (item.row.status === 'unavailable') return instant - attempted >= SWEEP_RETRY_MS;
+  return sessions.some((date) => {
+    const close = closeAt(date);
+    return close > attempted && close <= instant;
+  });
+}
+
+export interface MarketScreenPerformanceSweep {
+  /** Saved jobs inspected. */
+  jobs: number;
+  /** Jobs holding an outcome that a newly closed session can change. */
+  due: number;
+  /** Jobs whose bounded refresh ran to its end in this sweep. */
+  refreshed: number;
+  /** Recommendations processed across those refreshes. */
+  processed: number;
+  stopped: 'lease-busy' | 'deadline' | 'job-limit' | null;
+}
+
+/**
+ * Refresh every saved job whose paper outcome can change, one job at a time, and
+ * wait for each worker to finish. A job with nothing newly observable costs no
+ * market-data request, so repeating the sweep inside one session is a no-op.
+ */
+export async function refreshDueMarketScreenPerformance(
+  options: { limit?: number; maxJobs?: number; deadline?: number } = {},
+  dependencies: MarketScreenPerformanceDependencies = {}
+): Promise<MarketScreenPerformanceSweep> {
+  const limit = integer(options.limit, 20, 1, 50, 'limit');
+  const maxJobs = integer(options.maxJobs, 20, 1, 200, 'maxJobs');
+  const root = await rootDirectory(dependencies);
+  const instant = now(dependencies).getTime();
+  const ids = (await readdir(root, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && UUID.test(entry.name))
+    .map((entry) => entry.name.toLowerCase())
+    .sort();
+  const due: Array<{ id: string; attemptedAt: string }> = [];
+  for (const id of ids) {
+    let rows: Recommendation[];
+    try {
+      rows = await recommendations(root, id);
+    } catch {
+      continue;
+    }
+    const pending = rows.filter((item) => sweepDue(item, instant));
+    if (!pending.length) continue;
+    const attempts = pending.map(
+      (item) => (item.row.status === 'completed' ? item.study?.updatedAt : item.row.updatedAt) ?? ''
+    );
+    due.push({ id, attemptedAt: attempts.sort()[0] });
+  }
+  // The job waiting longest goes first, so a capped sweep still reaches every job over time.
+  due.sort(
+    (left, right) =>
+      left.attemptedAt.localeCompare(right.attemptedAt) || left.id.localeCompare(right.id)
+  );
+  const sweep: MarketScreenPerformanceSweep = {
+    jobs: ids.length,
+    due: due.length,
+    refreshed: 0,
+    processed: 0,
+    stopped: null,
+  };
+  for (const [position, { id }] of due.entries()) {
+    if (position >= maxJobs) {
+      sweep.stopped = 'job-limit';
+      break;
+    }
+    if (options.deadline !== undefined && now(dependencies).getTime() >= options.deadline) {
+      sweep.stopped = 'deadline';
+      break;
+    }
+    let launched: LaunchedRefresh;
+    try {
+      launched = await launchRefresh(id, { limit }, dependencies);
+    } catch {
+      continue;
+    }
+    if (!launched.acquired) {
+      sweep.stopped = 'lease-busy';
+      break;
+    }
+    sweep.processed += await launched.finished;
+    sweep.refreshed++;
+  }
+  return sweep;
 }
 
 const STATUS_PRIORITY: Record<MarketScreenPerformanceStatus, number> = {

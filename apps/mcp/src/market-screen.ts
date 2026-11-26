@@ -409,6 +409,10 @@ function renderDailyReport(
       ? `Saved job: ${state.jobId} (get_market_screen for further pages; web: /market-screen?job=${state.jobId}).`
       : 'No market-screen job was saved for this run.',
   ];
+  if (state.paperRefresh)
+    lines.push(
+      `Paper outcomes: ${state.paperRefresh.refreshed}/${state.paperRefresh.due} due job(s) refreshed, ${state.paperRefresh.processed} recommendation(s) processed${state.paperRefresh.stopped ? `; stopped (${escapeMarkdown(state.paperRefresh.stopped)})` : ''}.`
+    );
   if (matches) {
     const job = matches.job;
     lines.push(

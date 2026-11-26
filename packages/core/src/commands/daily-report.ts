@@ -18,7 +18,9 @@ import {
   type MarketScreenDependencies,
   type MarketScreenJob,
   type MarketScreenJobSnapshot,
+  type MarketScreenPerformanceSweep,
   pauseMarketScreenJob,
+  refreshDueMarketScreenPerformance,
   runMarketScreenJob,
 } from '@/reports/market-screen';
 import { writeMarketScreenJson } from '@/reports/market-screen-store';
@@ -56,6 +58,9 @@ const EXECUTION_BUDGET_MS = 20 * 60_000;
 /** A manual screen or paper refresh may hold the single runner lease briefly. */
 const LEASE_WAIT_MS = 5 * 60_000;
 const LATE_CUTOFF_BEFORE_OPEN_MS = 90 * 60_000;
+/** Settling past BUYs follows the delivered report and may not outlive this budget. */
+const PAPER_REFRESH_BUDGET_MS = 5 * 60_000;
+const PAPER_REFRESH_LEASE_RETRIES = 3;
 const SCAN_TERMINAL = new Set(['completed', 'partial']);
 const logger = pino({ name: 'daily-stock-report' }, process.stderr);
 
@@ -79,6 +84,8 @@ export interface DailyReportDependencies {
   getJob?: typeof getMarketScreenJob;
   pauseJob?: typeof pauseMarketScreenJob;
   hasJobNotificationAttempt?: (id: string) => Promise<boolean>;
+  /** Settles saved paper outcomes after the report; tests inject an offline sweep. */
+  refreshPaper?: typeof refreshDueMarketScreenPerformance;
   marketDependencies?: MarketScreenDependencies;
   /** Offline universe injection for tests; production always uses the configured list. */
   configuredUniverse?: () => string[];
@@ -128,6 +135,8 @@ interface DailyRunState {
   matchedCount: number;
   analysisStatus: 'complete' | 'degraded' | 'unavailable' | null;
   notificationStatus: WhatsAppNotificationResult['status'] | null;
+  /** Paper outcomes settled after the report was delivered; null when the sweep did not run. */
+  paperRefresh: MarketScreenPerformanceSweep | null;
 }
 
 /** Legacy (schemaVersion 1) states lack session and lane fields; readers tolerate both. */
@@ -338,6 +347,7 @@ export async function readDailyReportStatus(dependencies: DailyReportDependencie
       matchedCount: state.matchedCount ?? 0,
       analysisStatus: state.analysisStatus ?? null,
       notificationStatus: state.notificationStatus ?? null,
+      paperRefresh: state.paperRefresh ?? null,
     },
   };
 }
@@ -452,7 +462,11 @@ export async function runDailyReport(
     matchedCount: 0,
     analysisStatus: null,
     notificationStatus: null,
+    paperRefresh: null,
   };
+  const sleep =
+    dependencies.sleep ??
+    ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const save = async () => {
     state.updatedAt = now().toISOString();
     await writeMarketScreenJson(path.join(root, `${schedule.localDate}.state.json`), state);
@@ -729,9 +743,6 @@ export async function runDailyReport(
       state.jobId = current.job.id;
       updateCounts(current);
       await save();
-      const sleep =
-        dependencies.sleep ??
-        ((milliseconds) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
       const run = () => (dependencies.runJob ?? runMarketScreenJob)(state.jobId!, jobDependencies);
       current = await run();
       updateCounts(current);
@@ -810,6 +821,31 @@ export async function runDailyReport(
     ).catch(() => {});
   }
   await save();
+  if (SCAN_TERMINAL.has(state.status)) {
+    // Earlier BUYs settle from the session that just closed. The report is already
+    // delivered and saved, so nothing here can delay it or change its status.
+    try {
+      const refresh = dependencies.refreshPaper ?? refreshDueMarketScreenPerformance;
+      const options = { deadline: now().getTime() + PAPER_REFRESH_BUDGET_MS };
+      const paper = { rootDirectory: market, now, minIntervalMs };
+      let sweep = await refresh(options, paper);
+      // The finished scan may still be releasing the single worker lease.
+      for (
+        let attempt = 0;
+        attempt < PAPER_REFRESH_LEASE_RETRIES &&
+        sweep.stopped === 'lease-busy' &&
+        sweep.refreshed === 0;
+        attempt++
+      ) {
+        await sleep(dependencies.leaseRetryMs ?? 5_000);
+        sweep = await refresh(options, paper);
+      }
+      state.paperRefresh = sweep;
+      await save();
+    } catch {
+      /* The paper ledger stays as saved; an explicit refresh can still fill it. */
+    }
+  }
   return state;
 }
 
