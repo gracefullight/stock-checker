@@ -19,7 +19,7 @@ jobs:
           node-version: "26"
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.5"
       - run: bun install --frozen-lockfile
       - name: Run prediction
         run: bun src/index.ts predict --ticker="ABCL,BE,CIEN,DLO,DNA,GEV,GLW,GOOGL,INTC,IONQ,OPEN,PLTR,POET,TSLA,UPST" --sort=asc

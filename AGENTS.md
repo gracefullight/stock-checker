@@ -12,7 +12,7 @@
 - `tsconfig.json`: Shared TypeScript config (strict mode, ESNext modules, bundler resolution).
 
 ## Build, Test, and Development Commands
-- `mise install`: Install Node 26, Bun 1.4.2, Python 3.14, and uv 0.13.7.
+- `mise install`: Install Node 26, Bun 1.4.5, Python 3.15, and uv 0.13.10.
 - `bun install`: Install workspace dependencies and repository Git hooks.
 - `mise run dev`: Start the API (5101) and web (5100) servers.
 - `mise run predict -- --ticker=TSLA,PLTR --sort=asc`: Run predictions and append monthly CSV rows.

@@ -10,7 +10,7 @@ engine, web dashboards, local MCP reports, a CLI, and WhatsApp notifications.
 | `apps/api` | Fastify API — port 5101 |
 | `apps/web` | Next.js dashboard — port 5100 |
 | `apps/mcp` | Local stdio MCP reports and screening |
-| `packages/finance` | Python 3.14 finance tools, Ruff, and Pyrefly |
+| `packages/finance` | Python 3.15 finance tools, Ruff, and Pyrefly |
 
 | Screener | Ticker detail |
 |---|---|
@@ -21,7 +21,7 @@ engine, web dashboards, local MCP reports, a CLI, and WhatsApp notifications.
 Install [mise](https://mise.jdx.dev), then run from the repository:
 
 ```bash
-mise install        # Node 26, Bun, Python 3.14, and uv
+mise install        # Node 26, Bun, Python 3.15, and uv
 mise run install    # dependencies and Git hooks
 mise run dev        # API + web
 ```
