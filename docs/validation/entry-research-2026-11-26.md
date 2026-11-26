@@ -3,7 +3,7 @@
 The shipped leader-pullback signal cannot be told apart from holding SPY
 ([forward check](leader-pullback-2026-10-06.md#forward-check-2026-11-25)), and
 neither a different exit nor the market kill-switch changed that. This run
-asked whether any other entry does better. Six families were measured, each
+asked whether any other entry does better. Seven families were measured, each
 with rules and a pass bar written into its script before a result was read.
 **None passed.** Nothing here changes the shipped configuration.
 
@@ -143,6 +143,20 @@ Top three of nine sector SPDRs by trailing return, monthly.
 
 Rotation trails simply holding all nine. Not run on TEST.
 
+### 7. Leader pullback as a weekly rank (`composite.mjs`, DEV only)
+
+The product's own thesis without the gate: every five sessions, the top decile
+(about 46 names) by the average of two percentile ranks, 12-1 month return and
+minus the five-session return, held for five sessions.
+
+| 2019-10 to 2023 (212 weeks) | Weekly mean net | Excess vs universe | Excess vs SPY |
+|---|---:|---:|---:|
+| Top decile | +0.34% | +0.11% (−0.25…+0.46) | +0.20% (−0.20…+0.62) |
+
+It beats SPY in 50% of weeks, and loses to the universe in 2019 and 2021.
+Averaging the two inputs is weaker than either alone (section 2). Not run on
+TEST.
+
 ## What does change the result
 
 Where the money sits between alerts decides the outcome, not the alerts
@@ -188,6 +202,7 @@ node docs/validation/entry-research-2026-11-26/index.mjs --final=down3/prior-hig
 node docs/validation/entry-research-2026-11-26/replicate.mjs
 node docs/validation/entry-research-2026-11-26/trend.mjs
 node docs/validation/entry-research-2026-11-26/rotation.mjs
+node docs/validation/entry-research-2026-11-26/composite.mjs
 ```
 
 `fetch-index.ts` downloads the ETF histories (see its header). `--final` prints

@@ -39,10 +39,11 @@ forward ledger records three alternatives beside it for each eligible BUY
 The rules and the bar for acting on them were fixed before any observation.
 
 [Entry research on 2026-11-26](validation/entry-research-2026-11-26.md) looked
-for a better entry instead. Six families were measured against bars written
-down first: three event entries and eleven cross-sectional features on the
-frozen universe, index pullbacks on SPY and QQQ with a replication on fourteen
-ETFs, trend-gated and 2× index exposure, and sector rotation. **None passed.**
+for a better entry instead. Seven families were measured against bars written
+down first: three event entries, eleven cross-sectional features and a weekly
+leader-pullback rank on the frozen universe, index pullbacks on SPY and QQQ
+with a replication on fourteen ETFs, trend-gated and 2× index exposure, and
+sector rotation. **None passed.**
 The published index pullback edge is absent from 2013 onward, and its 65.7% win
 rate equals what the same exit earns from any entry day (65.6%): a win rate is
 not evidence until it is set against the same exit on ordinary days. The

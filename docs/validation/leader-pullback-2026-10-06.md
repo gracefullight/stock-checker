@@ -251,10 +251,11 @@ subtract from the index, which is the account-level form of the matched
 benchmark result. Following them is only reasonable as a swap out of an index
 position, never as a reason to wait in cash.
 
-The same day's [entry research](entry-research-2026-11-26.md) measured six
+The same day's [entry research](entry-research-2026-11-26.md) measured seven
 other entry families against pre-registered bars (event entries, eleven
 cross-sectional features, index pullbacks with a fourteen-ETF replication,
-trend-gated and 2× exposure, sector rotation). None passed, and it shows that
+trend-gated and 2× exposure, sector rotation, and leader pullback as a weekly
+rank). None passed, and it shows that
 the configured universe cannot validate a stock rule: its equal-weight return
 already beats SPY by hindsight.
 
