@@ -707,6 +707,7 @@ export async function validateStrategyDataset(
   const requestedEndSession = new Date(range.end).toISOString().slice(0, 10);
   const sessionRange = {
     startSession: new Date(range.start).toISOString().slice(0, 10),
+    // biome-ignore lint/complexity/useMathMinMax: ISO session dates are strings; Math.min would return NaN.
     endSession: requestedEndSession < previousUtcDay ? requestedEndSession : previousUtcDay,
   };
   await writeFile(path.join(snapshotDirectory, 'range.json'), rangeRaw, {
