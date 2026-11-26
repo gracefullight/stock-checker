@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises';
 import { constants, type Stats } from 'node:fs';
 import { chmod, type FileHandle, lstat, mkdir, open, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -62,6 +63,29 @@ const LATE_CUTOFF_BEFORE_OPEN_MS = 90 * 60_000;
 const PAPER_REFRESH_BUDGET_MS = 5 * 60_000;
 const PAPER_REFRESH_LEASE_RETRIES = 3;
 const SCAN_TERMINAL = new Set(['completed', 'partial']);
+const PRICE_PROVIDER_HOST = 'query2.finance.yahoo.com';
+const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * Whether the price provider's host resolves. The first tick after the machine
+ * wakes can run before the network is up; every analysis then fails and the scan
+ * pauses with nothing analysed.
+ */
+async function priceProviderReachable(): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      lookup(PRICE_PROVIDER_HOST).then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), PROVIDER_PROBE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const logger = pino({ name: 'daily-stock-report' }, process.stderr);
 
 export type DailyReportSource = MarketScreenUniverseSource;
@@ -84,6 +108,8 @@ export interface DailyReportDependencies {
   getJob?: typeof getMarketScreenJob;
   pauseJob?: typeof pauseMarketScreenJob;
   hasJobNotificationAttempt?: (id: string) => Promise<boolean>;
+  /** Network check made before the day is claimed; tests inject an offline answer. */
+  providerReachable?: () => Promise<boolean>;
   /** Settles saved paper outcomes after the report; tests inject an offline sweep. */
   refreshPaper?: typeof refreshDueMarketScreenPerformance;
   marketDependencies?: MarketScreenDependencies;
@@ -442,7 +468,16 @@ export async function runDailyReport(
     usSession: schedule.usSession,
     startedAt: now().toISOString(),
   };
-  if (!(await exclusiveJson(path.join(root, `${schedule.localDate}.claim.json`), claim))) {
+  const claimFile = path.join(root, `${schedule.localDate}.claim.json`);
+  const claimed = await lstat(claimFile).then(
+    () => true,
+    () => false
+  );
+  // The claim is the day's only attempt. Without a network it would be spent on a scan
+  // that cannot fetch a price, so leave it for the next minute's tick or the late window.
+  if (!claimed && !(await (dependencies.providerReachable ?? priceProviderReachable)()))
+    return { status: 'skipped', reason: 'network-unavailable', localDate: schedule.localDate };
+  if (!(await exclusiveJson(claimFile, claim))) {
     return { status: 'skipped', reason: 'already-claimed', localDate: schedule.localDate };
   }
   const state: DailyRunState = {

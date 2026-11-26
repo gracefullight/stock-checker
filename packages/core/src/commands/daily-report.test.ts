@@ -120,6 +120,7 @@ async function fixture(
     getJob: vi.fn(async () => snapshot()),
     pauseJob: vi.fn(async () => snapshot('paused')),
     hasJobNotificationAttempt: vi.fn(async () => false),
+    providerReachable: vi.fn(async () => true),
     refreshPaper: vi.fn(async () => ({
       jobs: 0,
       due: 0,
@@ -533,6 +534,36 @@ describe('daily screening dispatch', () => {
     });
     expect(dependencies.runJob).toHaveBeenCalledTimes(4);
     expect(dependencies.send).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the day unclaimed while the price provider cannot be resolved, then runs on a later tick', async () => {
+    const dependencies = await fixture();
+    dependencies.providerReachable = vi.fn(async () => false);
+    expect(await runDailyReport({}, dependencies)).toEqual({
+      status: 'skipped',
+      reason: 'network-unavailable',
+      localDate: '2026-10-07',
+    });
+    expect(await readdir(dependencies.rootDirectory)).toEqual([]);
+    for (const operation of [dependencies.collect, dependencies.createJob, dependencies.send])
+      expect(operation).not.toHaveBeenCalled();
+
+    // The network is back a minute later: the same day's scan runs and is delivered once.
+    dependencies.providerReachable = vi.fn(async () => true);
+    const later = { ...dependencies, now: () => new Date(morning.getTime() + 60_000) };
+    expect(await runDailyReport({}, later)).toMatchObject({
+      status: 'partial',
+      window: 'primary',
+      notificationStatus: 'accepted',
+    });
+    expect(dependencies.send).toHaveBeenCalledOnce();
+
+    // A claimed day is answered from the claim alone, without another lookup.
+    expect(await runDailyReport({}, later)).toMatchObject({
+      status: 'skipped',
+      reason: 'already-claimed',
+    });
+    expect(dependencies.providerReachable).toHaveBeenCalledOnce();
   });
 
   it('concurrent ticks and restart cannot create a second scan or send for the same date', async () => {

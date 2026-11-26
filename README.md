@@ -233,6 +233,9 @@ The service starts once each day at 09:00 Australia/Sydney, including DST;
 it can start until 09:14 if the computer wakes late, and a late catch-up run is
 allowed afterwards until 90 minutes before the next NYSE open (still once per
 Sydney date, labelled `(지연)`). Keep the computer logged in, awake, and online.
+A tick that cannot resolve the price provider's host skips with
+`network-unavailable` and leaves the date unclaimed, so the scan starts on a
+later tick once the network is back instead of spending the day's only run.
 By default the report scans the configured validated universe (the ticker list
 the leader-pullback edge was measured on; no browser needed) with the shared
 engine for up to 20 minutes, which the `--dry-run` estimate keeps within budget.
