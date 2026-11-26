@@ -227,6 +227,37 @@ with an outcome that a newly closed session can change is refreshed once, for
 signals up to 60 days old and within a five-minute budget. A manual refresh
 (`refresh_market_screen_performance` or the web action) remains available.
 
+## Idle capital (measured 2026-11-26)
+
+The single-account simulation above leaves a free slot in cash. The report now
+also runs the same account with free slots held in SPY (`account.spyCoreSlots`):
+SPY is bought at the first open, sold at a trade's entry open and bought back at
+that trade's exit close, and each swap pays a second 10 bps round trip. Same
+frozen 2026-11-25 inputs (553 input hashes and all 157 trades identical to the
+forward check; the applied end bound moved one UTC day, so the range
+fingerprint is `f839599c…`), configuration `9d15fbda…`, span 2019-08-06 to
+2026-11-23.
+
+| Account | Idle slots in cash: CAGR / max drawdown | Idle slots in SPY: CAGR / max drawdown |
+|---|---:|---:|
+| K = 1 (92 of 157 trades) | 3.2% / 44.5% | 14.9% / 41.3% |
+| K = 3 (144 of 157) | 3.2% / 13.3% | 15.3% / 34.5% |
+| K = 5 (154 of 157) | 2.3% / 8.1% | 14.8% / 34.2% |
+| SPY buy and hold | — | 15.2% / 33.7% |
+
+Held in SPY between alerts, the account tracks the index within ±0.4 points a
+year; held in cash it earns about a fifth of it. The alerts neither add to nor
+subtract from the index, which is the account-level form of the matched
+benchmark result. Following them is only reasonable as a swap out of an index
+position, never as a reason to wait in cash.
+
+The same day's [entry research](entry-research-2026-11-26.md) measured six
+other entry families against pre-registered bars (event entries, eleven
+cross-sectional features, index pullbacks with a fourteen-ETF replication,
+trend-gated and 2× exposure, sector rotation). None passed, and it shows that
+the configured universe cannot validate a stock rule: its equal-weight return
+already beats SPY by hindsight.
+
 ## Reproduction
 
 The [complete measured v3 configuration](leader-pullback-2026-10-06.config.json)

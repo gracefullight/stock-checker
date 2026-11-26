@@ -38,6 +38,27 @@ forward ledger records three alternatives beside it for each eligible BUY
 ([exit study](validation/leader-pullback-2026-10-06.md#exit-study-registered-2026-11-26)).
 The rules and the bar for acting on them were fixed before any observation.
 
+[Entry research on 2026-11-26](validation/entry-research-2026-11-26.md) looked
+for a better entry instead. Six families were measured against bars written
+down first: three event entries and eleven cross-sectional features on the
+frozen universe, index pullbacks on SPY and QQQ with a replication on fourteen
+ETFs, trend-gated and 2× index exposure, and sector rotation. **None passed.**
+The published index pullback edge is absent from 2013 onward, and its 65.7% win
+rate equals what the same exit earns from any entry day (65.6%): a win rate is
+not evidence until it is set against the same exit on ordinary days. The
+shipped trades earn +0.61% where SPY earns +0.47% and the equal-weight
+configured universe +0.70% over the same windows; the signal dates are good
+market dates, and the selected stocks add nothing to them.
+
+What changes the outcome is where capital waits. With free slots held in SPY
+instead of cash, the account following every alert compounds at 14.8–15.3% a
+year against 2.3–3.2%, beside 15.2% for SPY alone
+([idle capital](validation/leader-pullback-2026-10-06.md#idle-capital-measured-2026-11-26)).
+**The alerts are a screener; capital stays in the index, and an alert is at
+most a five-session swap out of it.** The configured universe is today's
+ticker list and its equal-weight return already beats SPY, so no stock rule
+can be validated on it without point-in-time membership and delisted prices.
+
 Results under "Archived exploratory results" describe the previous implementation.
 They are **not validation of the corrected engine**. The finance
 audit identified future benchmark leakage in the optimizer, same-close fills
