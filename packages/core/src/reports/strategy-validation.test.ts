@@ -227,6 +227,41 @@ describe('fixed native strategy measurement chronology', () => {
     expect(result).not.toHaveProperty('portfolio');
   });
 
+  it('holds SPY in free slots, swapping into a trade at its entry open and back at its exit close', () => {
+    const a = candles(8);
+    a[1].open = 100;
+    a[5].close = 110;
+    const spy = candles(8);
+    for (const row of spy) row.close = 100;
+    const measure = (costPct: number) =>
+      measureStrategyValidation([signal(a, 0, 'A')], new Map([['A', a]]), costPct, {
+        spy,
+        accountSlots: [1, 2],
+      }).account;
+
+    const flat = measure(0);
+    expect(flat.span).toMatchObject({ start: '2024-01-02', end: '2024-01-06', sessions: 5 });
+    // One slot is fully in the +10% trade; with two, the other half sits in a flat SPY.
+    expect(flat.spyCoreSlots?.[0]).toMatchObject({ slots: 1, tradesTaken: 1, tradesSkipped: 0 });
+    expect(flat.spyCoreSlots?.[0].totalReturnPct).toBeCloseTo(10, 10);
+    expect(flat.spyCoreSlots?.[1].totalReturnPct).toBeCloseTo(5, 10);
+
+    // SPY closes 2% above its first open and stays there: only the idle slot earns it.
+    for (const row of spy) row.close = 102;
+    const rising = measure(0);
+    expect(rising.slots[1].totalReturnPct).toBeCloseTo(5, 10);
+    expect(rising.spyCoreSlots?.[1].totalReturnPct).toBeCloseTo(6, 10);
+
+    // Leaving SPY for the trade and returning costs one more round trip on that slot.
+    const costly = measure(0.1);
+    expect(costly.slots[0].totalReturnPct).toBeCloseTo(9.9, 10);
+    expect(costly.spyCoreSlots?.[0].totalReturnPct).toBeCloseTo((0.999 * 1.099 - 1) * 100, 10);
+
+    expect(
+      measureStrategyValidation([signal(a, 0, 'A')], new Map([['A', a]])).account.spyCoreSlots
+    ).toBeNull();
+  });
+
   it('rejects noncausal cached rows and preserves nominal dollar turnover', () => {
     const rows = JSON.parse(JSON.stringify(candles(3))) as Record<string, unknown>[];
     expect(parseStrategyCandles(rows)[0].dollarVolume).toBe(101_000_000);

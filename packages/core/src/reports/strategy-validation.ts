@@ -181,13 +181,18 @@ export interface StrategyMeasurementOptions {
  * One account with K equal cash slots following the executed trades in entry
  * order (ties by ticker). A trade is taken only if a slot is free at its entry
  * open; idle slots hold cash. Positions are marked at each session close.
+ *
+ * With `idle`, a free slot holds the benchmark instead of cash: it is bought at
+ * the first open, sold at the entry open of a trade and bought back at that
+ * trade's exit close. Each swap pays one extra round trip on the benchmark leg.
  */
 function simulateAccount(
   trades: ExecutedTrade[],
   prices: Map<string, Candle[]>,
   calendar: string[],
   slots: number,
-  initialCapital: number
+  initialCapital: number,
+  idle?: { bars: Map<string, Candle>; switchCostPct: number }
 ) {
   const closes = new Map<string, Map<string, number>>();
   for (const [ticker, rows] of prices)
@@ -210,7 +215,13 @@ function simulateAccount(
     peak = initialCapital,
     maxDrawdownPct = 0,
     equity = initialCapital;
+  let previousClose: number | null = null;
   for (const date of calendar) {
+    const bar = idle?.bars.get(date);
+    // Idle benchmark slots carry the move from the previous close to this open.
+    if (bar && previousClose !== null)
+      for (let slot = 0; slot < slots; slot++)
+        if (!holding[slot]) slotCash[slot] *= bar.open / previousClose;
     while (cursor < ordered.length && ordered[cursor].entryDate <= date) {
       const trade = ordered[cursor++];
       if (trade.entryDate !== date) {
@@ -222,6 +233,7 @@ function simulateAccount(
         skipped++;
         continue;
       }
+      if (idle) slotCash[free] *= 1 - idle.switchCostPct / 100;
       holding[free] = { ...trade, lastMark: slotCash[free] };
       taken++;
     }
@@ -229,6 +241,7 @@ function simulateAccount(
     for (let slot = 0; slot < slots; slot++) {
       const position = holding[slot];
       if (!position) {
+        if (bar) slotCash[slot] *= bar.close / bar.open;
         equity += slotCash[slot];
         continue;
       }
@@ -242,6 +255,7 @@ function simulateAccount(
       if (close !== undefined) position.lastMark = slotCash[slot] * (close / position.entryPrice);
       equity += position.lastMark;
     }
+    if (bar) previousClose = bar.close;
     peak = Math.max(peak, equity);
     maxDrawdownPct = Math.max(maxDrawdownPct, ((peak - equity) / peak) * 100);
   }
@@ -491,6 +505,16 @@ export function measureStrategyValidation(
     slots: (options.accountSlots ?? [1, 3, 5]).map((slots) =>
       simulateAccount(executed, prices, calendar, slots, initialCapital)
     ),
+    spyCoreAllocation:
+      'The same K slots, but a free slot holds SPY instead of cash: bought at the first open, sold at a trade entry open and bought back at that trade exit close; each swap pays one extra round trip on the SPY leg',
+    spyCoreSlots: spy
+      ? (options.accountSlots ?? [1, 3, 5]).map((slots) =>
+          simulateAccount(executed, prices, calendar, slots, initialCapital, {
+            bars: new Map(spy.map((row) => [iso(row), row])),
+            switchCostPct: costPct,
+          })
+        )
+      : null,
     spyBuyAndHold: spy && calendar.length ? buyAndHold(spy, calendar, costPct) : null,
   };
 
