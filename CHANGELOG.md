@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/gracefullight/stock-checker/compare/v0.10.0...v0.10.1) (2026-11-26)
+
+
+### Documentation
+
+* **validation:** test stock rules on point-in-time s&p 500 membership ([3613d0f](https://github.com/gracefullight/stock-checker/commit/3613d0f912b2bca20af44e306236ed80fb334f32))
+
 ## [0.10.0](https://github.com/gracefullight/stock-checker/compare/v0.9.1...v0.10.0) (2026-11-26)
 
 
