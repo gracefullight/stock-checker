@@ -5,6 +5,16 @@ import { DateTime } from 'luxon';
 import { DEFAULT_ROUND_TRIP_COST_PCT } from '@/constants';
 import { MarketScreenJobNotFoundError } from '@/reports/market-screen';
 import {
+  evaluateMarketScreenExitStudy,
+  failedMarketScreenExitStudyOutcomes,
+  MARKET_SCREEN_EXIT_STUDY_POLICY,
+  type MarketScreenExitStudyRecord,
+  type MarketScreenExitStudyRuleSummary,
+  marketScreenExitStudyDue,
+  readMarketScreenExitStudyRecord,
+  summarizeMarketScreenExitStudy,
+} from '@/reports/market-screen-exit-study';
+import {
   acquireMarketScreenLease,
   marketScreenOwnerIsAlive,
   readMarketScreenJson,
@@ -101,6 +111,15 @@ export interface MarketScreenPerformanceSnapshot {
     processed: number;
     reason: string | null;
   };
+  /** Shadow exits for the same recommendations; `items` covers the rows on this page. */
+  exitStudy: MarketScreenExitStudySnapshot;
+}
+
+export interface MarketScreenExitStudySnapshot {
+  policyId: typeof MARKET_SCREEN_EXIT_STUDY_POLICY.id;
+  /** One entry per rule over every recommendation of the job. */
+  summary: MarketScreenExitStudyRuleSummary[];
+  items: MarketScreenExitStudyRecord[];
 }
 
 export interface MarketScreenPerformanceCandle {
@@ -212,6 +231,8 @@ interface Recommendation {
   index: number;
   registration: MarketScreenPerformanceRegistration | null;
   row: MarketScreenPerformanceRow;
+  /** Saved shadow-exit record; null until a refresh observed the entry session. */
+  study: MarketScreenExitStudyRecord | null;
 }
 interface RefreshState {
   token: string;
@@ -223,6 +244,16 @@ interface RefreshState {
 const file = (root: string, id: string, name: string) => path.join(root, id, name);
 const ledgerFile = (root: string, id: string, index: number) =>
   file(root, id, `performance/${String(index).padStart(8, '0')}.json`);
+/** Kept apart from the ledger row so a completed paper outcome is never rewritten. */
+const studyFile = (root: string, id: string, index: number) =>
+  file(root, id, `performance/exit-study/${String(index).padStart(8, '0')}.json`);
+/** Only recommendations frozen as eligible for the paper entry are studied. */
+const studied = (
+  item: Pick<Recommendation, 'registration' | 'row'>
+): item is Pick<Recommendation, 'row'> & { registration: MarketScreenPerformanceRegistration } =>
+  item.registration?.status === 'pending' &&
+  item.registration.sessions.length === 5 &&
+  typeof item.row.dataAsOf === 'string';
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
 const positive = (value: number) => Number.isFinite(value) && value > 0;
 
@@ -357,9 +388,36 @@ async function recommendations(root: string, id: string): Promise<Recommendation
         if (!missing(error)) throw new Error('Cached paper performance is unreadable.');
       }
     }
-    rows.push({ index: saved.index, registration, row });
+    let study: MarketScreenExitStudyRecord | null = null;
+    if (studied({ registration, row })) {
+      try {
+        study = readMarketScreenExitStudyRecord(
+          await readMarketScreenJson(studyFile(root, id, saved.index)),
+          {
+            recommendationId: row.recommendationId,
+            ticker: row.ticker,
+            dataAsOf: row.dataAsOf as string,
+            entryDate: row.entryDate as string,
+          }
+        );
+      } catch {
+        // A missing or damaged shadow record is rebuilt by the next refresh.
+      }
+    }
+    rows.push({ index: saved.index, registration, row, study });
   }
   return rows;
+}
+
+function exitStudySnapshot(
+  all: Recommendation[],
+  page: Recommendation[]
+): MarketScreenExitStudySnapshot {
+  return {
+    policyId: MARKET_SCREEN_EXIT_STUDY_POLICY.id,
+    summary: summarizeMarketScreenExitStudy(all.map((item) => item.study)),
+    items: page.flatMap((item) => (item.study ? [item.study] : [])),
+  };
 }
 
 async function snapshot(
@@ -368,7 +426,8 @@ async function snapshot(
   offset: number,
   limit: number
 ): Promise<MarketScreenPerformanceSnapshot> {
-  const all = (await recommendations(root, id)).map((item) => item.row);
+  const saved = await recommendations(root, id);
+  const all = saved.map((item) => item.row);
   const summary: MarketScreenPerformanceSummary = {
     totalRecommendations: all.length,
     completed: 0,
@@ -458,6 +517,7 @@ async function snapshot(
       items: all.slice(offset, offset + limit),
     },
     refresh,
+    exitStudy: exitStudySnapshot(saved, saved.slice(offset, offset + limit)),
   };
 }
 
@@ -565,6 +625,36 @@ function evaluate(
   };
 }
 
+/** Shadow exits from the same fetched series; completed outcomes in the saved record stay frozen. */
+function evaluateStudy(
+  recommendation: Recommendation,
+  spy: Map<string, MarketScreenPerformanceCandle>,
+  candles: MarketScreenPerformanceCandle[],
+  timestamp: Date
+): MarketScreenExitStudyRecord | null {
+  if (!studied(recommendation)) return null;
+  const dataAsOf = recommendation.row.dataAsOf as string;
+  const instant = timestamp.getTime();
+  const evaluated = evaluateMarketScreenExitStudy({
+    dataAsOf,
+    bars: completedBars(candles, instant),
+    spy,
+    instant,
+    previous: recommendation.study?.outcomes,
+  });
+  return {
+    schemaVersion: 1,
+    policyId: MARKET_SCREEN_EXIT_STUDY_POLICY.id,
+    recommendationId: recommendation.row.recommendationId,
+    ticker: recommendation.row.ticker,
+    dataAsOf,
+    entryDate: recommendation.registration.sessions[0],
+    observedThrough: evaluated.observedThrough,
+    updatedAt: timestamp.toISOString(),
+    outcomes: evaluated.outcomes,
+  };
+}
+
 async function defaultFetchPrices(
   ticker: string,
   lookbackDays: number
@@ -596,11 +686,19 @@ export async function refreshMarketScreenPerformance(
   let selected: Recommendation[];
   let state: RefreshState;
   try {
+    const selectedAt = now(dependencies).getTime();
+    // A completed row is final; it is selected again only while its shadow exits can still change.
+    const attemptedAt = (item: Recommendation) =>
+      (item.row.status === 'completed' ? item.study?.updatedAt : item.row.updatedAt) ?? '';
     selected = (await recommendations(root, jobId))
-      .filter((item) => ['pending', 'open', 'unavailable'].includes(item.row.status))
-      .sort(
-        (a, b) => (a.row.updatedAt ?? '').localeCompare(b.row.updatedAt ?? '') || a.index - b.index
+      .filter(
+        (item) =>
+          ['pending', 'open', 'unavailable'].includes(item.row.status) ||
+          (item.row.status === 'completed' &&
+            studied(item) &&
+            marketScreenExitStudyDue(item.study, item.row.dataAsOf as string, selectedAt))
       )
+      .sort((a, b) => attemptedAt(a).localeCompare(attemptedAt(b)) || a.index - b.index)
       .slice(0, limit);
     state = {
       token: lease.owner.token,
@@ -649,34 +747,60 @@ export async function refreshMarketScreenPerformance(
       }
       let failures = 0;
       for (const item of selected) {
-        let row: MarketScreenPerformanceRow;
         const time = now(dependencies);
         const sessions = item.registration?.sessions ?? [];
+        // A completed paper outcome is final: its ledger file is never rewritten.
+        const settled = item.row.status === 'completed';
+        const requiresPrices = sessions.length === 5 && time.getTime() >= closeAt(sessions[0]);
+        let row: MarketScreenPerformanceRow | null = null;
+        let prices: MarketScreenPerformanceCandle[] | null = null;
         try {
-          const requiresPrices = sessions.length === 5 && time.getTime() >= closeAt(sessions[0]);
           if (requiresPrices && (benchmarkFailed || spy.size === 0))
             throw new Error('Benchmark unavailable');
-          const prices = requiresPrices ? await fetch(item.row.ticker, days) : [];
-          row = evaluate(item, spy, prices, time);
+          prices = requiresPrices ? await fetch(item.row.ticker, days) : [];
+          if (!settled) row = evaluate(item, spy, prices, time);
         } catch {
-          row = {
-            ...item.row,
-            status: 'unavailable',
-            outcome: null,
-            grossReturnPct: null,
-            netReturnPct: null,
-            spyNetReturnPct: null,
-            excessReturnPct: null,
-            exitPrice: null,
-            reason:
-              'Market data could not verify the frozen paper holding window; explicitly refresh to retry.',
-            updatedAt: time.toISOString(),
-          };
+          if (!settled)
+            row = {
+              ...item.row,
+              status: 'unavailable',
+              outcome: null,
+              grossReturnPct: null,
+              netReturnPct: null,
+              spyNetReturnPct: null,
+              excessReturnPct: null,
+              exitPrice: null,
+              reason:
+                'Market data could not verify the frozen paper holding window; explicitly refresh to retry.',
+              updatedAt: time.toISOString(),
+            };
         }
-        await writeMarketScreenJson(ledgerFile(root, jobId, item.index), row);
+        let study: MarketScreenExitStudyRecord | null = null;
+        if (requiresPrices && prices) {
+          try {
+            study = evaluateStudy(item, spy, prices, time);
+          } catch {
+            study = null;
+          }
+        }
+        // A settled row was selected for its study alone; record the failed attempt so retries stay fair.
+        if (!study && settled && studied(item))
+          study = {
+            schemaVersion: 1,
+            policyId: MARKET_SCREEN_EXIT_STUDY_POLICY.id,
+            recommendationId: item.row.recommendationId,
+            ticker: item.row.ticker,
+            dataAsOf: item.row.dataAsOf as string,
+            entryDate: sessions[0],
+            observedThrough: item.study?.observedThrough ?? null,
+            updatedAt: time.toISOString(),
+            outcomes: failedMarketScreenExitStudyOutcomes(item.study?.outcomes),
+          };
+        if (row) await writeMarketScreenJson(ledgerFile(root, jobId, item.index), row);
+        if (study) await writeMarketScreenJson(studyFile(root, jobId, item.index), study);
         state.processed++;
         state.updatedAt = time.toISOString();
-        failures = row.status === 'unavailable' ? failures + 1 : 0;
+        failures = (row ? row.status === 'unavailable' : prices === null) ? failures + 1 : 0;
         if (failures >= 5)
           state.reason =
             'Repeated unavailable data stopped this refresh; no unavailable recommendation was counted as a loss.';
@@ -728,6 +852,8 @@ export interface MarketScreenPerformanceLedger {
   }>;
   /** Completed rows, newest exit first, bounded by `limit`. */
   completedRows: MarketScreenPerformanceLedgerRow[];
+  /** Shadow exits over the same deduplicated recommendations. */
+  exitStudy: Omit<MarketScreenExitStudySnapshot, 'items'>;
 }
 
 async function jobConfigSha256(root: string, id: string): Promise<string | null> {
@@ -808,6 +934,7 @@ export async function summarizeMarketScreenPerformanceLedger(
     .map((entry) => entry.name.toLowerCase())
     .sort();
   const unique = new Map<string, MarketScreenPerformanceLedgerRow>();
+  const studies = new Map<string, MarketScreenExitStudyRecord | null>();
   let unreadableJobs = 0;
   let duplicatesRemoved = 0;
   for (const id of ids) {
@@ -819,19 +946,23 @@ export async function summarizeMarketScreenPerformanceLedger(
       continue;
     }
     const configSha256 = await jobConfigSha256(root, id);
-    for (const { row } of rows) {
+    for (const { row, study } of rows) {
       const candidate = { ...row, jobId: id, configSha256 };
       const key = `${row.ticker}\u0000${row.dataAsOf ?? ''}\u0000${configSha256 ?? ''}`;
       const current = unique.get(key);
       if (!current) {
         unique.set(key, candidate);
+        studies.set(key, study);
         continue;
       }
       duplicatesRemoved++;
       const better =
         STATUS_PRIORITY[candidate.status] - STATUS_PRIORITY[current.status] ||
         (candidate.recommendedAt ?? '').localeCompare(current.recommendedAt ?? '');
-      if (better < 0) unique.set(key, candidate);
+      if (better < 0) {
+        unique.set(key, candidate);
+        studies.set(key, study);
+      }
     }
   }
   const rows = [...unique.values()];
@@ -869,5 +1000,9 @@ export async function summarizeMarketScreenPerformanceLedger(
           left.ticker.localeCompare(right.ticker)
       )
       .slice(0, limit),
+    exitStudy: {
+      policyId: MARKET_SCREEN_EXIT_STUDY_POLICY.id,
+      summary: summarizeMarketScreenExitStudy([...studies.values()]),
+    },
   };
 }

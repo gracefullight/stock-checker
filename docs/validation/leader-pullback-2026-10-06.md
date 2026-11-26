@@ -173,6 +173,58 @@ fingerprint `d713195a…`; working-tree source SHA-256 `01b5f3f0…`; coverage
 status `partial`). The command under Reproduction measures them with that
 directory as `--dataset`.
 
+## Exit study (registered 2026-11-26)
+
+The three forward trades above lost on average, which raised the question of
+whether the five-session exit is the weak part. A post-hoc sweep applied eight
+exits to the 157 entries of the 2026-11-25 replay (same entry open, 10 bps,
+SPY from the entry open to each exit). It is exploratory: the entries were
+already known, eight alternatives were compared, it did not run through
+`strategy:validate`, and its script is not tracked.
+
+| Exit | Trades | Avg sessions | Win rate | Mean net | Excess vs SPY net (95%) |
+|---|---:|---:|---:|---:|---:|
+| Fifth close (shipped) | 157 | 5.0 | 57.3% | +0.61% | +0.14% (−0.36…+0.66) |
+| Tenth close | 155 | 10.0 | 58.7% | +1.41% | +0.31% (−0.63…+1.24) |
+| Twentieth close | 152 | 19.9 | 65.1% | +2.19% | +0.50% (−0.81…+1.88) |
+| Open after the first close above the prior high, else tenth close | 157 | 4.9 | 65.6% | +0.60% | +0.18% (−0.28…+0.64) |
+
+Longer holds raise the absolute return by staying in the market longer; no
+excess interval leaves zero. A close above the five-session average, a
+1.5 ATR stop with a 3 ATR target, and the Gaussian flip and mid-line exits were
+no better. The mid-line exit trailed SPY (−0.99%, −1.73…−0.20); the gate
+admits only entries below the 50-session average, where a trend exit triggers
+early. The exit is not where an edge is missing, and the shipped exit does not
+change.
+
+So that the question can be answered on unseen data, the forward paper ledger
+now records shadow exits for every eligible BUY under the policy
+`us-buy-exit-study-v1` (`packages/core/src/reports/market-screen-exit-study.ts`).
+The rules were fixed before any observation existed:
+
+| Rule | Exit |
+|---|---|
+| `fixed-5` | Close of the fifth session; the baseline, recomputed on the study series |
+| `fixed-10` | Close of the tenth session |
+| `fixed-20` | Close of the twentieth session |
+| `prior-high-10` | Open after the first close above the previous session high, otherwise the close of the tenth session |
+
+Each rule shares the paper entry (open of the first session after the signal)
+and the 10 bps cost, and is compared with SPY from the same entry open to its
+own exit. Records live in `performance/exit-study/` beside the ledger rows. A
+completed outcome is never recalculated, a missing session makes a rule
+unavailable instead of moving its exit, and the five-session ledger row is not
+rewritten. The study changes no recommendation.
+
+The summary is descriptive until 30 recommendations have completed under both
+a rule and `fixed-5`. After that a rule becomes a candidate only if the
+bootstrap 95% interval of its mean paired excess difference from `fixed-5`
+lies above zero, and it replaces the shipped exit only after a comparison
+through the real pipeline on both period splits. Changing a rule means a new
+policy id. Outcomes are observed when a job's paper performance is refreshed
+(`refresh_market_screen_performance` or the web action); no scheduled task
+refreshes them.
+
 ## Reproduction
 
 The [complete measured v3 configuration](leader-pullback-2026-10-06.config.json)

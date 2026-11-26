@@ -36,8 +36,15 @@ import { buildStockReportWhatsAppNotification } from '@/utils/stock-report-alert
 import { formatScreenTimestamp } from '@/utils/stock-screen-alerts';
 import { isWhatsAppNotificationConfigured, sendWhatsAppNotification } from '@/utils/whatsapp';
 
+export type {
+  MarketScreenExitStudyOutcome,
+  MarketScreenExitStudyRecord,
+  MarketScreenExitStudyRuleId,
+  MarketScreenExitStudyRuleSummary,
+} from '@/reports/market-screen-exit-study';
 export {
   getMarketScreenPerformance,
+  type MarketScreenExitStudySnapshot,
   type MarketScreenPerformanceDependencies,
   type MarketScreenPerformancePolicy,
   type MarketScreenPerformanceRow,

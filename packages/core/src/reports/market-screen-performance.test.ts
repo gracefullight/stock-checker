@@ -507,6 +507,91 @@ describe('durable recommendation paper performance', () => {
     expect((await getMarketScreenJob(id, {}, { rootDirectory: root })).job.status).toBe('paused');
   });
 
+  it('records shadow exits beside the frozen ledger row and settles them as later sessions close', async () => {
+    await seed(0);
+    const dates = [
+      SIGNAL,
+      ...SESSIONS,
+      '2026-10-05',
+      '2026-10-06',
+      '2026-10-07',
+      '2026-10-08',
+      '2026-10-09',
+    ];
+    // SPY stays flat; the ticker closes at 102 on session 5 and 104 on session 10.
+    provider.mockImplementation(async (ticker) =>
+      dates.map((date, index) => ({
+        date: new Date(`${date}T00:00:00.000Z`),
+        open: 100,
+        high: 107,
+        low: 95,
+        close: ticker === 'SPY' ? 100 : index === 5 ? 102 : index === 10 ? 104 : 100,
+        volume: 1000,
+      }))
+    );
+    await refreshMarketScreenPerformance(id, {}, deps());
+    let result = await settled();
+    expect(result.page.items[0]?.status).toBe('completed');
+    expect(result.exitStudy.policyId).toBe('us-buy-exit-study-v1');
+    expect(result.exitStudy.items).toHaveLength(1);
+    expect(result.exitStudy.items[0]).toMatchObject({
+      ticker: 'T0',
+      dataAsOf: SIGNAL,
+      entryDate: SESSIONS[0],
+      observedThrough: SESSIONS[4],
+    });
+    expect(
+      result.exitStudy.items[0]?.outcomes.map((outcome) => [outcome.rule, outcome.status])
+    ).toEqual([
+      ['fixed-5', 'completed'],
+      ['fixed-10', 'open'],
+      ['fixed-20', 'open'],
+      ['prior-high-10', 'open'],
+    ]);
+    expect(result.exitStudy.items[0]?.outcomes[0]?.netReturnPct).toBeCloseTo(
+      result.page.items[0]?.netReturnPct as number,
+      10
+    );
+    const ledgerFile = path.join(root, id, 'performance/00000000.json');
+    const ledger = await readFile(ledgerFile, 'utf8');
+
+    // Nothing new has closed: the completed row asks for no prices.
+    provider.mockClear();
+    await refreshMarketScreenPerformance(id, {}, deps());
+    await settled();
+    expect(provider).not.toHaveBeenCalled();
+
+    time = '2026-10-09T20:00:00.000Z';
+    await refreshMarketScreenPerformance(id, {}, deps());
+    result = await settled();
+    expect(provider.mock.calls.map((call) => call[0])).toEqual(['SPY', 'T0']);
+    expect(await readFile(ledgerFile, 'utf8')).toBe(ledger);
+    expect(result.summary).toMatchObject({ completed: 1, wins: 1 });
+    const [five, ten, twenty, bounce] = result.exitStudy.items[0]?.outcomes ?? [];
+    expect(five?.status).toBe('completed');
+    expect(ten).toMatchObject({
+      status: 'completed',
+      exitDate: '2026-10-09',
+      exitAt: 'close',
+      heldSessions: 10,
+    });
+    expect(ten?.netReturnPct).toBeCloseTo(3.9, 10);
+    expect(ten?.excessReturnPct).toBeCloseTo(4, 10);
+    expect(twenty?.status).toBe('open');
+    // No close exceeded the prior high, so the bounce rule falls back to the tenth close.
+    expect(bounce).toMatchObject({ status: 'completed', exitAt: 'close', heldSessions: 10 });
+    const tenSummary = result.exitStudy.summary.find((rule) => rule.rule === 'fixed-10');
+    expect(tenSummary).toMatchObject({ completed: 1, wins: 1, pairedWithBaseline: 1 });
+    expect(tenSummary?.averageExcessVsBaselinePct).toBeCloseTo(2, 10);
+    const book = await summarizeMarketScreenPerformanceLedger({}, { rootDirectory: root });
+    expect(book.exitStudy.summary.map((rule) => [rule.rule, rule.completed, rule.open])).toEqual([
+      ['fixed-5', 1, 0],
+      ['fixed-10', 1, 0],
+      ['fixed-20', 0, 1],
+      ['prior-high-10', 1, 0],
+    ]);
+  });
+
   it('summarizes the cross-job ledger read-only, deduplicating ticker + session + configuration', async () => {
     await seed(0);
     await seed(1);

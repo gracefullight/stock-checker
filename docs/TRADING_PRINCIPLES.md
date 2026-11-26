@@ -32,6 +32,12 @@ is unchanged, and the market kill-switch again showed no gain. The forward paper
 ledger still holds no closed observation: no daily scan completed between the
 2026-10-28 and 2026-11-24 sessions.
 
+The five-session exit stays. A post-hoc sweep of eight exits over the same
+entries found none whose excess over SPY leaves zero, so from 2026-11-26 the
+forward ledger records three alternatives beside it for each eligible BUY
+([exit study](validation/leader-pullback-2026-10-06.md#exit-study-registered-2026-11-26)).
+The rules and the bar for acting on them were fixed before any observation.
+
 Results under "Archived exploratory results" describe the previous implementation.
 They are **not validation of the corrected engine**. The finance
 audit identified future benchmark leakage in the optimizer, same-close fills

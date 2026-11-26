@@ -474,6 +474,31 @@ function renderPerformance(snapshot: MarketScreenPerformanceSnapshot): string {
   } else {
     lines.push('', 'No saved recommendation observations on this page.');
   }
+  const studied = snapshot.exitStudy.summary.filter(
+    (rule) => rule.completed + rule.open + rule.unavailable > 0
+  );
+  if (studied.length) {
+    const sessions = (value: number | null): string => (value === null ? 'N/A' : value.toFixed(1));
+    lines.push(
+      '',
+      `## Exit study (${snapshot.exitStudy.policyId})`,
+      '',
+      'Shadow exits for the same paper entries and cost, each against SPY over its own window. They describe alternatives to the fifth-session close; no recommendation or shipped rule depends on them. fixed-N leaves at the Nth session close; prior-high-10 leaves at the open after the first close above the previous session high, otherwise at the tenth close.',
+      '',
+      '| Exit rule | Completed | Open | Unavailable | Positive net-return rate | Avg sessions | Avg net | Avg SPY net | Avg excess | Excess vs fixed-5 (paired n) |',
+      '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|'
+    );
+    for (const rule of studied) {
+      lines.push(
+        `| ${rule.rule} | ${rule.completed} | ${rule.open} | ${rule.unavailable} | ${percentage(rule.winRatePct)} | ${sessions(rule.averageHeldSessions)} | ${percentage(rule.averageNetReturnPct)} | ${percentage(rule.averageSpyNetReturnPct)} | ${percentage(rule.averageExcessReturnPct)} | ${percentage(rule.averageExcessVsBaselinePct)} (n=${rule.pairedWithBaseline}) |`
+      );
+    }
+  } else {
+    lines.push(
+      '',
+      `Exit study (${snapshot.exitStudy.policyId}): no shadow-exit observation is saved yet.`
+    );
+  }
   lines.push(
     '',
     'get_market_screen_performance reads saved results only. refresh_market_screen_performance explicitly starts a bounded background price refresh; it does not resume screening or place orders.'

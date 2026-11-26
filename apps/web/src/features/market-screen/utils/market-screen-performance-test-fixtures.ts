@@ -60,6 +60,7 @@ export function fixturePaperSnapshot(jobId = FIRST_MARKET_JOB): MarketScreenPerf
     },
     page: { offset: 0, limit: 20, total: 1, hasMore: false, items: [fixturePaperRow()] },
     refresh: { status: 'idle', selected: 0, processed: 0, reason: null },
+    exitStudy: { policyId: 'us-buy-exit-study-v1', summary: [], items: [] },
   };
 }
 

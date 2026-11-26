@@ -80,5 +80,6 @@ export function fixturePerformance(): MarketScreenPerformanceSnapshot {
       ],
     },
     refresh: { status: 'idle', selected: 0, processed: 0, reason: null },
+    exitStudy: { policyId: 'us-buy-exit-study-v1', summary: [], items: [] },
   };
 }
