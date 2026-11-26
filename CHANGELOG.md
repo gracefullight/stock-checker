@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.9.0](https://github.com/gracefullight/stock-checker/compare/v0.8.3...v0.9.0) (2026-11-26)
+
+
+### Features
+
+* **core:** record shadow exits beside the forward paper ledger ([c9582c3](https://github.com/gracefullight/stock-checker/commit/c9582c3d490820af75067c32656f0420ec6cc9f8))
+* **core:** settle paper outcomes after the daily report ([05e80f6](https://github.com/gracefullight/stock-checker/commit/05e80f69c210a78075df973b3a03d40cb9a99ef7))
+
+
+### Bug Fixes
+
+* **web:** compile test jsx through the oxc transform ([4d8d7aa](https://github.com/gracefullight/stock-checker/commit/4d8d7aa8fbe0fa221c6fc1202b27ccec4c63c399))
+
+
+### Documentation
+
+* **validation:** record the 2026-11-25 forward check ([5577d19](https://github.com/gracefullight/stock-checker/commit/5577d19b362047abf61934dc9618796c97fa3b4c))
+
+
+### Build System
+
+* bump uv to 0.13.7 ([4c30ef9](https://github.com/gracefullight/stock-checker/commit/4c30ef9cce79af42f35b707b878840439840354e))
+
+
+### Maintenance
+
+* **deps:** update workspace dependencies to latest ([968b5f6](https://github.com/gracefullight/stock-checker/commit/968b5f6ed29fff90d9a43f8d819cededb14fea51))
+* **deps:** upgrade the finance python lockfile ([b335812](https://github.com/gracefullight/stock-checker/commit/b335812ee0c07220f133140b067094cb5d8425e2))
+
 ## [0.8.3](https://github.com/gracefullight/stock-checker/compare/v0.8.2...v0.8.3) (2026-11-25)
 
 
