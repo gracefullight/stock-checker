@@ -26,10 +26,11 @@ export default defineConfig({
       },
     ],
   },
-  // Use vitest's built-in esbuild for the automatic JSX runtime instead of
-  // @vitejs/plugin-react (its Vite peer conflicts with the version vitest bundles).
-  esbuild: {
-    jsx: 'automatic',
+  // Use the Oxc transform bundled with vitest for the automatic JSX runtime instead
+  // of @vitejs/plugin-react (its Vite peer conflicts with the version vitest bundles).
+  // Next needs `jsx: preserve` in tsconfig, so the runtime is set here explicitly.
+  oxc: {
+    jsx: { runtime: 'automatic' },
   },
   test: {
     environment: 'jsdom',
