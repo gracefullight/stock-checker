@@ -185,6 +185,9 @@ index.
 3. Stock rules cannot be validated on the configured universe: it is a list
    chosen with hindsight, and no point-in-time membership or delisted price
    history is available. Any further stock research needs that data first.
+   The [2026-11-27 run](sp500-research-2026-11-27.md) built it from point-in-time
+   S&P 500 membership with delisted names and repeated the three strongest
+   stock rules: none passes there either.
 4. The forward paper ledger remains the only out-of-sample evidence for the
    shipped signal. It held no closed observation on 2026-11-26.
 

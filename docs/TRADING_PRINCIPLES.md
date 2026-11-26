@@ -60,6 +60,15 @@ most a five-session swap out of it.** The configured universe is today's
 ticker list and its equal-weight return already beats SPY, so no stock rule
 can be validated on it without point-in-time membership and delisted prices.
 
+That data was built on 2026-11-27 for the
+[S&P 500 run](validation/sp500-research-2026-11-27.md): point-in-time
+membership since 2005, delisted members priced from Tiingo, 89.7% of
+member-days covered. Over 504 weeks (2006–2015) the leader-pullback thesis as
+a top-decile rank earns +0.09% a week over SPY (−0.05…+0.21), five-session
+losers +0.15% (−0.05…+0.37) and 12-1 month momentum −0.04% (−0.18…+0.10).
+None passes, so the held-out years from 2016 were not run. The failure of the
+stock rules is not an artefact of the hand-picked universe.
+
 Results under "Archived exploratory results" describe the previous implementation.
 They are **not validation of the corrected engine**. The finance
 audit identified future benchmark leakage in the optimizer, same-close fills
