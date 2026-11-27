@@ -62,17 +62,22 @@ can be validated on it without point-in-time membership and delisted prices.
 
 That data was built on 2026-11-27 for the
 [S&P 500 run](validation/sp500-research-2026-11-27.md): point-in-time
-membership since 2005, delisted members priced from Tiingo, 89.7% of
+membership since 2005, delisted members priced from Tiingo, 89.8% of
 member-days covered. Over 504 weeks (2006–2015) the leader-pullback thesis as
-a top-decile rank earns +0.09% a week over SPY (−0.05…+0.21), five-session
+a top-decile rank earns +0.08% a week over SPY (−0.06…+0.21), five-session
 losers +0.15% (−0.05…+0.37) and 12-1 month momentum −0.04% (−0.18…+0.10).
 None passes, so the held-out years from 2016 were not run. The failure of the
 stock rules is not an artefact of the hand-picked universe. Two effects that do
 not rest on price were added from SEC filings: officers' and directors'
-purchases (+2.03% over SPY across 60 sessions, −1.47…+6.86, 558 trades) and
+purchases (+2.07% over SPY across 60 sessions, −1.40…+6.90, 559 trades) and
 holding members across their expected earnings window (+0.25% over SPY across
-eleven sessions, −0.03…+0.59, 15,926 windows). Neither passes; both owe their
-point estimates to 2008–2009.
+eleven sessions, −0.03…+0.59, 15,954 windows). Neither passes; both owe their
+point estimates to 2008–2009. Of three calendar events on the index, only the
+252 sessions after a midterm election passed a development period (1950–1986:
++5.88% over any day, +0.69…+11.12, 10 of 10 positive). On the held-out
+elections of 1990–2022 it was +4.53% (−1.32…+10.16, 9 of 9 positive): the same
+direction, not confirmed, and a statement about holding the index rather than
+a way to beat it. The post-presidential year and CPI release days failed.
 
 Results under "Archived exploratory results" describe the previous implementation.
 They are **not validation of the corrected engine**. The finance
