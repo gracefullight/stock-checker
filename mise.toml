@@ -290,6 +290,12 @@ description = "Measure the active leader-pullback strategy against a frozen hist
 dir = "packages/core"
 run = 'bun src/commands/validate-strategy.ts "$@"'
 
+[tasks.qld]
+description = "Show the QLD volatility weight for the latest completed QQQ session (research rule, not an order)"
+dir = "packages/core"
+raw = true
+run = 'bun src/commands/qld.ts "$@"'
+
 [tasks.positions]
 description = "Position ledger: list, digest, sync, record-fill, close  [usage: mise run positions -- list]"
 dir = "packages/core"

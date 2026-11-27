@@ -259,6 +259,13 @@ newly closed session can change are refreshed one at a time (signals up to 60
 days old, five-minute budget), and the result is saved as `paperRefresh` in the
 run state. A failure there never changes the report status.
 
+`mise run qld` prints a separate research rule for the 2× Nasdaq-100 fund: the QLD
+weight that keeps the account near 20% volatility, cut as QQQ's 20-session
+volatility rises. It is
+[measured here](docs/validation/qld-strategy-2026-11-27.md): on QLD's real
+history it returned more than QQQ with a smaller drawdown, by a margin that is
+not statistically distinguishable from zero. It is not an order and is not sent anywhere.
+
 ### Position ledger and the '보유 계획' section
 
 Each morning report ends with a '보유 계획' section built from a file-backed ledger in
