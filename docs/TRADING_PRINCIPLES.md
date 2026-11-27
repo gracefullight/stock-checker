@@ -72,12 +72,18 @@ not rest on price were added from SEC filings: officers' and directors'
 purchases (+2.07% over SPY across 60 sessions, −1.40…+6.90, 559 trades) and
 holding members across their expected earnings window (+0.25% over SPY across
 eleven sessions, −0.03…+0.59, 15,954 windows). Neither passes; both owe their
-point estimates to 2008–2009. Of three calendar events on the index, only the
+point estimates to 2008–2009. Of the calendar events on the index, the
 252 sessions after a midterm election passed a development period (1950–1986:
 +5.88% over any day, +0.69…+11.12, 10 of 10 positive). On the held-out
 elections of 1990–2022 it was +4.53% (−1.32…+10.16, 9 of 9 positive): the same
 direction, not confirmed, and a statement about holding the index rather than
 a way to beat it. The post-presidential year and CPI release days failed.
+FOMC days, the turn of the month and November–April also passed their
+development periods and shrank on the held-out ones (FOMC day +0.22% to
+−0.08% net; turn of the month +0.45% to +0.14%; half-year spread +6.3% to
++3.4%), none with an interval above zero. Five rules reached a held-out period
+in this research and every one was weaker there: **an effect is not evidence
+until it survives the period it was not found in.**
 
 Results under "Archived exploratory results" describe the previous implementation.
 They are **not validation of the corrected engine**. The finance
