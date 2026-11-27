@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.5](https://github.com/gracefullight/stock-checker/compare/v0.10.4...v0.10.5) (2026-11-27)
+
+
+### Documentation
+
+* **validation:** test fomc, turn-of-month and half-year effects on the index ([948c591](https://github.com/gracefullight/stock-checker/commit/948c5916c137de77626e7c57bfa28b68408d46f6))
+
 ## [0.10.4](https://github.com/gracefullight/stock-checker/compare/v0.10.3...v0.10.4) (2026-11-27)
 
 
