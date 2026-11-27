@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/gracefullight/stock-checker/compare/v0.11.1...v0.12.0) (2026-11-27)
+
+
+### Features
+
+* **core:** show the averaging-down variant beside the qld weight ([af64430](https://github.com/gracefullight/stock-checker/commit/af64430701cc33d2eec940af6040eb220b94ff23))
+
 ## [0.11.1](https://github.com/gracefullight/stock-checker/compare/v0.11.0...v0.11.1) (2026-11-27)
 
 
