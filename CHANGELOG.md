@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.4](https://github.com/gracefullight/stock-checker/compare/v0.10.3...v0.10.4) (2026-11-27)
+
+
+### Documentation
+
+* **validation:** state the any-day win rate as measured ([6a7e727](https://github.com/gracefullight/stock-checker/commit/6a7e72789823a3a60cc21cc494cfe52377a23eb4))
+* **validation:** test election-cycle and cpi-day effects on the index ([461deee](https://github.com/gracefullight/stock-checker/commit/461deeebea1137195dadf6dcd44ccd6bef6770dd))
+
 ## [0.10.3](https://github.com/gracefullight/stock-checker/compare/v0.10.2...v0.10.3) (2026-11-27)
 
 
