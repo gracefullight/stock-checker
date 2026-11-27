@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.3](https://github.com/gracefullight/stock-checker/compare/v0.10.2...v0.10.3) (2026-11-27)
+
+
+### Bug Fixes
+
+* **core:** hold the process open while a notification waits to re-probe ([ce9b6f7](https://github.com/gracefullight/stock-checker/commit/ce9b6f7f658f3562d18bb0b8eb782641320bd30a))
+
 ## [0.10.2](https://github.com/gracefullight/stock-checker/compare/v0.10.1...v0.10.2) (2026-11-27)
 
 
