@@ -104,6 +104,41 @@ const RULES = {
   },
 };
 
+// ── Averaging down ────────────────────────────────────────────────────────
+// REGISTERED on 2026-11-27, after the rules above, before any result of these was read:
+//   - Drawdown = QQQ close against its highest close of the last 252 sessions.
+//   - Ladder level = the deepest of the steps -10 / -20 / -30 / -40% reached since QQQ
+//     last closed at a 252-session high; a new 252-session high resets it to zero.
+//     So weight is added as the index falls and the added part is sold at the recovery.
+//   - Four rules, no others:
+//       ladder-50   50% QLD, plus 12.5 points per level (100% at -40%)
+//       ladder-25   25% QLD, plus 25 points per level (100% at -30%)
+//       dip-only    cash until -10%, then 25 points per level (100% at -40%)
+//       vol20+dip   the volatility weight, but never below 50 / 75 / 100% once the
+//                   level is 2 / 3 / 4 (buy the fall that the volatility weight sells)
+//   - Read with --ladder on the same spans and against the same bar as the rules above.
+const high252 = new Float64Array(n).fill(Number.NaN);
+const ladderLevel = new Uint8Array(n);
+for (let i = 0; i < n; i++) {
+  let high = 0;
+  for (let k = Math.max(0, i - 251); k <= i; k++) high = Math.max(high, close[k]);
+  high252[i] = high;
+  const fall = 1 - close[i] / high;
+  const step = fall >= 0.4 ? 4 : fall >= 0.3 ? 3 : fall >= 0.2 ? 2 : fall >= 0.1 ? 1 : 0;
+  ladderLevel[i] = close[i] >= high ? 0 : Math.max(i > 0 ? ladderLevel[i - 1] : 0, step);
+}
+const LADDER_RULES = {
+  'ladder-50': (i) => 0.5 + 0.125 * ladderLevel[i],
+  'ladder-25': (i) => Math.min(1, 0.25 + 0.25 * ladderLevel[i]),
+  'dip-only': (i) => 0.25 * ladderLevel[i],
+  'vol20+dip': (i, held) => {
+    const target = Math.max(volWeight(i), [0, 0, 0.5, 0.75, 1][ladderLevel[i]]);
+    return Math.abs(target - held) >= 0.1 || target === 0 ? target : held;
+  },
+};
+const ladderMode = process.argv.includes('--ladder');
+if (ladderMode) Object.assign(RULES, LADDER_RULES);
+
 function stats(returns, extra = {}) {
   let equity = 1;
   let peak = 1;
@@ -235,6 +270,7 @@ function period(label, [start, end]) {
   const results = {};
   for (const rule of Object.keys(RULES)) {
     if (label === 'TEST' && rule !== finalArg && finalArg !== 'all') continue;
+    if (ladderMode && !(rule in LADDER_RULES) && rule !== 'vol20') continue;
     results[rule] = run(rule, from, to);
     console.log(line(rule, results[rule]));
     console.log(excess(results[rule], qqq, from));

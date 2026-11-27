@@ -97,6 +97,36 @@ Rule against QQQ by calendar year (average QLD weight in brackets; years before
 | 2007 | +16% (67%) | +18% | | 2016 | +6% (73%) | +10% | | 2025 | +19% (60%) | +21% |
 | 2008 | −31% (36%) | −42% | | 2017 | +59% (92%) | +32% | | 2026 | −0% (55%) | −0% |
 
+## Averaging down
+
+Adding to QLD as it falls is the opposite of the volatility weight, which sells
+into a fall. Four rules were registered after the ones above and before their
+results were read. The fall is QQQ's close against its highest close of the
+last 252 sessions; the ladder level is the deepest of −10 / −20 / −30 / −40%
+reached since the last 252-session high, and a new high resets it, so the
+added part is sold at the recovery.
+
+| Rule | 2013–2026 (real) | 2006–2012 (real, 2008) | 2000–2012 (synthetic) |
+|---|---:|---:|---:|
+| QQQ buy and hold | +18.3% / 37% | +8.7% / 52% | −2.7% / 83% |
+| Volatility weight (adopted) | +20.1% / 32% | +12.3% / 41% | +2.2% / 60% |
+| 50% QLD, +12.5 points per level | +20.8% / 49% | +6.4% / 75% | −16.8% / 98% |
+| 25% QLD, +25 points per level | +17.3% / 48% | +3.4% / 74% | −18.3% / 99% |
+| Cash until −10%, then +25 points per level | +9.3% / 35% | +2.6% / 66% | −17.3% / 98% |
+| Volatility weight, floored at 50 / 75 / 100% from level 2 | +22.2% / 40% | +11.1% / 69% | −15.3% / 98% |
+
+CAGR / maximum drawdown. From 2013 every fall recovered within months, and
+buying it paid: the floored volatility weight adds two points a year for eight
+more points of drawdown and clears the bar. In 2008 the same rules were at full
+2× weight by the time QQQ was down 40% and rode it to −53%; the drawdowns are
+66–75% against 52% for QQQ, and none of them clears the bar there. In a fall
+the size of 2000–2002 they lose 98–99%, which the fund does not come back from:
+a 2× fund that is down 98% needs a fiftyfold gain.
+
+Averaging down into a leveraged fund is a bet that the fall is shallow or
+short. It was right in every episode from 2013 and wrong in the two before it.
+The adopted rule stays the volatility weight alone.
+
 ## Reading it
 
 - The rule holds about 1.3 times QQQ's exposure on average and takes it down
@@ -141,6 +171,9 @@ node docs/validation/qld-strategy-2026-11-27/qld.mjs --span=2013-01-02,2026-11-2
 node docs/validation/qld-strategy-2026-11-27/qld.mjs --span=2006-06-22,2012-12-31
 node docs/validation/qld-strategy-2026-11-27/qld.mjs --span=2006-06-22,2026-11-25
 node docs/validation/qld-strategy-2026-11-27/qld.mjs --final=vol20
+node docs/validation/qld-strategy-2026-11-27/qld.mjs --ladder --span=2013-01-02,2026-11-25
+node docs/validation/qld-strategy-2026-11-27/qld.mjs --ladder --span=2006-06-22,2012-12-31
+node docs/validation/qld-strategy-2026-11-27/qld.mjs --ladder --span=2000-01-03,2012-12-31
 ```
 
 Price data is kept under `data/strategy-validation/qld-20261127` and is not
