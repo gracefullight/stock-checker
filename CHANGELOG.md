@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.0](https://github.com/gracefullight/stock-checker/compare/v0.10.5...v0.11.0) (2026-11-27)
+
+
+### Features
+
+* **core:** add the qld volatility-weight research rule ([85a9504](https://github.com/gracefullight/stock-checker/commit/85a9504775f505059471f73bde703e53d4ebf6be))
+
+
+### Documentation
+
+* **validation:** record the qld strategy study ([77c393f](https://github.com/gracefullight/stock-checker/commit/77c393f5c81927f7ff44b938a337084e8be7fa34))
+
 ## [0.10.5](https://github.com/gracefullight/stock-checker/compare/v0.10.4...v0.10.5) (2026-11-27)
 
 
