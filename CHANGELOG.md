@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/gracefullight/stock-checker/compare/v0.11.0...v0.11.1) (2026-11-27)
+
+
+### Documentation
+
+* **validation:** measure averaging down into qld ([6dc73af](https://github.com/gracefullight/stock-checker/commit/6dc73af4fd515e9de8802a8cb0d974f199526f6e))
+
 ## [0.11.0](https://github.com/gracefullight/stock-checker/compare/v0.10.5...v0.11.0) (2026-11-27)
 
 
