@@ -72,6 +72,37 @@ describe('QLD volatility weight', () => {
     }
   });
 
+  it('carries the averaging-down variant: a floor that rises as QQQ falls and resets at a new high', () => {
+    // A calm 45% slide: the volatility weight stays at 100%, so the floor never binds.
+    const calmSlide = replayQldStrategy(
+      series([...repeat([0.002, 0.001], 260), ...repeat([-0.004], 150)])
+    );
+    expect(calmSlide.at(-1)).toMatchObject({ ladderLevel: 4, weight: 1, averagingDownWeight: 1 });
+    expect(calmSlide.at(-1)?.fallFromHigh).toBeGreaterThan(0.4);
+
+    // A violent slide: the adopted rule cuts, the variant is held up by the floor.
+    const violent = replayQldStrategy(
+      series([...repeat([0.002, 0.001], 260), ...repeat([-0.06, 0.03], 24)])
+    );
+    const low = violent.at(-1);
+    expect(low?.ladderLevel).toBeGreaterThanOrEqual(2);
+    expect(low?.weight).toBeLessThan(0.3);
+    expect(low?.averagingDownWeight).toBeGreaterThanOrEqual(0.5);
+    const levels = violent.map((point) => point.ladderLevel);
+    // The level never steps down while QQQ is below its high.
+    for (let i = 1; i < levels.length; i++) expect(levels[i]).toBeGreaterThanOrEqual(levels[i - 1]);
+
+    // A recovery to a new 252-session high resets the ladder.
+    const recovered = replayQldStrategy(
+      series([...repeat([0.002, 0.001], 260), ...repeat([-0.06, 0.03], 24), ...repeat([0.01], 60)])
+    );
+    expect(recovered.at(-1)).toMatchObject({ ladderLevel: 0, fallFromHigh: 0 });
+    expect(summarizeQldStrategy(violent).averagingDown).toMatchObject({
+      ladderLevel: low?.ladderLevel,
+      weightPct: Math.round((low?.averagingDownWeight ?? 0) * 1000) / 10,
+    });
+  });
+
   it('summarises the latest decision without implying an order', () => {
     const calm = summarizeQldStrategy(replayQldStrategy(series(repeat([0.002, 0.001], 320))));
     expect(calm).toMatchObject({

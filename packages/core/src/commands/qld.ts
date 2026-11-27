@@ -21,6 +21,8 @@ export interface QldStrategyReport {
   action: 'hold' | 'buy' | 'sell';
   /** Session on which the held weight last changed. */
   lastChange: string | null;
+  /** Comparison only: the variant that adds to QLD as QQQ falls from its 252-session high. */
+  averagingDown: { fallFromHighPct: number; ladderLevel: number; weightPct: number };
 }
 
 /** Summarises the latest decision of a replayed series. */
@@ -46,6 +48,11 @@ export function summarizeQldStrategy(points: readonly QldStrategyPoint[]): QldSt
     previousWeightPct: percent(previous),
     action: latest.weight === previous ? 'hold' : latest.weight > previous ? 'buy' : 'sell',
     lastChange,
+    averagingDown: {
+      fallFromHighPct: percent(latest.fallFromHigh),
+      ladderLevel: latest.ladderLevel,
+      weightPct: percent(latest.averagingDownWeight),
+    },
   };
 }
 
@@ -59,7 +66,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     );
     logger.info(
       report,
-      `QLD 연구 규칙 · ${report.asOf} 종가 기준 · 다음 시가부터 QLD ${report.weightPct}% / 현금 ${Math.round((100 - report.weightPct) * 10) / 10}% (연구 규칙이며 주문이 아님)`
+      `QLD 연구 규칙 · ${report.asOf} 종가 기준 · 다음 시가부터 QLD ${report.weightPct}% / 현금 ${Math.round((100 - report.weightPct) * 10) / 10}% · 물타기 변형은 QLD ${report.averagingDown.weightPct}% (연구 규칙이며 주문이 아님)`
     );
   })().catch((error: unknown) => {
     logger.error(

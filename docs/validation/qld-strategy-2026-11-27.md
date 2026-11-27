@@ -162,6 +162,11 @@ is not an order and nothing sends it anywhere. On the 2026-11-25 close QQQ's
 volatility was 46.5%, the target 21.5%, and the held weight 21.4% QLD (last
 changed 2026-11-23).
 
+The same line carries the averaging-down variant for comparison (the
+volatility weight floored at 50 / 75 / 100% from ladder level 2). On that close
+QQQ was 16.6% below its 252-session high, level 1, so the variant also held
+21.4%; it parts from the adopted rule only once the fall reaches 20%.
+
 ## Reproduction
 
 ```bash
