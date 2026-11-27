@@ -67,7 +67,12 @@ member-days covered. Over 504 weeks (2006–2015) the leader-pullback thesis as
 a top-decile rank earns +0.09% a week over SPY (−0.05…+0.21), five-session
 losers +0.15% (−0.05…+0.37) and 12-1 month momentum −0.04% (−0.18…+0.10).
 None passes, so the held-out years from 2016 were not run. The failure of the
-stock rules is not an artefact of the hand-picked universe.
+stock rules is not an artefact of the hand-picked universe. Two effects that do
+not rest on price were added from SEC filings: officers' and directors'
+purchases (+2.03% over SPY across 60 sessions, −1.47…+6.86, 558 trades) and
+holding members across their expected earnings window (+0.25% over SPY across
+eleven sessions, −0.03…+0.59, 15,926 windows). Neither passes; both owe their
+point estimates to 2008–2009.
 
 Results under "Archived exploratory results" describe the previous implementation.
 They are **not validation of the corrected engine**. The finance
