@@ -268,12 +268,14 @@ export async function sendWhatsAppNotification(
     }
   };
 
+  // The caller awaits this wait, so its timer must hold the process open. Unreferenced,
+  // a one-shot command with nothing else pending exits in the middle of it: the daily
+  // report then never records the send result or saves its run state.
   const sleep =
     dependencies.sleep ??
     ((milliseconds: number) =>
       new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, milliseconds);
-        timer.unref?.();
+        setTimeout(resolve, milliseconds);
       }));
   const delays = dependencies.probeDelaysMs ?? PROBE_DELAYS_MS;
   let probe = await probeGateway(fetch, configured.statusEndpoint);

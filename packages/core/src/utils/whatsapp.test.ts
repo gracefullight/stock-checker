@@ -474,6 +474,30 @@ describe('sendWhatsAppNotification through WhatsApp Web', () => {
       expect(dependencies.alert).not.toHaveBeenCalled();
     });
 
+    it('holds the process open while it waits to probe again', async () => {
+      const fetch = gatewayFetch({ status: ['logged-out', 'connected'] });
+      const referenced: boolean[] = [];
+      const realSetTimeout = globalThis.setTimeout;
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+        handler: () => void,
+        delay?: number
+      ) => {
+        const timer = realSetTimeout(handler, delay);
+        // Read after the caller's synchronous code, where an unref() would have run.
+        if (delay === 20) queueMicrotask(() => referenced.push(timer.hasRef()));
+        return timer;
+      }) as never);
+      const { sleep: _injected, ...dependencies } = deps(fetch, { probeDelaysMs: [20] });
+
+      expect(await sendWhatsAppNotification(notification, dependencies)).toEqual({
+        status: 'accepted',
+        messageId: acceptedId,
+      });
+      // An unreferenced wait lets a one-shot command exit before this call returns.
+      expect(referenced).toEqual([true]);
+      expect(probeCalls(fetch)).toHaveLength(2);
+    });
+
     it('reports the session state when it never reconnects', async () => {
       const fetch = gatewayFetch({ status: ['logged-out'] });
       const dependencies = deps(fetch);
